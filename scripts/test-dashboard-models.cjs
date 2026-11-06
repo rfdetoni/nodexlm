@@ -12,6 +12,7 @@ class Element {
   append(...elements) {this.children.push(...elements);}
   replaceChildren(...elements) {this._text='';this.children=[...elements];}
   addEventListener(name,callback) {this.handlers[name]=callback;}
+  setAttribute(name,value) {this[name]=String(value);}
 }
 const elements=new Map();
 const get=id=>{if(!elements.has(id))elements.set(id,new Element(id));return elements.get(id)};
@@ -52,6 +53,8 @@ async function main(){
   assert.equal(download.status,'downloading');
   assert.equal(download.name,'Qwen3-Q4_K_M.gguf');
   assert.equal(get('downloadProgress').children[1].tag,'progress');
+  assert.equal(get('catalogDownloadProgress').children[1].tag,'progress');
+  assert.ok(get('catalogResults').children[0].children[0].children.some(n=>n.tag==='progress'));
   locals.push({name:download.name,size_bytes:model.size_bytes});
   download.status='completed';download.received=download.total;
   await vm.runInContext('refresh()',sandbox);
