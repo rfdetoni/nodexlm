@@ -215,7 +215,7 @@ func (m *Manager) Load(ctx context.Context) error {
 		}
 		guests := m.rpcEndpoints()
 		if len(guests) == 0 {
-			return errors.New("no authenticated RPC Guests are connected")
+			return errors.New("nenhum Guest RPC autenticado está conectado. Pareamento/heartbeat não habilitam inferência distribuída: execute 'nodexlm guest --backend cpu' em cada Linux; confirme 'NodexLM RPC worker ready' e 'RPC conectado' no painel antes de aplicar o modelo")
 		}
 		model, err := local.InspectGGUF(path)
 		if err != nil {

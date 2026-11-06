@@ -326,6 +326,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(w, r) {
 		return
 	}
+	ready := s.rpcHub.ReadyNodes()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]protocol.Device, 0, len(s.nodes))
@@ -335,6 +336,8 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
 		}
+		_, d.Runtime.RPCReady = ready[d.ID]
+		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -523,7 +526,8 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	if n := s.nodes[id]; n != nil {
-		n.device.Runtime.RPCReady = true
+		// Actual readiness is calculated from the authenticated relay's
+		// live connections; do not mark ready before CONNECT succeeds.
 		n.device.LastSeen = time.Now()
 		n.device.Status = "online"
 	}
@@ -559,7 +563,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	profile.Status = "online"
 	profile.Busy = n.device.Busy
 	// RPCReady is asserted only when a tunnel is authenticated, not by a guest.
-	profile.Runtime.RPCReady = n.device.Runtime.RPCReady
+	profile.Runtime.RPCReady = false
 	n.device = profile
 	s.mu.Unlock()
 	respond(w, 200, map[string]string{"status": "online"})
@@ -567,16 +571,20 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 
 // DevicesSnapshot returns an immutable copy for the localhost dashboard.
 func (s *Server) DevicesSnapshot() []protocol.Device {
+	ready := s.rpcHub.ReadyNodes()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]protocol.Device, 0, len(s.nodes))
+	now := time.Now()
 	for _, n := range s.nodes {
 		d := n.device
 		d.GPUs = append([]protocol.GPUDevice(nil), d.GPUs...)
 		d.Models = append([]string(nil), d.Models...)
-		if time.Since(d.LastSeen) > heartbeatGrace {
+		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
 		}
+		_, d.Runtime.RPCReady = ready[d.ID]
+		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"
 		out = append(out, d)
 	}
 	return out

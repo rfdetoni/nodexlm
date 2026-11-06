@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -72,9 +71,9 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 			delay := time.Second
 			for ctx.Err() == nil {
 				if err := Connect(ctx, client, listen); err != nil && ctx.Err() == nil {
-					if !strings.Contains(err.Error(), "EOF") {
-						slog.Warn("RPC tunnel disconnected", "slot", slot, "error", err)
-					}
+					// An ALPN mismatch or broken relay can appear as EOF; do
+					// not hide the reason when a Guest is online but has no RPC.
+					slog.Warn("RPC tunnel disconnected", "slot", slot, "error", err)
 				}
 				select {
 				case <-ctx.Done():

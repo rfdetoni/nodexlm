@@ -78,3 +78,15 @@ nodexlm guest --backend cpu
 ```
 
 Se o erro continuar, confirme `nodexlm version` e reinicie o processo antigo; envie o log sem credenciais.
+
+## Guests Linux online, mas nenhum RPC autenticado
+
+O dispositivo estar **online** significa que o Host recebe o pareamento ou o heartbeat, não que o GGML RPC está pronto para compartilhar partes do modelo.
+
+1. Atualize a CLI no Host e em cada Guest; encerre e reinicie processos antigos.
+2. No Linux remoto, execute **`nodexlm guest --backend cpu`**. Apenas `nodexlm join` ou `nodexlm node` não criam túneis RPC.
+3. Confira `NodexLM RPC worker ready` e se há mensagens `RPC tunnel disconnected`. Problemas `libggml.so.0` ou `native RPC server did not start` impedem o Guest RPC.
+4. No painel `http://localhost:8787`, a linha do nó deve mostrar **RPC conectado**; o resumo deve indicar mais de zero **Guests RPC conectados**.
+5. Só então habilite **Distribuir** e aplique o GGUF.
+
+O túnel binário exige HTTP/1.1 CONNECT e autenticação com certificado TLS fixado; a REST API pode usar HTTP/2. A CLI força HTTP/1.1 para RPC. Falhas de protocolo ou de runtime nativo devem ser corrigidas, não mascaradas tratando nós pareados como RPC prontos.
