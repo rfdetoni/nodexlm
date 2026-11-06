@@ -65,3 +65,16 @@ adb logcat -d -s AndroidRuntime:E
 Confira se os Guests RPC estão conectados, se a versão do protocolo é `b12143`, se o GGUF é válido e se há memória para pesos, KV cache e buffers. Reduza o contexto ou escolha quantização menor; a soma teórica de memórias não basta para garantir o carregamento.
 
 Ao abrir um problema no GitHub, envie versão, sistema, arquitetura, modo CPU/GPU, log **sem tokens** e passos para reprodução.
+
+## Guest RPC: `malformed HTTP response "\\x00\\x00\\x1e\\x04..."`
+
+Esses bytes representam um quadro `SETTINGS` do HTTP/2. O Guest estava anunciando `h2` no TLS e enviando `CONNECT` em HTTP/1.1, mas o Host selecionava HTTP/2; o túnel precisa de HTTP/1.1 para `Hijack`.
+
+Atualize **os Guests Linux** e reinicie `nodexlm guest`. Em celulares, instale o APK Android atualizado e reinicie o Guest RPC. As chamadas REST podem continuar usando HTTP/2; apenas os túneis RPC devem negociar `http/1.1`. Não é necessário excluir os certificados ou refazer o pareamento.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh
+nodexlm guest --backend cpu
+```
+
+Se o erro continuar, confirme `nodexlm version` e reinicie o processo antigo; envie o log sem credenciais.

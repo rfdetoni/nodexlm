@@ -275,8 +275,18 @@ class RpcGuestService : Service() {
             remote.keepAlive = true
             remote.connect(InetSocketAddress(host, port), 7000)
             remote.soTimeout = 10_000
-            remote.sslParameters = remote.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
+            remote.sslParameters = remote.sslParameters.apply {
+                endpointIdentificationAlgorithm = "HTTPS"
+                // The native GGML relay uses a raw HTTP/1.1 CONNECT that is
+                // hijacked by Go. HTTP/2 ALPN would return binary SETTINGS,
+                // which looks like a malformed HTTP response.
+                applicationProtocols = arrayOf("http/1.1")
+            }
             remote.startHandshake()
+            val negotiated = remote.applicationProtocol
+            check(negotiated.isNullOrEmpty() || negotiated == "http/1.1") {
+                "RPC requires HTTP/1.1; Host negotiated $negotiated"
+            }
             // The RPC binary stream is not exposed until the Host returns 200
             // and signals with a single byte that an authenticated relay is ready.
             val request = "CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\n" +

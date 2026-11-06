@@ -15,6 +15,7 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 - Guias em português e README resumido.
 
 ### Corrigido
+- Túnel RPC Linux/Android força ALPN HTTP/1.1, eliminando leitura incorreta de quadros HTTP/2 como resposta CONNECT.
 - Inicialização do serviço de atualizações Android em versões recentes do sistema.
 - Manutenção do worker Android com a tela bloqueada por serviço de primeiro plano e wake locks, respeitando limitações do fabricante.
 - Relatórios de RAM/VRAM dos Guests Linux no pareamento e nos heartbeats.
