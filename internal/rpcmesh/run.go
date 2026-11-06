@@ -35,8 +35,14 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	if _, err = strconv.Atoi(port); err != nil {
 		return err
 	}
-	// Official ggml-rpc-server accepts --host and --port. Native server is not
-	// reachable from other LAN devices; they only see the secured coordinator.
+	// Do not mistake an older RPC process already bound to this port for
+	// the worker being launched; its protocol version could be incompatible.
+	probe, err := net.Listen("tcp", listen)
+	if err != nil {
+		return fmt.Errorf("native RPC listen address unavailable: %w", err)
+	}
+	_ = probe.Close()
+	// The native GGML RPC server is always restricted to loopback.
 	cmd := exec.CommandContext(ctx, executable, "--host", host, "--port", port)
 	cmd.Env = nativeRPCEnvironment(executable)
 	cmd.Stdout = os.Stderr
@@ -44,18 +50,37 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("start native RPC server: %w", err)
 	}
-	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	processExited := make(chan struct{})
+	var processErr error
+	go func() {
+		processErr = cmd.Wait()
+		close(processExited)
+	}()
+	defer func() {
+		_ = cmd.Process.Kill()
+		<-processExited
+	}()
+
 	ready := false
 	for i := 0; i < 40; i++ {
-		conn, e := net.DialTimeout("tcp", listen, 250*time.Millisecond)
-		if e == nil {
-			conn.Close()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-processExited:
+			return fmt.Errorf("native RPC server exited before readiness: %v", processErr)
+		default:
+		}
+		conn, dialErr := net.DialTimeout("tcp", listen, 250*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
 			ready = true
 			break
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-processExited:
+			return fmt.Errorf("native RPC server exited before readiness: %v", processErr)
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
@@ -63,52 +88,75 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 		return errors.New("native RPC server did not start")
 	}
 	slog.Info("NodexLM RPC worker ready", "listen", listen, "tunnels", slots)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var wg sync.WaitGroup
 	for i := 0; i < slots; i++ {
 		wg.Add(1)
 		go func(slot int) {
 			defer wg.Done()
 			delay := time.Second
-			for ctx.Err() == nil {
-				if err := Connect(ctx, client, listen); err != nil && ctx.Err() == nil {
-					// An ALPN mismatch or broken relay can appear as EOF; do
-					// not hide the reason when a Guest is online but has no RPC.
+			for runCtx.Err() == nil {
+				err := Connect(runCtx, client, listen)
+				if err == nil {
+					// A completed RPC session must not inherit a previous failure backoff.
+					delay = time.Second
+				} else if runCtx.Err() == nil {
+					// Keep unexpected EOF visible: it may indicate a broken relay
+					// or an incompatible native RPC session on the Host.
 					slog.Warn("RPC tunnel disconnected", "slot", slot, "error", err)
 				}
+				if runCtx.Err() != nil {
+					return
+				}
 				select {
-				case <-ctx.Done():
+				case <-runCtx.Done():
 					return
 				case <-time.After(delay):
 				}
-				if delay < 10*time.Second {
+				if err != nil && delay < 10*time.Second {
 					delay *= 2
+					if delay > 10*time.Second {
+						delay = 10 * time.Second
+					}
 				}
 			}
 		}(i)
 	}
-	<-ctx.Done()
-	wg.Wait()
-	return nil
+	select {
+	case <-ctx.Done():
+		cancel()
+		wg.Wait()
+		return nil
+	case <-processExited:
+		cancel()
+		wg.Wait()
+		if processErr != nil {
+			return fmt.Errorf("native RPC server exited unexpectedly: %w", processErr)
+		}
+		return errors.New("native RPC server exited unexpectedly")
+	}
 }
 
 // nativeRPCEnvironment makes the bundled GGML shared libraries visible to the
 // dynamic loader without requiring global installation or sudo.
 func nativeRPCEnvironment(executable string) []string {
-    env := os.Environ()
-    dir := filepath.Dir(executable)
-    switch runtime.GOOS {
-    case "linux":
-        value := dir
-        if inherited := os.Getenv("LD_LIBRARY_PATH"); inherited != "" {
-            value += string(os.PathListSeparator) + inherited
-        }
-        return append(env, "LD_LIBRARY_PATH="+value)
-    case "darwin":
-        value := dir
-        if inherited := os.Getenv("DYLD_LIBRARY_PATH"); inherited != "" {
-            value += string(os.PathListSeparator) + inherited
-        }
-        return append(env, "DYLD_LIBRARY_PATH="+value)
-    }
-    return env
+	env := os.Environ()
+	dir := filepath.Dir(executable)
+	switch runtime.GOOS {
+	case "linux":
+		value := dir
+		if inherited := os.Getenv("LD_LIBRARY_PATH"); inherited != "" {
+			value += string(os.PathListSeparator) + inherited
+		}
+		return append(env, "LD_LIBRARY_PATH="+value)
+	case "darwin":
+		value := dir
+		if inherited := os.Getenv("DYLD_LIBRARY_PATH"); inherited != "" {
+			value += string(os.PathListSeparator) + inherited
+		}
+		return append(env, "DYLD_LIBRARY_PATH="+value)
+	}
+	return env
 }

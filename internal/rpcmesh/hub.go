@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sort"
@@ -66,6 +67,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 	item.mu.Lock()
 	if item.available >= 8 {
 		item.mu.Unlock()
+		slog.Warn("RPC tunnel capacity reached", "node", nodeID, "capacity", 8)
 		http.Error(w, "RPC tunnel capacity reached", 503)
 		return
 	}
@@ -120,6 +122,9 @@ func (r *relay) accept() {
 			select {
 			case guest = <-r.waiting:
 			case <-timeout.C:
+				slog.Warn("RPC relay timed out waiting for an idle Guest tunnel",
+					"endpoint", r.listener.Addr().String(),
+					"connected_tunnels", r.count(), "idle_tunnels", len(r.waiting))
 				upstream.Close()
 				return
 			case <-r.closed:

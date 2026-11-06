@@ -239,3 +239,10 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
     }
     return env->NewStringUTF("");
 }
+
+// The detached native RPC server has no shutdown callback. Expose its
+// lifecycle to the Android foreground service so dead workers stop heartbeats.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_dev_nodexlm_app_NativeRpc_isRunning(JNIEnv*, jobject) {
+    return rpcStarted.load() ? JNI_TRUE : JNI_FALSE;
+}

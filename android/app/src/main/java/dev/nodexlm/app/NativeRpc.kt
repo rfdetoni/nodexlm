@@ -11,6 +11,8 @@ internal object NativeRpc {
     const val VERSION = "b12143"
     init { System.loadLibrary("nodexlm") }
     external fun start(threads: Int, mode: String): String
+    /** Reports whether the native GGML RPC server thread is still running. */
+    external fun isRunning(): Boolean
     /** JSON object with hardware-backed Vulkan GPU metrics (can be empty). */
     external fun inspect(): String
 }

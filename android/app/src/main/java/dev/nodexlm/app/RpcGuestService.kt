@@ -52,7 +52,7 @@ class RpcGuestService : Service() {
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
         private const val PORT = 50052
-        private const val TUNNELS = 4
+        private const val TUNNELS = 8
     }
 
     private val running = AtomicBoolean(false)
@@ -90,8 +90,14 @@ class RpcGuestService : Service() {
         }
         val host = parsed.host
         val port = if (parsed.port > 0) parsed.port else 443
-        createNotification()
-        acquireLocks()
+        try {
+            createNotification()
+            acquireLocks()
+        } catch (e: Exception) {
+            Log.e(LOG, "Cannot start Android RPC foreground service", e)
+            shutdown()
+            return START_NOT_STICKY
+        }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
                 val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
@@ -112,16 +118,24 @@ class RpcGuestService : Service() {
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
                         while (running.get()) {
+                            var failed = false
                             try {
                                 connectAndRelay(host, port, node, token, sslContext)
                                 backoff = 1000L
                             } catch (e: Exception) {
+                                failed = true
                                 if (running.get()) Log.w(LOG, "RPC tunnel $slot: ${e.message}")
-                                backoff = (backoff * 2).coerceAtMost(10_000)
                             }
                             sleepWhileRunning(backoff)
+                            if (failed) backoff = (backoff * 2).coerceAtMost(10_000L)
                         }
                     }
+                }
+                // After startup the detached GGML thread may still exit.
+                // Do not keep publishing heartbeat or reconnecting to a dead worker.
+                while (running.get()) {
+                    check(NativeRpc.isRunning()) { "Native GGML RPC server exited unexpectedly" }
+                    sleepWhileRunning(1_000L)
                 }
             } catch (e: Throwable) {
                 Log.e(LOG, "RPC Guest cannot start", e)
@@ -252,14 +266,15 @@ class RpcGuestService : Service() {
 
     private fun readStatus(input: java.io.InputStream): String {
         val result = ByteArrayOutputStream()
-        val tail = byteArrayOf(13, 10, 13, 10)
+        var trailer = 0
         while (result.size() < 8192) {
             val next = input.read()
             if (next < 0) error("Host closed CONNECT")
             result.write(next)
-            val bytes = result.toByteArray()
-            if (bytes.size >= 4 && bytes.takeLast(4).toByteArray().contentEquals(tail)) {
-                return String(bytes, Charsets.US_ASCII).lineSequence().first()
+            // Track CRLFCRLF without repeatedly copying the entire header buffer.
+            trailer = (trailer shl 8) or next
+            if (result.size() >= 4 && trailer == 0x0D0A0D0A) {
+                return result.toString(Charsets.US_ASCII.name()).lineSequence().first()
             }
         }
         error("Oversized CONNECT response")

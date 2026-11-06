@@ -90,3 +90,56 @@ O dispositivo estar **online** significa que o Host recebe o pareamento ou o hea
 5. Só então habilite **Distribuir** e aplique o GGUF.
 
 O túnel binário exige HTTP/1.1 CONNECT e autenticação com certificado TLS fixado; a REST API pode usar HTTP/2. A CLI força HTTP/1.1 para RPC. Falhas de protocolo ou de runtime nativo devem ser corrigidas, não mascaradas tratando nós pareados como RPC prontos.
+
+## Guest RPC: reconexão lenta ou worker nativo encerrado
+
+O Guest mantém até oito túneis HTTP/1.1 autenticados por certificado. Cada
+reconexão falha usa um intervalo progressivo limitado a 10 segundos; depois de
+uma sessão concluída normalmente, o intervalo volta a 1 segundo. A negociação
+TLS tem limite de 5 segundos e a resposta ao CONNECT, de 10 segundos.
+
+Se o servidor GGML nativo encerrar inesperadamente, o comando Guest agora
+termina com erro em vez de deixar túneis reconectando sem backend. Nesse caso,
+verifique primeiro o stderr do executável RPC e a compatibilidade da versão
+com o `llama-server` do Host.
+
+O indicador RPC disponível significa **túnel autenticado ativo**, e não apenas
+heartbeat ou cadastro do dispositivo. Para eliminar erros de negociação de
+versões antigas, atualize o Guest e reinicie o processo; não é necessário
+refazer o pareamento.
+
+## Guest GGML: `Accepted client connection` seguido de `recv returned 0`
+
+O servidor GGML registra esse texto quando uma conexão TCP local é encerrada
+sem um comando RPC adicional. **Uma ocorrência é esperada** durante o teste de
+prontidão do Guest: a CLI abre uma conexão a `127.0.0.1:50052` e a fecha.
+
+Também podem surgir conexões curtas quando o `llama-server` do Host está
+consultando dispositivos RPC ao aplicar um modelo. As mensagens isoladamente
+não comprovam incompatibilidade de protocolo nem erro de inferência.
+
+Se o modelo não carregar ou os Guests não processarem camadas, confira os logs
+do **Host** no momento em que aplicar o GGUF. Verifique a mensagem de erro de
+`llama-server` e se Host e Guests usam o mesmo runtime RPC `b12143`.
+Compare `nodexlm version` nos dispositivos. Não exclua credenciais ou o
+runtime apenas por esse texto; as falhas de modelo devem ser diagnosticadas
+pelo erro de carregamento, não por fechamento de socket isolado.
+
+## Host: `Remote RPC server crashed or returned malformed response`
+
+O erro `recv failed (bytes_recv=0, size_to_recv=8)` durante
+`load_model` significa que o Host não recebeu o cabeçalho de resposta ao
+comando `HELLO` do GGML. Não comprova, sozinho, que o servidor nativo
+do Guest caiu.
+
+Verifique, no mesmo momento, as mensagens do **Host**:
+- `RPC relay timed out waiting for an idle Guest tunnel`: o Host solicitou
+  outra conexão, mas os túneis estavam ocupados ou desconectados.
+- `RPC tunnel capacity reached`: o Guest ultrapassou o limite por nó.
+- Saída inesperada do `ggml-rpc-server`: verificar o stderr do Guest.
+
+O padrão Linux passa a reservar 8 túneis, dentro do limite do relay.
+Para investigar protocolos e desempenho de um modelo novo, reproduza primeiro
+com um GGUF pequeno e um Guest CPU; se o mesmo `HELLO` falhar, o problema
+não depende do tamanho ou da quantização do modelo. Compare as versões do
+runtime `llama.cpp b12143` nos dois lados.

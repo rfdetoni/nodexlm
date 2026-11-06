@@ -10,21 +10,7 @@ on:
       - main
     paths:
       - '.github/workflows/android-apk.yml'
-      - 'android/app/src/main/cpp/CMakeLists.txt'
-      # Build only when the startup/update code changes; no CI on unrelated commits.
-      - 'android/app/src/main/java/dev/nodexlm/app/UpdateManager.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/MainActivity.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/HuggingFaceHub.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/ModelFiles.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/ModelLibraryView.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/PairingClient.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/ComputeService.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/RpcGuestService.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/NativeRpc.kt'
-      - 'android/app/src/main/cpp/native.cpp'
-      - 'android/app/src/main/AndroidManifest.xml'
-      - 'android/app/src/main/java/dev/nodexlm/app/RpcGuestService.kt'
-      - 'android/app/src/main/java/dev/nodexlm/app/NativeRpc.kt'
+      - 'android/**'
     tags:
       - 'v*'
 
