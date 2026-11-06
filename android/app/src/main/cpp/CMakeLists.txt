@@ -17,6 +17,26 @@ set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
 # ARM32 remains CPU-only for compatibility with older Android 10 phones.
 if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+    # The Vulkan shaders use SPIR-V headers from the BUILD host. Android NDK
+    # CMake cross-compiling hides host CMake package configs under its sysroot.
+    # Stage actual host headers and a minimal config within the build tree;
+    # do not link host Vulkan binaries into the Android APK.
+    find_path(NODEXLM_HOST_SPIRV_INCLUDE
+        NAMES spirv/unified1/spirv.hpp
+        NO_CMAKE_FIND_ROOT_PATH)
+    if(NOT NODEXLM_HOST_SPIRV_INCLUDE)
+        message(FATAL_ERROR "SPIR-V headers required for Android Vulkan; install spirv-headers")
+    endif()
+    set(NODEXLM_SPIRV_STAGING "${CMAKE_BINARY_DIR}/nodexlm-spirv")
+    file(MAKE_DIRECTORY "${NODEXLM_SPIRV_STAGING}")
+    file(COPY "${NODEXLM_HOST_SPIRV_INCLUDE}/spirv"
+        DESTINATION "${NODEXLM_SPIRV_STAGING}")
+    set(NODEXLM_SPIRV_PACKAGE "${CMAKE_BINARY_DIR}/nodexlm-spirv-package")
+    file(MAKE_DIRECTORY "${NODEXLM_SPIRV_PACKAGE}")
+    file(WRITE "${NODEXLM_SPIRV_PACKAGE}/SPIRV-HeadersConfig.cmake"
+        "# Validated SPIR-V header-only package staged for Android NDK cross compile\\n")
+    set("SPIRV-Headers_DIR" "${NODEXLM_SPIRV_PACKAGE}" CACHE PATH
+        "Android-compatible host SPIR-V headers package" FORCE)
 else()
     set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
 endif()
@@ -33,6 +53,9 @@ FetchContent_Declare(llamacpp
     GIT_SHALLOW FALSE
 )
 FetchContent_MakeAvailable(llamacpp)
+if(ANDROID_ABI STREQUAL "arm64-v8a" AND TARGET ggml-vulkan)
+    target_include_directories(ggml-vulkan PRIVATE "${NODEXLM_SPIRV_STAGING}")
+endif()
 add_library(nodexlm SHARED native.cpp)
 target_link_libraries(nodexlm PRIVATE llama ggml ggml-rpc log android)
 target_include_directories(nodexlm PRIVATE ${llamacpp_SOURCE_DIR}/ggml/include)
