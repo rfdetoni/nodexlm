@@ -1,0 +1,202 @@
+name: Android APK
+
+# Manual builds do not burn Actions minutes on every commit.
+# Tagged builds publish an installable, consistently signed release APK.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: nodexlm-android-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Android ARM64 APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    outputs:
+      version: ${{ steps.version.outputs.name }}
+    env:
+      NDK_VERSION: '27.2.12479018'
+      ANDROID_BUILD_TOOLS: '35.0.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK command-line tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install pinned Android SDK, NDK and CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install \
+            'platforms;android-35' \
+            'build-tools;35.0.0' \
+            'ndk;27.2.12479018' \
+            'cmake;3.22.1'
+
+      # This repository deliberately does not commit a Gradle wrapper JAR.
+      - name: Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-read-only: ${{ github.event_name != 'push' }}
+
+      - name: Determine APK version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            name="${GITHUB_REF_NAME#v}"
+            [[ "$name" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] || exit 1
+          else
+            name="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release signing (required on tags)
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          count=0
+          for value in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [[ -n "$value" ]] && count=$((count + 1))
+          done
+          if [[ "$count" -eq 4 ]]; then
+            path="$RUNNER_TEMP/nodexlm-release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
+            chmod 600 "$path"
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "path=$path" >> "$GITHUB_OUTPUT"
+          elif [[ "$count" -ne 0 || "$GITHUB_REF" == refs/tags/* ]]; then
+            echo '::error::Set all four Android signing secrets for tag releases: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.'
+            exit 1
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build installable debug APK
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --max-workers=2 \
+            -PnodexVersionName='${{ steps.version.outputs.name }}' \
+            -PnodexVersionCode='${{ steps.version.outputs.code }}' \
+            :app:assembleDebug
+
+      - name: Verify debug APK and native library
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='android/app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$apk"
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libnodexlm.so'
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify "$apk"
+          mkdir -p dist
+          cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-arm64-debug.apk"
+          sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodexlm-android-debug
+          path: dist/*-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build signed release APK
+        if: steps.signing.outputs.configured == 'true'
+        working-directory: android
+        shell: bash
+        env:
+          NODEXLM_ANDROID_KEYSTORE_FILE: ${{ steps.signing.outputs.path }}
+          NODEXLM_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NODEXLM_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NODEXLM_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --max-workers=2 \
+            -PnodexVersionName='${{ steps.version.outputs.name }}' \
+            -PnodexVersionCode='${{ steps.version.outputs.code }}' \
+            :app:assembleRelease
+
+      - name: Verify signed release APK and package it
+        if: steps.signing.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='android/app/build/outputs/apk/release/app-release.apk'
+          test -s "$apk"
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libnodexlm.so'
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
+          cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-android-arm64.apk"
+          (cd dist && sha256sum "NodexLM-${{ steps.version.outputs.name }}-android-arm64.apk" > SHA256SUMS.txt)
+
+      - name: Upload signed release APK
+        if: steps.signing.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodexlm-android-release
+          path: |
+            dist/*-android-arm64.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish signed APK to GitHub Releases
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed APK
+        uses: actions/download-artifact@v4
+        with:
+          name: nodexlm-android-release
+          path: release
+
+      - name: Create or update prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(release/*-android-arm64.apk)
+          [[ "${#apks[@]}" -eq 1 ]] || { echo 'Expected exactly one signed APK'; exit 1; }
+          files=("${apks[0]}" release/SHA256SUMS.txt)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --title "NodexLM ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --prerelease
+          fi

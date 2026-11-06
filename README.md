@@ -166,3 +166,30 @@ without a valid memory report cannot be used for automatic layer placement.
 Android still needs a dedicated native RPC worker implementation and live
 heterogeneous benchmarks are pending. The model discovery
 panel provides memory *estimates*, not verified compatibility guarantees.
+
+## Android APK (GitHub Actions)
+
+The [Android APK workflow](.github/workflows/android-apk.yml) runs **only on manual dispatch** or when pushing a `v*` tag, to minimize CI consumption. It installs Java 17, Gradle 8.11.1, Android SDK 35, NDK 27.2 and CMake, builds native `llama.cpp` from the pinned Git commit in `android/app/src/main/cpp/CMakeLists.txt`, checks that `libnodexlm.so` is packaged, and verifies APK signing.
+
+**Manual debug APK:** open GitHub **Actions → Android APK → Run workflow** on `main`. Download the `nodexlm-android-debug` artifact when the run succeeds. This is an installable **debug-signed** ARM64 APK, not a production release. No signing secrets are required.
+
+**Signed release APK:** configure these four repository **Actions secrets** before pushing a tag:
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | Base64 of a *persistent* Android `.jks` keystore (one line) |
+| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+| `ANDROID_KEY_ALIAS` | Alias of the release key |
+| `ANDROID_KEY_PASSWORD` | Password of the release key |
+
+Create and **back up** the keystore securely, outside the repository. Example (use a strong password and your own valid subject):
+
+```sh
+keytool -genkeypair -v -keystore nodexlm-release.jks -alias nodexlm \
+  -keyalg RSA -keysize 3072 -validity 10000
+base64 -w 0 nodexlm-release.jks  # Linux; paste the output in ANDROID_KEYSTORE_BASE64
+```
+
+Then push a version tag (`git tag v0.1.0 && git push origin v0.1.0`). The workflow requires **all four secrets** on tags, signs the ARM64 release APK, verifies the signature and embedded library, uploads the artifact and publishes it in **GitHub Releases as a prerelease**. The SHA-256 file accompanies the release. A partial set of secrets causes an explicit failure instead of silently producing an unsigned APK. Versions are derived from the Git tag and workflow run number.
+
+If you need to trigger a build manually, avoid creating a release tag. Reuse the same signing keystore for upgrades; a newly generated keystore cannot update previously installed releases. Android/NDK compilation requires network access to fetch the pinned `llama.cpp` source. Native Android and actual device inference have not been validated yet, so a successful workflow build does not prove functional RPC inference on physical phones.

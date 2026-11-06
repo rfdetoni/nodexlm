@@ -2,20 +2,46 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+val releaseKeystore = System.getenv("NODEXLM_ANDROID_KEYSTORE_FILE")
+val releaseStorePassword = System.getenv("NODEXLM_ANDROID_STORE_PASSWORD")
+val releaseKeyAlias = System.getenv("NODEXLM_ANDROID_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("NODEXLM_ANDROID_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "dev.nodexlm.app"
     compileSdk = 35
+    ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "dev.nodexlm.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionCode = providers.gradleProperty("nodexVersionCode").orNull?.toIntOrNull() ?: 1
+        versionName = providers.gradleProperty("nodexVersionName").orNull ?: "0.1.0-alpha"
         ndk { abiFilters += listOf("arm64-v8a") }
         externalNativeBuild { cmake { cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden") } }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
-    buildTypes { release { isMinifyEnabled = true; isShrinkResources = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") } }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("nodexRelease") {
+                storeFile = file(requireNotNull(releaseKeystore))
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("nodexRelease")
+        }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     packaging { jniLibs { useLegacyPackaging = false } }
