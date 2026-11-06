@@ -107,3 +107,20 @@ O indicador RPC disponível significa **túnel autenticado ativo**, e não apena
 heartbeat ou cadastro do dispositivo. Para eliminar erros de negociação de
 versões antigas, atualize o Guest e reinicie o processo; não é necessário
 refazer o pareamento.
+
+## Guest GGML: `Accepted client connection` seguido de `recv returned 0`
+
+O servidor GGML registra esse texto quando uma conexão TCP local é encerrada
+sem um comando RPC adicional. **Uma ocorrência é esperada** durante o teste de
+prontidão do Guest: a CLI abre uma conexão a `127.0.0.1:50052` e a fecha.
+
+Também podem surgir conexões curtas quando o `llama-server` do Host está
+consultando dispositivos RPC ao aplicar um modelo. As mensagens isoladamente
+não comprovam incompatibilidade de protocolo nem erro de inferência.
+
+Se o modelo não carregar ou os Guests não processarem camadas, confira os logs
+do **Host** no momento em que aplicar o GGUF. Verifique a mensagem de erro de
+`llama-server` e se Host e Guests usam o mesmo runtime RPC `b12143`.
+Compare `nodexlm version` nos dispositivos. Não exclua credenciais ou o
+runtime apenas por esse texto; as falhas de modelo devem ser diagnosticadas
+pelo erro de carregamento, não por fechamento de socket isolado.
