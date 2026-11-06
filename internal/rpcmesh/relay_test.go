@@ -3,7 +3,10 @@
 package rpcmesh
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -96,5 +99,82 @@ func TestRejectNonLocalRPC(t *testing.T) {
 		if err := ValidateRPCAddress(s); err == nil {
 			t.Errorf("accepted nonloopback endpoint %s", s)
 		}
+	}
+}
+
+func TestRelayReclaimsDisconnectedIdleTunnels(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hub.ServeTunnel(w, r, "node")
+	}))
+	defer server.Close()
+
+	cert, err := x509.ParseCertificate(server.TLS.Certificates[0].Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	open := func() net.Conn {
+		t.Helper()
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second},
+			"tcp", server.Listener.Addr().String(),
+			&tls.Config{RootCAs: roots, ServerName: "127.0.0.1", NextProtos: []string{"http/1.1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+		_, err = fmt.Fprintf(conn, "CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\nHost: %s\r\n\r\n",
+			server.Listener.Addr().String())
+		if err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		res, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+		if err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		if res.StatusCode != http.StatusOK {
+			conn.Close()
+			t.Fatalf("expected HTTP 200 CONNECT, got %d", res.StatusCode)
+		}
+		_ = conn.SetDeadline(time.Time{})
+		return conn
+	}
+
+	conns := make([]net.Conn, 0, 8)
+	defer func() {
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+	}()
+	for i := 0; i < 8; i++ {
+		conns = append(conns, open())
+	}
+	// No Host-side RPC connection consumes these slots. Closing Guest sockets
+	// must still release their capacity without waiting for a model load.
+	_ = conns[0].Close()
+	_ = conns[1].Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		hub.mu.Lock()
+		count := hub.nodes["node"].count()
+		hub.mu.Unlock()
+		if count == 6 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("idle Guest disconnects never released capacity: %d", count)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	conns = append(conns, open(), open()) // Regression: previously HTTP 503.
+	hub.mu.Lock()
+	count := hub.nodes["node"].count()
+	hub.mu.Unlock()
+	if count != 8 {
+		t.Fatalf("expected eight live tunnels after reconnect, got %d", count)
 	}
 }
