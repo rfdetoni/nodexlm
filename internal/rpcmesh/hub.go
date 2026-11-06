@@ -26,7 +26,8 @@ type idleTunnel struct {
 
 type relay struct {
 	listener  net.Listener
-	waiting   chan *idleTunnel
+	waiting   []*idleTunnel
+	ready     chan struct{}
 	closed    chan struct{}
 	mu        sync.Mutex
 	available int
@@ -67,7 +68,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 			http.Error(w, "local RPC relay unavailable", 503)
 			return
 		}
-		item = &relay{listener: ln, waiting: make(chan *idleTunnel, 8), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
+		item = &relay{listener: ln, waiting: make([]*idleTunnel, 0, 8), ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
 		h.nodes[nodeID] = item
 		go item.accept()
 	}
@@ -101,15 +102,10 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 		claimed: make(chan struct{}),
 		stopped: make(chan struct{}),
 	}
-	select {
-	case item.waiting <- pending:
-		// Once ServeHTTP returns, the HTTP request context is canceled even
-		// though the hijacked connection may stay open. Monitor the raw socket.
+	if item.enqueue(pending) {
+		// Hijacking transfers ownership to the relay. The request context
+		// cannot track this connection after ServeTunnel returns.
 		go item.watchIdle(pending)
-	case <-item.closed:
-		item.finish(conn)
-	case <-r.Context().Done():
-		item.finish(conn)
 	}
 }
 
@@ -147,23 +143,86 @@ func (r *relay) watchIdle(t *idleTunnel) {
 		}
 	}
 }
-func (r *relay) decrement()          { r.mu.Lock(); r.available--; r.mu.Unlock() }
-func (r *relay) track(conn net.Conn) { r.mu.Lock(); r.peers[conn] = struct{}{}; r.mu.Unlock() }
+func (r *relay) signalReady() {
+	select {
+	case r.ready <- struct{}{}:
+	default:
+	}
+}
+func (r *relay) enqueue(t *idleTunnel) bool {
+	r.mu.Lock()
+	select {
+	case <-r.closed:
+		r.mu.Unlock()
+		r.finish(t.conn)
+		return false
+	default:
+	}
+	r.waiting = append(r.waiting, t)
+	r.mu.Unlock()
+	r.signalReady()
+	return true
+}
+func (r *relay) decrement() { r.mu.Lock(); r.available--; r.mu.Unlock() }
+func (r *relay) track(conn net.Conn) {
+	r.mu.Lock()
+	r.peers[conn] = struct{}{}
+	r.mu.Unlock()
+}
 func (r *relay) finish(conn net.Conn) {
 	r.mu.Lock()
 	if _, ok := r.peers[conn]; ok {
 		delete(r.peers, conn)
 		r.available--
 	}
+	for i, t := range r.waiting {
+		if t.conn == conn {
+			copy(r.waiting[i:], r.waiting[i+1:])
+			r.waiting[len(r.waiting)-1] = nil
+			r.waiting = r.waiting[:len(r.waiting)-1]
+			break
+		}
+	}
 	r.mu.Unlock()
-	conn.Close()
+	_ = conn.Close()
 }
-func (r *relay) count() int { r.mu.Lock(); defer r.mu.Unlock(); return r.available }
-func (r *relay) tracked(conn net.Conn) bool {
+func (r *relay) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, ok := r.peers[conn]
-	return ok
+	return r.available
+}
+func (r *relay) idleCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.waiting)
+}
+func (r *relay) takeIdle() net.Conn {
+	r.mu.Lock()
+	if len(r.waiting) == 0 {
+		r.mu.Unlock()
+		return nil
+	}
+	pending := r.waiting[0]
+	r.waiting[0] = nil
+	r.waiting = r.waiting[1:]
+	close(pending.claimed)
+	more := len(r.waiting) > 0
+	r.mu.Unlock()
+	if more {
+		r.signalReady()
+	}
+	// Only the idle watcher reads from the socket. Stop it before giving
+	// ownership to bridge(), otherwise the first RPC byte can be consumed.
+	_ = pending.conn.SetReadDeadline(time.Now())
+	<-pending.stopped
+	_ = pending.conn.SetReadDeadline(time.Time{})
+	r.mu.Lock()
+	_, connected := r.peers[pending.conn]
+	r.mu.Unlock()
+	if !connected {
+		return nil
+	}
+	return pending.conn
 }
 func (r *relay) accept() {
 	for {
@@ -176,25 +235,23 @@ func (r *relay) accept() {
 			var guest net.Conn
 			timeout := time.NewTimer(8 * time.Second)
 			defer timeout.Stop()
-			// Disconnected idle connections can remain in the buffered queue
-			// briefly after watchIdle closes them. Skip them until the deadline.
+			// Idle clients that disconnected are reclaimed before capacity
+			// checks; wake promptly when a healthy Guest reconnects.
 			for guest == nil {
+				guest = r.takeIdle()
+				if guest != nil {
+					break
+				}
 				select {
-				case pending := <-r.waiting:
-					close(pending.claimed)
-					<-pending.stopped
-					_ = pending.conn.SetReadDeadline(time.Time{})
-					if r.tracked(pending.conn) {
-						guest = pending.conn
-					}
+				case <-r.ready:
 				case <-timeout.C:
 					slog.Warn("RPC relay timed out waiting for an idle Guest tunnel",
 						"endpoint", r.listener.Addr().String(),
-						"connected_tunnels", r.count(), "idle_tunnels", len(r.waiting))
-					upstream.Close()
+						"connected_tunnels", r.count(), "idle_tunnels", r.idleCount())
+					_ = upstream.Close()
 					return
 				case <-r.closed:
-					upstream.Close()
+					_ = upstream.Close()
 					return
 				}
 			}
@@ -262,16 +319,6 @@ func (h *Hub) Remove(id string) {
 			r.finish(c)
 		}
 		_ = r.listener.Close()
-		for {
-			select {
-			case pending := <-r.waiting:
-				close(pending.claimed)
-				<-pending.stopped
-				r.finish(pending.conn)
-			default:
-				return
-			}
-		}
 	}
 }
 func (h *Hub) Close() {
