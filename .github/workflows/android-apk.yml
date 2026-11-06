@@ -74,6 +74,13 @@ jobs:
             'cmake;3.22.1'
 
       # This repository deliberately does not commit a Gradle wrapper JAR.
+      - name: Vulkan shader compiler for ARM64 Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslc spirv-headers libvulkan-dev
+          command -v glslc
       - name: Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:

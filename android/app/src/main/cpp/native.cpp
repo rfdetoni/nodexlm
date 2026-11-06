@@ -10,6 +10,7 @@
 #include <cstring>
 #include <thread>
 #include <exception>
+#include <sstream>
 #include <android/log.h>
 #include "llama.h"
 #include "ggml-backend.h"
@@ -140,38 +141,99 @@ Java_dev_nodexlm_app_NativeEntry_cancel(JNIEnv*,jobject) {
 }
 
 
-// Started only inside RpcGuestService's dedicated :rpc Android process.
-// ggml_backend_rpc_start_server() is intentionally blocking and provides no
-// stop function in this pinned upstream version. Stopping that foreground
-// service tears down the isolated process instead of affecting the main UI.
-// The server binds to loopback only; only the authenticated TLS tunnel reaches
-// the Host. The entire GGUF stays on the Host.
+// Discover real ggml compute backends. Vulkan devices are reported only
+// after the driver/ICD initialized successfully; CPU remains available when
+// a phone lacks a suitable Vulkan implementation.
+namespace {
+static bool isGpu(ggml_backend_dev_t d) {
+    const auto type = ggml_backend_dev_type(d);
+    return type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU;
+}
+static std::string jsonEscaped(const char* value) {
+    std::string out;
+    for(const unsigned char c : std::string(value ? value : "")) {
+        if(c == '"' || c == '\\') {out += '\\'; out += static_cast<char>(c);}
+        else if(c >= 32 && c < 127) out += static_cast<char>(c);
+        else if(c >= 128) out += static_cast<char>(c);
+    }
+    return out;
+}
+}
+
+// The report is informational. Android integrated GPU memory can be shared
+// with system RAM; the Host's memory planner uses a max rather than a sum.
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads) {
-    if (threads < 1 || threads > 8) {
+Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
+    ggml_backend_load_all();
+    std::ostringstream s;
+    s << "{\\"gpus\\":[";
+    bool first = true;
+    for(size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        if(!d || !isGpu(d)) continue;
+        size_t freeBytes = 0, totalBytes = 0;
+        ggml_backend_dev_memory(d, &freeBytes, &totalBytes);
+        if(!first) s << ",";
+        first = false;
+        s << "{\\"name\\":\\"" << jsonEscaped(ggml_backend_dev_name(d))
+          << "\\",\\"vendor\\":\\"vulkan\\",\\"vram_bytes\\":" << totalBytes
+          << ",\\"free_vram_bytes\\":" << std::min(freeBytes,totalBytes) << "}";
+    }
+    s << "]}";
+    return env->NewStringUTF(s.str().c_str());
+}
+
+// Run in an isolated Android :rpc process. The pinned upstream has no
+// shutdown API; killing this process releases all Vulkan/CPU allocations.
+// Mode: auto = GPU + CPU when available else CPU; cpu = CPU only;
+// gpu = Vulkan only; hybrid = Vulkan + CPU (requires Vulkan).
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue) {
+    if(threads < 1 || threads > 8)
         return env->NewStringUTF("RPC CPU threads must be between 1 and 8");
+    const std::string mode = utf(env, modeValue);
+    if(mode != "auto" && mode != "cpu" && mode != "gpu" && mode != "hybrid")
+        return env->NewStringUTF("Invalid RPC backend mode");
+    if(rpcStarted.exchange(true)) return env->NewStringUTF("");
+    ggml_backend_load_all();
+    ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    ggml_backend_dev_t gpu = nullptr;
+    for(size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        auto dev = ggml_backend_dev_get(i);
+        if(dev && isGpu(dev)) { gpu = dev; break; }
     }
-    if (rpcStarted.exchange(true)) {
-        return env->NewStringUTF("");
+    if((mode == "gpu" || mode == "hybrid") && !gpu) {
+        rpcStarted.store(false);
+        return env->NewStringUTF("Vulkan unavailable on this Android device; select CPU or Auto");
     }
+    if((mode == "auto" || mode == "cpu" || mode == "hybrid") && !cpu) {
+        rpcStarted.store(false);
+        return env->NewStringUTF("GGML CPU backend unavailable");
+    }
+    std::vector<ggml_backend_dev_t> devices;
+    if(mode != "cpu" && gpu) devices.push_back(gpu);
+    if(mode != "gpu" && cpu) devices.push_back(cpu);
+    if(devices.empty()) {
+        rpcStarted.store(false);
+        return env->NewStringUTF("No usable CPU or Vulkan RPC backend found");
+    }
+    __android_log_print(ANDROID_LOG_INFO, "NodexLM-RPC",
+        "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
+        devices.size(),gpu?"yes":"no",cpu?"yes":"no");
     try {
-        std::thread([threads] {
+        std::thread([threads, devices] {
             try {
-                ggml_backend_load_all();
-                ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-                if (!cpu) {
-                    __android_log_print(ANDROID_LOG_ERROR, "NodexLM-RPC", "CPU backend not found");
-                    return;
-                }
                 ggml_backend_rpc_start_server("127.0.0.1:50052", nullptr,
-                                              static_cast<size_t>(threads), 1, &cpu);
-            } catch (const std::exception &e) {
-                __android_log_print(ANDROID_LOG_ERROR, "NodexLM-RPC", "Native RPC exception: %s", e.what());
-            } catch (...) {
-                __android_log_print(ANDROID_LOG_ERROR, "NodexLM-RPC", "Unknown native RPC exception");
+                    static_cast<size_t>(threads), devices.size(),
+                    const_cast<ggml_backend_dev_t*>(devices.data()));
+            } catch(const std::exception& e) {
+                __android_log_print(ANDROID_LOG_ERROR,"NodexLM-RPC","RPC server: %s",e.what());
+            } catch(...) {
+                __android_log_print(ANDROID_LOG_ERROR,"NodexLM-RPC","Unknown native RPC error");
             }
+            rpcStarted.store(false);
         }).detach();
-    } catch (const std::exception &e) {
+    } catch(const std::exception& e) {
         rpcStarted.store(false);
         return env->NewStringUTF(e.what());
     }

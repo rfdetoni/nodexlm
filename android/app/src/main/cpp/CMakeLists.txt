@@ -13,6 +13,13 @@ set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 set(GGML_RPC ON CACHE BOOL "" FORCE)
 set(GGML_RPC_RDMA OFF CACHE BOOL "" FORCE)
 set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+# ARM64 can expose CPU and Vulkan (integrated) GPU to the same RPC endpoint.
+# ARM32 remains CPU-only for compatibility with older Android 10 phones.
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+else()
+    set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+endif()
 # ARMv7 cannot execute AArch64-only optimized kernels.
 if(ANDROID_ABI STREQUAL "armeabi-v7a")
     set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)

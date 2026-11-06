@@ -48,6 +48,7 @@ class RpcGuestService : Service() {
         const val EXTRA_NODE = "node"
         const val EXTRA_TOKEN = "token"
         const val EXTRA_NAME = "name"
+        const val EXTRA_MODE = "mode"
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
         private const val PORT = 50052
@@ -76,6 +77,7 @@ class RpcGuestService : Service() {
         val node = intent.getStringExtra(EXTRA_NODE) ?: ""
         val token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { Build.MODEL }
+        val mode = intent.getStringExtra(EXTRA_MODE).orEmpty().ifBlank { "auto" }
         val parsed = try { URI(endpoint) } catch (_: Exception) { null }
         if (parsed == null || parsed.scheme != "https" || parsed.host.isNullOrEmpty() || parsed.rawUserInfo != null ||
             parsed.rawQuery != null || parsed.rawFragment != null || endpoint.contains('\r') ||
@@ -93,12 +95,12 @@ class RpcGuestService : Service() {
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
                 val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
-                val message = NativeRpc.start(threads)
+                val message = NativeRpc.start(threads, mode)
                 check(message.isEmpty()) { message }
                 awaitNativeRPC()
                 val sslContext = pinnedSSLContext()
-                // Heartbeats report only measured Android RAM; there is no reliable
-                // Android GPU VRAM number, so it is deliberately not advertised.
+                // Share measured Vulkan heap counters; on mobile GPUs memory can
+                // be shared with RAM and must never be counted twice by the Host.
                 thread(name = "nodexlm-rpc-heartbeat", isDaemon = true) {
                     while (running.get()) {
                         try { sendHeartbeat(endpoint, node, token, name, sslContext) }
@@ -209,9 +211,14 @@ class RpcGuestService : Service() {
             .put("cpu_count", Runtime.getRuntime().availableProcessors())
             .put("ram_bytes", memory.totalMem)
             .put("available_ram_bytes", available)
-            .put("gpus", JSONArray())
+            .put("gpus", try {
+                JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
+            } catch (e: Exception) {
+                Log.w(LOG, "Vulkan metrics unavailable", e)
+                JSONArray()
+            })
             .put("runtime", JSONObject()
-                .put("engine", "ggml-rpc-cpu")
+                .put("engine", "ggml-rpc-cpu-vulkan")
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
                 .put("rpc_ready", false))

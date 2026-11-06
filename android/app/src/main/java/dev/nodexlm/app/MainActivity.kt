@@ -17,6 +17,8 @@ import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
+import android.widget.Spinner
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -124,8 +126,38 @@ class MainActivity : Activity() {
         content.addView(pairing)
         val worker=card()
         worker.addView(label("Processamento",18,true))
-        worker.addView(label("Guest RPC distribuído · CPU/RAM do celular processam partes do mesmo modelo selecionado no Host. Não é necessário baixar o GGUF no Android. Requer Host usando llama.cpp ${NativeRpc.VERSION}.",13,false))
+        worker.addView(label("Guest RPC distribuído · CPU e GPU Vulkan podem processar partes do mesmo GGUF do Host. Em GPUs integradas, RAM e VRAM podem ser compartilhadas. Requer llama.cpp ${NativeRpc.VERSION}.",13,false))
+        val modes = listOf("Automático (GPU + CPU, com fallback CPU)", "Somente CPU", "Somente GPU Vulkan", "GPU Vulkan + CPU")
+        val identifiers = listOf("auto", "cpu", "gpu", "hybrid")
+        val selector = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, modes)
+            setSelection(identifiers.indexOf(prefs.getString("rpc_mode", "auto")).coerceAtLeast(0))
+            onItemSelectedListener = object: android.widget.AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    prefs.edit().putString("rpc_mode", identifiers[position]).apply()
+                }
+            }
+        }
+        worker.addView(label("Backend de processamento",13,false))
+        worker.addView(selector)
         worker.addView(action("Ativar Guest RPC (sem GGUF local)") {startRpcGuest()})
+        val gpuStatus = label("Verificando GPU Vulkan...",12,false)
+        worker.addView(gpuStatus)
+        thread(name="nodexlm-vulkan-probe") {
+            val report = try {
+                val devices = org.json.JSONObject(NativeRpc.inspect()).optJSONArray("gpus")
+                if(devices == null || devices.length() == 0) "GPU Vulkan indisponível · CPU disponível"
+                else buildString {
+                    append("Vulkan detectado: ")
+                    for(i in 0 until devices.length()) {
+                        if(i>0)append(", ")
+                        append(devices.optJSONObject(i)?.optString("name", "GPU") ?: "GPU")
+                    }
+                }
+            } catch(e: Throwable) { "Não foi possível consultar a GPU; CPU permanece disponível" }
+            runOnUiThread {gpuStatus.text = report}
+        }
         worker.addView(action("Parar Guest RPC") {
             startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
             setStatus("Desativando Guest RPC")
@@ -198,6 +230,7 @@ class MainActivity : Activity() {
                 .putExtra(RpcGuestService.EXTRA_NODE,id)
                 .putExtra(RpcGuestService.EXTRA_TOKEN,token)
                 .putExtra(RpcGuestService.EXTRA_NAME,prefs.getString("name",Build.MODEL) ?: Build.MODEL)
+                .putExtra(RpcGuestService.EXTRA_MODE,prefs.getString("rpc_mode", "auto") ?: "auto")
             startForegroundService(intent)
             setStatus("Iniciando Guest RPC · acompanhe a notificação e o painel do Host")
         } catch(e:Exception) {setStatus("Falha ao iniciar Guest RPC: ${e.message}")}
