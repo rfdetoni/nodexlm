@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: nodexlm-rpc-runtime-b12143
+  group: nodexlm-rpc-runtime-b12143-r2
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq git cmake make g++ pkg-config
+          sudo apt-get install -y -qq git cmake make g++ pkg-config patchelf file
       - name: Fetch and verify pinned upstream source
         run: |
           set -euo pipefail
@@ -55,10 +55,32 @@ jobs:
           grep -Fq -- '--rpc' <<< "$output" || { echo "::error::llama-server is missing --rpc"; exit 1; }
           mkdir -p staging/bin dist
           cp -L build/bin/llama-server "build/bin/$rpc" staging/bin/
-          # Preserve any required shared runtime libraries as regular files.
-          shopt -s nullglob
-          for lib in build/bin/*.so build/bin/*.so.*; do
-            cp -L "$lib" staging/bin/
+          # Upstream places ELF shared libraries in multiple CMake output
+          # directories, not necessarily build/bin. Copy real files AND all
+          # SONAME symlink basenames as regular files, since our archive
+          # extractor intentionally rejects symlinks.
+          while IFS= read -r -d '' lib; do
+            cp -L "$lib" "staging/bin/$(basename "$lib")"
+          done < <(find build \( -type f -o -type l \) \
+            \( -name 'libggml*.so*' -o -name 'libllama*.so*' \) -print0)
+          test -f staging/bin/libggml.so.0 || {
+            echo "::error::GGML SONAME library missing from packaged runtime"
+            find build -name 'libggml*.so*' -print
+            exit 1
+          }
+          # Let both executables and their dependent libraries resolve siblings
+          # without LD_LIBRARY_PATH or sudo. $ORIGIN is relative to each ELF.
+          for candidate in staging/bin/*; do
+            if file -b "$candidate" | grep -q ELF; then
+              patchelf --set-rpath '$ORIGIN' "$candidate"
+            fi
+          done
+          for binary in staging/bin/llama-server "staging/bin/$rpc"; do
+            ldd "$binary" | tee "/tmp/$(basename "$binary")-ldd.txt"
+            if grep -Fq 'not found' "/tmp/$(basename "$binary")-ldd.txt"; then
+              echo "::error::Incomplete ELF dependencies for $binary"
+              exit 1
+            fi
           done
           cp llama-source/LICENSE staging/LICENSE.llama.cpp
           chmod 755 staging/bin/llama-server "staging/bin/$rpc"
@@ -73,7 +95,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag=nodexlm-rpc-b12143
+          tag=nodexlm-rpc-b12143-r2
+          # New immutable release fixes GGML SONAME packaging in the first build.
           # Do not overwrite a pinned runtime release with an unreviewed build.
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             echo "Pinned $tag already exists; keeping existing asset immutable."
@@ -83,5 +106,5 @@ jobs:
             --repo "$GH_REPO" \
             --target main \
             --title "NodexLM pinned RPC runtime (llama.cpp b12143)" \
-            --notes 'Verified pinned llama.cpp b12143, source commit 2bc46baa9207d098d03741ac394e7faaf1a955b6. Contains matching llama-server + ggml-rpc-server with GGML_RPC=ON, portable CPU backend for Linux x86_64. Download integrity is checked using SHA256SUMS.txt. This runtime is experimental and intended only for trusted LAN tunnels.' \
+            --notes 'Verified pinned llama.cpp b12143, source commit 2bc46baa9207d098d03741ac394e7faaf1a955b6. Contains matching llama-server + ggml-rpc-server with all required versioned GGML ELF libraries and $ORIGIN RPATH, portable CPU backend for Linux x86_64. Download integrity is checked using SHA256SUMS.txt. This runtime is experimental and intended only for trusted LAN tunnels.' \
             --prerelease --latest=false
