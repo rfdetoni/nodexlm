@@ -117,9 +117,9 @@ class RpcGuestService : Service() {
                                 backoff = 1000L
                             } catch (e: Exception) {
                                 if (running.get()) Log.w(LOG, "RPC tunnel $slot: ${e.message}")
-                                backoff = (backoff * 2).coerceAtMost(10_000)
                             }
                             sleepWhileRunning(backoff)
+                            backoff = (backoff * 2).coerceAtMost(10_000)
                         }
                     }
                 }
@@ -252,14 +252,15 @@ class RpcGuestService : Service() {
 
     private fun readStatus(input: java.io.InputStream): String {
         val result = ByteArrayOutputStream()
-        val tail = byteArrayOf(13, 10, 13, 10)
+        var trailer = 0
         while (result.size() < 8192) {
             val next = input.read()
             if (next < 0) error("Host closed CONNECT")
             result.write(next)
-            val bytes = result.toByteArray()
-            if (bytes.size >= 4 && bytes.takeLast(4).toByteArray().contentEquals(tail)) {
-                return String(bytes, Charsets.US_ASCII).lineSequence().first()
+            // Track CRLFCRLF without repeatedly copying the entire header buffer.
+            trailer = (trailer shl 8) or next
+            if (result.size() >= 4 && trailer == 0x0D0A0D0A) {
+                return result.toString(Charsets.US_ASCII.name()).lineSequence().first()
             }
         }
         error("Oversized CONNECT response")
