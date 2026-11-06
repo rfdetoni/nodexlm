@@ -10,6 +10,7 @@ on:
       - main
     paths:
       - '.github/workflows/android-apk.yml'
+      - 'android/app/src/main/cpp/CMakeLists.txt'
     tags:
       - 'v*'
 

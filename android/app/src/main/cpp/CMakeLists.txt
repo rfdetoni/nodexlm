@@ -11,6 +11,8 @@ set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 # ARMv7 cannot execute AArch64-only optimized kernels.
 if(ANDROID_ABI STREQUAL "armeabi-v7a")
     set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+    # Baseline 32-bit ARM lacks the llamafile FP16 Neon intrinsics.
+    set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 endif()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(llamacpp
