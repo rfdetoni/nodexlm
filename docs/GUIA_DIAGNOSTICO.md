@@ -125,18 +125,6 @@ Compare `nodexlm version` nos dispositivos. Não exclua credenciais ou o
 runtime apenas por esse texto; as falhas de modelo devem ser diagnosticadas
 pelo erro de carregamento, não por fechamento de socket isolado.
 
-## Host: `RPC tunnel capacity reached` / Guest recebe HTTP 503
-
-O Host aceita até oito túneis autenticados por Guest. As conexões ociosas
-precisam continuar reservadas para o próximo carregamento de GGUF, mas
-**não** podem ocupar vagas após o fechamento do socket do Guest.
-
-Quando o Guest é reiniciado, o relay verifica EOF dos túneis ociosos,
-libera suas vagas e retira as entradas da fila. Não é necessário excluir
-o pareamento; reinicie o processo Host após atualizar o binário para
-carregar a correção. Um HTTP 503 também pode indicar oito sessões
-realmente ativas: neste caso a capacidade deve ser verificada no Host.
-
 ## Host: `Remote RPC server crashed or returned malformed response`
 
 O erro `recv failed (bytes_recv=0, size_to_recv=8)` durante
