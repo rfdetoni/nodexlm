@@ -38,11 +38,11 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 		cfg = transport.TLSClientConfig.Clone()
 		cfg.ServerName = u.Hostname()
 	}
-    // The binary GGML relay uses HTTP/1.1 CONNECT followed by hijacking.
-    // The REST client may have advertised "h2" on its shared TLS config.
-    // Inheriting that ALPN breaks raw CONNECT: HTTP/2 SETTINGS is parsed as
-    // a malformed HTTP/1.1 response. Keep pinned TLS verification unchanged.
-    cfg.NextProtos = []string{"http/1.1"}
+	// The binary GGML relay uses HTTP/1.1 CONNECT followed by hijacking.
+	// The REST client may have advertised "h2" on its shared TLS config.
+	// Inheriting that ALPN breaks raw CONNECT: HTTP/2 SETTINGS is parsed as
+	// a malformed HTTP/1.1 response. Keep pinned TLS verification unchanged.
+	cfg.NextProtos = []string{"http/1.1"}
 	d := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", u.Host)
 	if err != nil {
@@ -57,11 +57,11 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 		secured.Close()
 		return fmt.Errorf("RPC TLS handshake: %w", err)
 	}
-    negotiated := secured.ConnectionState().NegotiatedProtocol
-    if negotiated != "" && negotiated != "http/1.1" {
-        secured.Close()
-        return fmt.Errorf("RPC tunnel requires HTTP/1.1, TLS negotiated %q", negotiated)
-    }
+	negotiated := secured.ConnectionState().NegotiatedProtocol
+	if negotiated != "" && negotiated != "http/1.1" {
+		secured.Close()
+		return fmt.Errorf("RPC tunnel requires HTTP/1.1, TLS negotiated %q", negotiated)
+	}
 	defer secured.Close()
 	finished := make(chan struct{})
 	defer close(finished)
