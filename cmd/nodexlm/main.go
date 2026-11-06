@@ -460,7 +460,7 @@ func guest(args []string) error {
     backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
     bin := f.String("rpc-bin", "", "matching rpc-server executable")
     address := f.String("rpc-addr", "127.0.0.1:50052", "loopback RPC address")
-    tunnels := f.Int("tunnels", 4, "concurrent secured tunnels (1-8)")
+    tunnels := f.Int("tunnels", 8, "concurrent secured tunnels (1-8)")
     discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "LAN UDP discovery port")
     if err := f.Parse(args); err != nil { return err }
     if f.NArg() != 0 { return errors.New("unexpected Guest arguments") }
@@ -758,7 +758,7 @@ func rpcNode(args []string) error {
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
 	addr := f.String("rpc-addr", "127.0.0.1:50052", "native RPC loopback address")
-	slots := f.Int("tunnels", 4, "simultaneous secured RPC tunnels (1-8)")
+	slots := f.Int("tunnels", 8, "simultaneous secured RPC tunnels (1-8)")
 	ca := f.String("ca", "", "Host certificate for legacy enrollment")
 	if err := f.Parse(args); err != nil {
 		return err
