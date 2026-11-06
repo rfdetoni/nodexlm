@@ -4,6 +4,13 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Em desenvolvimento — 2026-11-06
 
+### Estabilidade RPC — Host, Linux e Android
+- Limite de tempo para TLS e resposta CONNECT; reconexões progressivas com reinício após sessão bem-sucedida.
+- O Guest Linux monitora o processo GGML nativo e rejeita porta RPC ocupada.
+- O Guest Android monitora a thread RPC nativa, encerra o serviço caso ela morra e reduz as alocações na leitura HTTP.
+- Build Android disparado somente por alterações em `android/**` ou no próprio workflow.
+- Mensagens GGML de EOF em conexões de sondagem diferenciadas de falhas efetivas do Host.
+
 ### Adicionado
 - Guest Android RPC com servidor GGML nativo em processo isolado, usando túnel TLS autenticado e certificado do Host fixado.
 - Seleção Android de backend: automático (Vulkan + CPU quando disponível), somente CPU, somente GPU Vulkan e GPU + CPU.
