@@ -21,6 +21,10 @@ on:
       - 'android/app/src/main/java/dev/nodexlm/app/ComputeService.kt'
       - 'android/app/src/main/java/dev/nodexlm/app/RpcGuestService.kt'
       - 'android/app/src/main/java/dev/nodexlm/app/NativeRpc.kt'
+      - 'android/app/src/main/cpp/native.cpp'
+      - 'android/app/src/main/AndroidManifest.xml'
+      - 'android/app/src/main/java/dev/nodexlm/app/RpcGuestService.kt'
+      - 'android/app/src/main/java/dev/nodexlm/app/NativeRpc.kt'
     tags:
       - 'v*'
 

@@ -254,7 +254,10 @@ class RpcGuestService : Service() {
 
     private fun connectAndRelay(host: String, port: Int, node: String,
                                 token: String, ssl: SSLContext) {
-        val remote = track(ssl.socketFactory.createSocket() as SSLSocket)
+        // Keep the concrete SSLSocket type: the generic socket tracker returns
+        // Socket and would erase SSL parameters/handshake APIs at compile time.
+        val remote = ssl.socketFactory.createSocket() as SSLSocket
+        track(remote)
         try {
             remote.keepAlive = true
             remote.connect(InetSocketAddress(host, port), 7000)
