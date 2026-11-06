@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"math/rand"
 	"net/http"
 	"runtime"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/config"
+	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
@@ -54,10 +56,18 @@ func (r *Runner) Run(ctx context.Context) error {
 		return errors.New("worker requires a model and local llama-server backend")
 	}
 	delay := time.Second
+    deviceName, _ := os.Hostname()
+    var profile protocol.Device
+    var sampledAt time.Time
 	for ctx.Err() == nil {
+        if time.Since(sampledAt) >= 15*time.Second {
+            profile = hardware.Collect(deviceName, []string{r.Model})
+            profile.Runtime.Installed = true
+            sampledAt = time.Now()
+        }
 		var work protocol.Job
 		queryCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
-		status, err := r.Client.Request(queryCtx, http.MethodPost, "/v1/nodes/lease", map[string][]string{"models": {r.Model}}, &work)
+		status, err := r.Client.Request(queryCtx, http.MethodPost, "/v1/nodes/lease", profile, &work)
 		cancel()
 		if err != nil {
 			r.Logger.Warn("coordinator temporarily unavailable", "error", err)

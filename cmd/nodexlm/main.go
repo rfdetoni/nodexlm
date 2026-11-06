@@ -65,6 +65,8 @@ func run(args []string) error {
 		return serve(append([]string{"--pair", "--addr", "0.0.0.0:8443"}, args[1:]...))
 	case "join":
 		return join(args[1:])
+	case "guest":
+		return guest(args[1:])
 	case "pairing":
 		return newPairing(args[1:])
 	case "node":
@@ -99,6 +101,8 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm web-token                  # print local Web UI admin credential
   nodexlm coordinator --addr 0.0.0.0:8443 --pair
   nodexlm join                       # prompts for 8-character code
+  nodexlm guest                      # discover Host, pair, start distributed RPC worker
+  nodexlm guest --backend cpu        # CPU-only distributed Guest
   nodexlm join --code ABCD2345 --name worker-1
   nodexlm pairing # issue a fresh 8-character code
   nodexlm join --server https://host:8443 --name worker-1 --model model.gguf --ca ./server.crt
@@ -266,11 +270,18 @@ func serve(args []string) error {
 			}
 		}()
 		slog.Info("Web management ready", "url", "http://"+webListener.Addr().String(), "auth", "run nodexlm web-token on host")
+        _, webPort, _ := net.SplitHostPort(webListener.Addr().String())
+        fmt.Printf("\n  Painel Web (somente neste computador): http://localhost:%s\n  Token de acesso: nodexlm web-token\n\n", webPort)
 	}
 	c, cancel := ctx()
 	defer cancel()
 	go s.Cleanup(c)
 	endpoints := pairing.LocalEndpoints(*addr)
+    if len(endpoints)>0 {
+        fmt.Println("  Endereços HTTPS do Host para os Guests:")
+        for _, address := range endpoints { fmt.Println("   ", address) }
+        fmt.Println()
+    }
 	go func() {
 		if err := pairing.ListenDiscovery(c, *discoveryPort, func() []pairing.Offer { return s.Offers(endpoints) }); err != nil && c.Err() == nil {
 			slog.Error("LAN discovery unavailable", "error", err)
@@ -436,6 +447,51 @@ func join(args []string) error {
 	return nil
 }
 
+// guest discovers and securely pairs with the Host before starting a native
+// distributed RPC Guest. The code proves TLS identity; no admin token is used.
+func guest(args []string) error {
+    f := fs("guest")
+    server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
+    name := f.String("name", "", "display name of this Guest")
+    code := f.String("code", "", "8-character pairing code; prompted when absent")
+    dir := f.String("dir", config.DefaultDir(), "Guest configuration directory")
+    backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
+    bin := f.String("rpc-bin", "", "matching rpc-server executable")
+    address := f.String("rpc-addr", "127.0.0.1:50052", "loopback RPC address")
+    tunnels := f.Int("tunnels", 4, "concurrent secured tunnels (1-8)")
+    discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "LAN UDP discovery port")
+    if err := f.Parse(args); err != nil { return err }
+    if f.NArg() != 0 { return errors.New("unexpected Guest arguments") }
+    if _, err := config.ReadAgent(*dir); err != nil {
+        if !errors.Is(err, os.ErrNotExist) { return fmt.Errorf("Guest credentials: %w", err) }
+        if *server == "" {
+            fmt.Println("Procurando Hosts na rede local...")
+            discoveryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+            offers, e := pairing.Discover(discoveryCtx, *discoveryPort, 3*time.Second)
+            cancel()
+            if e == nil && len(offers)>0 {
+                fmt.Println("Hosts encontrados (a identidade será verificada pelo código):")
+                seen:=map[string]bool{}
+                for _,offer:=range offers {
+                    if !seen[offer.Endpoint] { fmt.Println("  "+offer.Endpoint);seen[offer.Endpoint]=true }
+                }
+            } else {
+                fmt.Println("Nenhum Host detectado; use --server https://IP:8443 se necessário.")
+            }
+        }
+        options:=[]string{"--dir",*dir,"--discovery-port",fmt.Sprint(*discoveryPort)}
+        if *server!="" {options=append(options,"--server",*server)}
+        if *name!="" {options=append(options,"--name",*name)}
+        if *code!="" {options=append(options,"--code",*code)}
+        if err := join(options); err != nil { return err }
+    } else {
+        fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
+    }
+    fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
+    options:=[]string{"--dir",*dir,"--backend",*backend,"--rpc-addr",*address,"--tunnels",fmt.Sprint(*tunnels)}
+    if *bin!="" {options=append(options,"--rpc-bin",*bin)}
+    return rpcNode(options)
+}
 func newPairing(args []string) error {
 	f := fs("pairing")
 	server := f.String("server", "https://127.0.0.1:8443", "host coordinator")

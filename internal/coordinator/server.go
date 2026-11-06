@@ -204,12 +204,14 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		Models            []string `json:"models"`
 		RAMBytes          uint64   `json:"ram_bytes"`
 		AvailableRAMBytes uint64   `json:"available_ram_bytes"`
+        GPUs []protocol.GPUDevice `json:"gpus"`
+        Runtime protocol.RuntimeCapability `json:"runtime"`
 	}
 	if !parse(w, r, &req) {
 		return
 	}
-	if len(req.Models) > 128 {
-		fail(w, 400, "too many models")
+	if len(req.Models) > 128 || len(req.GPUs) > 16 {
+        fail(w, 400, "invalid model or GPU count")
 		return
 	}
 	deadline := time.NewTimer(leaseWait)
@@ -220,9 +222,22 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		n.device.Status = "online"
 		n.device.Models = append([]string(nil), req.Models...)
 		if req.RAMBytes > 0 && req.RAMBytes < 1<<50 && req.AvailableRAMBytes <= req.RAMBytes {
-			n.device.RAMBytes = req.RAMBytes
-			n.device.AvailableRAMBytes = req.AvailableRAMBytes
-		}
+            n.device.RAMBytes = req.RAMBytes
+            n.device.AvailableRAMBytes = req.AvailableRAMBytes
+        }
+        if req.GPUs != nil {
+            valid := true
+            for _, gpu := range req.GPUs {
+                if gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes || len(gpu.Name) > 128 { valid = false; break }
+            }
+            if valid { n.device.GPUs = append([]protocol.GPUDevice(nil),req.GPUs...) }
+        }
+        if req.Runtime.Engine != "" {
+            n.device.Runtime.Installed = req.Runtime.Installed
+            n.device.Runtime.Engine = req.Runtime.Engine
+            n.device.Runtime.Version = req.Runtime.Version
+            // RPC readiness is set exclusively by the authenticated tunnel.
+        }
 		if n.active == "" {
 			for i, jid := range s.queue {
 				j := s.jobs[jid]

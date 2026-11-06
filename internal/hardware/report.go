@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -98,6 +99,40 @@ func gpuNVIDIA() []protocol.GPUDevice {
 	return result
 }
 
+// DRM supplies measured VRAM of AMD and Intel GPUs on Linux. Shared-memory
+// iGPUs often omit dedicated VRAM counters; never fabricate a free value.
+func drmDevices(root string) []protocol.GPUDevice {
+    entries, err := os.ReadDir(root)
+    if err != nil { return nil }
+    var devices []protocol.GPUDevice
+    for _, entry := range entries {
+        card := entry.Name()
+        if !strings.HasPrefix(card, "card") || len(card) < 5 { continue }
+        if _, err := strconv.Atoi(card[4:]); err != nil { continue }
+        device := filepath.Join(root, card, "device")
+        vendorRaw, err := os.ReadFile(filepath.Join(device, "vendor"))
+        if err != nil { continue }
+        vendor := ""
+        switch strings.ToLower(strings.TrimSpace(string(vendorRaw))) {
+        case "0x1002": vendor = "amd"
+        case "0x8086": vendor = "intel"
+        default: continue
+        }
+        totalRaw, _ := os.ReadFile(filepath.Join(device, "mem_info_vram_total"))
+        usedRaw, usedErr := os.ReadFile(filepath.Join(device, "mem_info_vram_used"))
+        total, e1 := strconv.ParseUint(strings.TrimSpace(string(totalRaw)), 10, 64)
+        used, e2 := strconv.ParseUint(strings.TrimSpace(string(usedRaw)), 10, 64)
+        if e1 != nil { total = 0 }
+        free := uint64(0)
+        if usedErr == nil && e2 == nil && used <= total { free = total-used }
+        devices = append(devices, protocol.GPUDevice{
+            Name: strings.ToUpper(vendor)+" "+card, Vendor: vendor,
+            VRAMBytes: total, FreeVRAMBytes: free,
+        })
+    }
+    return devices
+}
+
 // Collect only advertises measured hardware. Unknown free memory remains zero,
 // preventing the coordinator from promising unsupported distributed placements.
 func Collect(name string, models []string) protocol.Device {
@@ -111,6 +146,7 @@ func Collect(name string, models []string) protocol.Device {
 		d.RAMBytes, d.AvailableRAMBytes = memoryWindows()
 	}
 	d.GPUs = gpuNVIDIA()
+	if runtime.GOOS == "linux" { d.GPUs = append(d.GPUs, drmDevices("/sys/class/drm")...) }
 	d.Runtime = protocol.RuntimeCapability{Engine: "llama.cpp", Version: llamaruntime.Version}
 	if _, _, err := llamaruntime.Installed(runtimeHome(), "auto"); err == nil {
 		d.Runtime.Installed = true
