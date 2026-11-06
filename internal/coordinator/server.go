@@ -19,6 +19,7 @@ import (
 
 	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
 
 const (
@@ -46,13 +47,14 @@ type Server struct {
 	storePath  string
 	pair       *pairing.Session
 	certDER    []byte
+	rpcHub     *rpcmesh.Hub
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
 	if len(adminToken) < 32 || len(enrollmentToken) < 32 || adminToken == enrollmentToken {
 		return nil, errors.New("admin and enrollment tokens must be distinct, at least 32 characters each")
 	}
-	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default()}, nil
+	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -64,7 +66,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/pairing/offer", s.pairingOffer)
 	mux.HandleFunc("POST /v1/pairing/start", s.pairingStart)
 	mux.HandleFunc("POST /v1/pairing/enroll", s.pairingEnroll)
+	mux.HandleFunc("POST /v1/nodes/heartbeat", s.heartbeat)
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
+	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
 	mux.HandleFunc("POST /v1/nodes/result/{id}", s.result)
 	mux.HandleFunc("GET /v1/nodes", s.listNodes)
 	mux.HandleFunc("DELETE /v1/nodes/{id}", s.revokeNode)
@@ -482,4 +486,76 @@ func (s *Server) Cleanup(ctx context.Context) {
 			s.mu.Unlock()
 		}
 	}
+}
+
+// RPCEndpoints returns the loopback-only RPC endpoints whose Guests have
+// active authenticated connections. Each endpoint represents one remote node.
+func (s *Server) RPCEndpoints() []string      { return s.rpcHub.Endpoints() }
+func (s *Server) RPCNodes() map[string]string { return s.rpcHub.ReadyNodes() }
+func (s *Server) CloseRPC()                   { s.rpcHub.Close() }
+func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
+	_, id := s.identify(r)
+	if id == "" {
+		fail(w, 401, "invalid node credential")
+		return
+	}
+	s.mu.Lock()
+	if n := s.nodes[id]; n != nil {
+		n.device.Runtime.RPCReady = true
+		n.device.LastSeen = time.Now()
+		n.device.Status = "online"
+	}
+	s.mu.Unlock()
+	s.rpcHub.ServeTunnel(w, r, id)
+}
+
+// heartbeat retains the authenticated node identity while updating live
+// resources. A node is not allowed to advertise itself as another node.
+func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
+	_, id := s.identify(r)
+	if id == "" {
+		fail(w, 401, "unauthorized")
+		return
+	}
+	var profile protocol.Device
+	if !parse(w, r, &profile) {
+		return
+	}
+	if !validDevice(profile) || len(profile.GPUs) > 16 || profile.CPUCount < 1 || profile.CPUCount > 4096 {
+		fail(w, 400, "invalid node profile")
+		return
+	}
+	s.mu.Lock()
+	n := s.nodes[id]
+	if n == nil {
+		s.mu.Unlock()
+		fail(w, 401, "unauthorized")
+		return
+	}
+	profile.ID = id
+	profile.LastSeen = time.Now()
+	profile.Status = "online"
+	profile.Busy = n.device.Busy
+	// RPCReady is asserted only when a tunnel is authenticated, not by a guest.
+	profile.Runtime.RPCReady = n.device.Runtime.RPCReady
+	n.device = profile
+	s.mu.Unlock()
+	respond(w, 200, map[string]string{"status": "online"})
+}
+
+// DevicesSnapshot returns an immutable copy for the localhost dashboard.
+func (s *Server) DevicesSnapshot() []protocol.Device {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]protocol.Device, 0, len(s.nodes))
+	for _, n := range s.nodes {
+		d := n.device
+		d.GPUs = append([]protocol.GPUDevice(nil), d.GPUs...)
+		d.Models = append([]string(nil), d.Models...)
+		if time.Since(d.LastSeen) > heartbeatGrace {
+			d.Status = "offline"
+		}
+		out = append(out, d)
+	}
+	return out
 }

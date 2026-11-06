@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
@@ -31,6 +32,7 @@ type Settings struct {
 	MoECPU        bool   `json:"moe_cpu"`
 	MoECPULayers  int    `json:"moe_cpu_layers"`
 	MoECacheMiB   int    `json:"moe_cache_mib"`
+	Distributed   bool   `json:"distributed"`
 }
 
 type Download struct {
@@ -51,6 +53,7 @@ type Manager struct {
 	download              *Download
 	cancel                context.CancelFunc
 	httpClient            *http.Client
+	rpcEndpoints          func() []string
 }
 
 func NewManager(dir, modelDir, binary string) (*Manager, error) {
@@ -82,6 +85,11 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	return m, nil
 }
 
+func (m *Manager) SetRPCProvider(provider func() []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rpcEndpoints = provider
+}
 func (m *Manager) Models() ([]protocol.ModelRecord, error) { return local.Models(m.modelDir) }
 func (m *Manager) Settings() Settings                      { m.mu.Lock(); defer m.mu.Unlock(); return m.settings }
 func (m *Manager) State() map[string]any {
@@ -189,7 +197,35 @@ func (m *Manager) Load(ctx context.Context) error {
 	if _, err = os.Stat(path); err != nil {
 		return err
 	}
-	engine := &local.Managed{Binary: m.binary, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, KeepLoaded: true}
+	rpcEndpoints := []string(nil)
+	if s.Distributed {
+		if m.rpcEndpoints == nil {
+			return errors.New("distributed inference needs a Host coordinator")
+		}
+		rpcEndpoints = m.rpcEndpoints()
+		if len(rpcEndpoints) == 0 {
+			return errors.New("no authenticated RPC Guests are connected")
+		}
+	}
+	var resolved string
+	if s.Distributed && (m.binary == "" || m.binary == "llama-server") {
+		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, "auto")
+	} else {
+		resolved, err = llamaruntime.AutoExecutable(ctx, m.dir, m.binary)
+	}
+	if err != nil {
+		return err
+	}
+	if s.Distributed && !llamaruntime.SupportsRPC(ctx, resolved) {
+		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
+	}
+	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, KeepLoaded: true}
+	if s.Distributed {
+		engine.RPCServers = rpcEndpoints
+		if s.GPULayers == "auto" {
+			engine.GPULayers = "all"
+		}
+	}
 	if err = engine.Load(ctx); err != nil {
 		engine.Close()
 		return err

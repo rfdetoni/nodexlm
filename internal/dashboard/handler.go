@@ -9,10 +9,14 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"github.com/rfdetoni/nodexlm/internal/catalog"
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
+	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -63,6 +67,35 @@ func (d *Dashboard) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/status", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"runtime": d.Manager.State(), "settings": d.Manager.Settings(), "download": d.Manager.DownloadState()})
+	}))
+	mux.HandleFunc("GET /api/cluster", d.api(func(w http.ResponseWriter, r *http.Request) {
+		name, _ := os.Hostname()
+		host := hardware.Collect("Host: "+name, nil)
+		host.Status = "online"
+		host.LastSeen = time.Now()
+		nodes := d.Cluster.DevicesSnapshot()
+		devices := append([]protocol.Device{host}, nodes...)
+		summary := clusterplan.Aggregate(devices, time.Now())
+		reply(w, 200, map[string]any{"resources": summary, "rpc_guests": d.Cluster.RPCNodes()})
+	}))
+	mux.HandleFunc("GET /api/catalog", d.api(func(w http.ResponseWriter, r *http.Request) {
+		name, _ := os.Hostname()
+		host := hardware.Collect("Host: "+name, nil)
+		host.Status = "online"
+		host.LastSeen = time.Now()
+		summary := clusterplan.Aggregate(append([]protocol.Device{host}, d.Cluster.DevicesSnapshot()...), time.Now())
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		models, err := (catalog.Hub{}).Search(ctx, r.URL.Query().Get("q"))
+		if err != nil {
+			failure(w, 400, err)
+			return
+		}
+		recommendations := make([]clusterplan.Recommendation, 0, len(models))
+		for _, m := range models {
+			recommendations = append(recommendations, clusterplan.Assess(summary, m))
+		}
+		reply(w, 200, recommendations)
 	}))
 	mux.HandleFunc("GET /api/models", d.api(func(w http.ResponseWriter, r *http.Request) {
 		items, err := d.Manager.Models()

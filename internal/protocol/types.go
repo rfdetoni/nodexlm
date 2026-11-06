@@ -20,17 +20,34 @@ type ChatRequest struct {
 	TargetNode  string    `json:"target_node,omitempty"`
 }
 
+type GPUDevice struct {
+	Name          string `json:"name"`
+	Vendor        string `json:"vendor"`
+	VRAMBytes     uint64 `json:"vram_bytes,omitempty"`
+	FreeVRAMBytes uint64 `json:"free_vram_bytes,omitempty"`
+}
+
+type RuntimeCapability struct {
+	Engine    string `json:"engine,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Installed bool   `json:"installed"`
+	RPCReady  bool   `json:"rpc_ready"`
+}
+
 type Device struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Platform     string    `json:"platform"`
-	Architecture string    `json:"architecture"`
-	CPUCount     int       `json:"cpu_count"`
-	RAMBytes     uint64    `json:"ram_bytes,omitempty"`
-	Models       []string  `json:"models,omitempty"`
-	LastSeen     time.Time `json:"last_seen"`
-	Status       string    `json:"status"`
-	Busy         bool      `json:"busy"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Platform          string            `json:"platform"`
+	Architecture      string            `json:"architecture"`
+	CPUCount          int               `json:"cpu_count"`
+	RAMBytes          uint64            `json:"ram_bytes,omitempty"`
+	AvailableRAMBytes uint64            `json:"available_ram_bytes,omitempty"`
+	GPUs              []GPUDevice       `json:"gpus,omitempty"`
+	Runtime           RuntimeCapability `json:"runtime"`
+	Models            []string          `json:"models,omitempty"`
+	LastSeen          time.Time         `json:"last_seen"`
+	Status            string            `json:"status"`
+	Busy              bool              `json:"busy"`
 }
 
 type Enrollment struct {

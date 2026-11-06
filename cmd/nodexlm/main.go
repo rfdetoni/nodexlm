@@ -27,10 +27,13 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/config"
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
 	"github.com/rfdetoni/nodexlm/internal/dashboard"
+	"github.com/rfdetoni/nodexlm/internal/hardware"
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 	"github.com/rfdetoni/nodexlm/internal/worker"
 )
 
@@ -65,6 +68,8 @@ func run(args []string) error {
 		return newPairing(args[1:])
 	case "node":
 		return node(args[1:])
+	case "rpc-node":
+		return rpcNode(args[1:])
 	case "nodes":
 		return nodes(args[1:])
 	case "revoke":
@@ -95,6 +100,7 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm pairing # issue a fresh 8-character code
   nodexlm join --server https://host:8443 --name worker-1 --model model.gguf --ca ./server.crt
   nodexlm node --backend http://127.0.0.1:8080 --model model.gguf --ca ./server.crt
+  nodexlm rpc-node                   # shares CPU/GPU for ONE distributed GGUF
   nodexlm nodes --server https://host:8443 --ca ./server.crt
   nodexlm revoke --id NODE_ID --server https://host:8443 --ca ./server.crt
   nodexlm chat --server https://host:8443 --model model.gguf --prompt "Hello" --ca ./server.crt
@@ -172,6 +178,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	defer s.CloseRPC()
 	if err := s.SetStore(filepath.Join(*dir, "registry.json")); err != nil {
 		return err
 	}
@@ -228,6 +235,7 @@ func serve(args []string) error {
 			return err
 		}
 		defer manager.Close()
+		manager.SetRPCProvider(s.RPCEndpoints)
 		webListener, err = net.Listen("tcp", *webAddr)
 		if err != nil {
 			return fmt.Errorf("Web UI listen: %w", err)
@@ -504,7 +512,11 @@ func node(args []string) error {
 				cpu = 1
 			}
 		}
-		managed = &local.Managed{Binary: *bin, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+		resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		managed = &local.Managed{Binary: resolved, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 		engine = managed
 	}
 	if managed != nil {
@@ -646,7 +658,11 @@ func localChat(args []string) error {
 			cpu = 1
 		}
 	}
-	engine := &local.Managed{Binary: *bin, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+	resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), config.DefaultDir(), *bin)
+	if resolveErr != nil {
+		return resolveErr
+	}
+	engine := &local.Managed{Binary: resolved, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 	defer engine.Close()
 	c, cancel := ctx()
 	defer cancel()
@@ -656,4 +672,78 @@ func localChat(args []string) error {
 	}
 	fmt.Println(result)
 	return nil
+}
+
+// rpcNode offers native ggml RPC to the enrolled Host through HTTPS tunnels.
+// It never exposes the unprotected rpc-server outside 127.0.0.1.
+func rpcNode(args []string) error {
+	f := fs("rpc-node")
+	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
+	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
+	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
+	addr := f.String("rpc-addr", "127.0.0.1:50052", "native RPC loopback address")
+	slots := f.Int("tunnels", 4, "simultaneous secured RPC tunnels (1-8)")
+	ca := f.String("ca", "", "Host certificate for legacy enrollment")
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	if *slots < 1 || *slots > 8 {
+		return errors.New("--tunnels must be between 1 and 8")
+	}
+	if err := rpcmesh.ValidateRPCAddress(*addr); err != nil {
+		return err
+	}
+	agent, err := config.ReadAgent(*dir)
+	if err != nil {
+		return fmt.Errorf("node not paired: %w", err)
+	}
+	cli, err := makeClient(agent.Coordinator, agent.Node.Token, *ca, agent.Node.NodeID)
+	if err != nil {
+		return err
+	}
+	if agent.CertificateFingerprint != "" && *ca == "" {
+		if err = cli.UsePinnedCertificate(agent.CertificateFingerprint); err != nil {
+			return err
+		}
+	}
+	if agent.CertificateFingerprint == "" && *ca == "" {
+		return errors.New("RPC requires a paired certificate pin or --ca")
+	}
+	executable := *bin
+	if executable == "" {
+		c, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
+		defer cancel()
+		_, executable, err = llamaruntime.EnsureDistributed(c, *dir, *backend)
+		if err != nil {
+			return err
+		}
+		if executable == "" {
+			return errors.New("llama.cpp runtime does not include an RPC worker; install or build matching ggml-rpc-server with GGML_RPC=ON")
+		}
+	}
+	c, cancel := ctx()
+	defer cancel()
+	// A lightweight heartbeat informs the Host of real hardware availability.
+	name, _ := os.Hostname()
+	profile := hardware.Collect(name, nil)
+	profile.Runtime.Installed = true
+	profile.Runtime.Version = llamaruntime.Version
+	go func() {
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			profile = hardware.Collect(name, nil)
+			profile.Runtime.Installed = true
+			profile.Runtime.Version = llamaruntime.Version
+			beatCtx, stop := context.WithTimeout(c, 5*time.Second)
+			_, _ = cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+			stop()
+			select {
+			case <-c.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots)
 }

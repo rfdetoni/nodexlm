@@ -133,5 +133,6 @@ func (s *Server) revokeNode(w http.ResponseWriter, r *http.Request) {
 			j.Error = "node authorization revoked"
 		}
 	}
+	s.rpcHub.Remove(id)
 	respond(w, 200, map[string]string{"status": "revoked"})
 }

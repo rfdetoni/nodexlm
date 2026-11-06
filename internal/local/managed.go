@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/config"
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
 
@@ -33,6 +35,7 @@ type Managed struct {
 	MoECacheMiB              int
 	Idle                     time.Duration
 	KeepLoaded               bool
+	RPCServers               []string
 	started                  *exec.Cmd
 	endpoint                 *Engine
 	idleTimer                *time.Timer
@@ -69,8 +72,12 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if m.started != nil {
 		return nil
 	}
-	if m.Binary == "" {
-		m.Binary = "llama-server"
+	if m.Binary == "" || m.Binary == "llama-server" {
+		executable, err := llamaruntime.AutoExecutable(ctx, config.DefaultDir(), m.Binary)
+		if err != nil {
+			return fmt.Errorf("llama.cpp automatic installation failed: %w", err)
+		}
+		m.Binary = executable
 	}
 	if m.ModelPath == "" {
 		return errors.New("local model path required")
@@ -188,6 +195,17 @@ func (m *Managed) args(port, nctx, threads int, gpu string) []string {
 	}
 	if m.MoECacheMiB > 0 {
 		args = append(args, "--moe-cache-mib", strconv.Itoa(m.MoECacheMiB))
+	}
+	if len(m.RPCServers) > 0 {
+		// Never accept arbitrary network addresses from the Web UI or a remote
+		// model request. Only loopback relays owned by the coordinator are used.
+		for _, addr := range m.RPCServers {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+				return args
+			}
+		}
+		args = append(args, "--rpc", strings.Join(m.RPCServers, ","), "--split-mode", "layer")
 	}
 	return args
 }

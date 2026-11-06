@@ -2,7 +2,7 @@
 
 Local AI inference and a lightweight coordinator/worker runtime for heterogeneous Linux, Windows, macOS and Android devices.
 
-**Status: alpha.** The Go CLI/coordinator and local `llama-server` integration are functional; Android JNI service and Flutter desktop UI are experimental and have not yet been validated by device builds. Remote requests are scheduled as whole jobs on workers. Distributing *one* model across nodes by RPC / expert-parallelism is not yet implemented.
+**Status: alpha.** The Go CLI/coordinator and local `llama-server` integration are functional; Android JNI service and Flutter desktop UI are experimental and have not yet been validated by device builds. Remote requests are scheduled as whole jobs on workers. A proof-of-concept of **one-model layer-distributed RPC inference** is now available for desktop Guests through a pinned and authenticated LAN tunnel; it has not been benchmarked against real multi-device GGUF workloads. Android as an RPC Guest and MoE expert-parallelism remain unimplemented.
 
 This is an independent implementation. PrivateLM was a functional reference, but no application source code from PrivateLM has been copied. Model execution uses [llama.cpp](https://github.com/ggml-org/llama.cpp) as an external runtime / native dependency.
 
@@ -112,3 +112,48 @@ local port, use `--web-addr 127.0.0.1:8888`.
 
 Web resource usage scales with the number of live requests, not with keeping
 an application window open. Refreshing the page does not restart inference.
+
+## Single-model distributed inference (experimental)
+
+The Host loads **one** GGUF. The Guests only run native ggml RPC compute
+servers and do **not** download or load a second copy of the model. This is
+the same layer-based RPC design used by PrivateLM, implemented independently.
+
+**Host**, on a trusted LAN:
+
+```sh
+nodexlm host
+# Open http://127.0.0.1:8787, authenticate with `nodexlm web-token`.
+```
+
+**Guest** on the same LAN:
+
+```sh
+nodexlm join --code <8-CHAR-CODE>
+nodexlm rpc-node
+```
+
+`rpc-node` installs a pinned llama.cpp runtime automatically if needed. When
+precompiled releases do not include RPC, NodexLM builds a matched server and
+RPC worker from pinned upstream source (requires Git, CMake and C/C++ toolchain).
+A native `ggml-rpc-server` listens only on `127.0.0.1:50052`, never on the
+public LAN. Guest-initiated TLS connections, authenticated with the paired node
+credential and Host certificate pin, carry the binary RPC streams. Each Host
+relay also binds to loopback and gets passed to `llama-server --rpc`.
+
+In the Host Web UI, select a model, check **Distribuir o modelo entre os Guests
+RPC conectados**, save settings, and load it. With `gpu_layers=auto` the host
+uses `all` in distributed mode, allowing llama.cpp to place GGUF layers across
+local and remote devices. Actual layer splits are decided by llama.cpp based
+on device memory. The model GGUF remains on the Host.
+
+Do not confuse this with the separate `nodexlm node --model-path` workflow,
+which handles whole requests using independent model copies on worker nodes.
+
+**Limitations**: llama.cpp's RPC backend remains experimental. Network bandwidth,
+CPU/GPU driver support, equal runtime versions and memory limits determine
+whether a particular model can load and run. A wired LAN is recommended.
+Active RPC tunnels consume sockets and a small amount of memory; when the
+native worker exits, its process releases allocated model buffers. Android
+integration and live heterogeneous benchmarks are pending. The model discovery
+panel provides memory *estimates*, not verified compatibility guarantees.

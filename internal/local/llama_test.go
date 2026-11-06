@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rfdetoni/nodexlm/internal/protocol"
@@ -46,5 +47,19 @@ func TestEngineAndGGUFScanner(t *testing.T) {
 	models, err := Models(dir)
 	if err != nil || len(models) != 1 || models[0].Name != "valid.gguf" {
 		t.Fatalf("models %v err %v", models, err)
+	}
+}
+
+func TestRPCArgsDoNotExposeExternalEndpoints(t *testing.T) {
+	m := &Managed{ModelPath: "model.gguf", Alias: "model.gguf", RPCServers: []string{"127.0.0.1:50051", "127.0.0.1:50052"}}
+	args := m.args(17000, 2048, 4, "all")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--rpc 127.0.0.1:50051,127.0.0.1:50052") || !strings.Contains(joined, "--split-mode layer") {
+		t.Fatalf("missing distributed parameters: %v", args)
+	}
+	m.RPCServers = []string{"192.168.1.5:50052"}
+	args = m.args(17000, 2048, 4, "all")
+	if strings.Contains(strings.Join(args, " "), "--rpc") {
+		t.Fatal("nonloopback RPC endpoint must not be forwarded")
 	}
 }
