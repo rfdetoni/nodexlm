@@ -5,6 +5,7 @@ package dev.nodexlm.app
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.os.Build
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -43,7 +44,18 @@ class UpdateManager(private val activity: Activity) {
 
     fun start() {
         if (!receiverRegistered) {
-            activity.registerReceiver(receiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // DownloadManager broadcasts originate from a separate system app UID.
+                // ACTION_DOWNLOAD_COMPLETE is not a protected system broadcast on
+                // Android 14+, so an explicit receiver flag is mandatory.
+                // Never trust its payload without checking the stored download ID
+                // and re-querying DownloadManager for completion and SHA-256.
+                activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                activity.registerReceiver(receiver, filter)
+            }
             receiverRegistered = true
         }
         // Check at most once a day when the application is opened; never keep

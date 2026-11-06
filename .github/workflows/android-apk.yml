@@ -11,6 +11,9 @@ on:
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/app/src/main/cpp/CMakeLists.txt'
+      # Build only when the startup/update code changes; no CI on unrelated commits.
+      - 'android/app/src/main/java/dev/nodexlm/app/UpdateManager.kt'
+      - 'android/app/src/main/java/dev/nodexlm/app/MainActivity.kt'
     tags:
       - 'v*'
 

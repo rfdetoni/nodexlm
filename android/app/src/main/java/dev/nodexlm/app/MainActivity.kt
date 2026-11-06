@@ -16,6 +16,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.concurrent.thread
@@ -92,11 +93,21 @@ class MainActivity : Activity() {
         val scroller = android.widget.ScrollView(this)
         scroller.addView(root,ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))
         setContentView(scroller)
-        updateManager.start()
+        // Update checking is optional; its failure must never prevent launching
+        // the primary local inference and cluster UI.
+        try {
+            updateManager.start()
+        } catch (e: Exception) {
+            Log.e("NodexLMStartup", "Update service failed; main UI remains available", e)
+        }
     }
     override fun onResume() {
         super.onResume()
-        updateManager.onResume()
+        try {
+            updateManager.onResume()
+        } catch (e: Exception) {
+            Log.e("NodexLMStartup", "Update resume failed", e)
+        }
     }
     override fun onDestroy() {
         updateManager.stop()
