@@ -9,6 +9,10 @@ on:
       - main
     paths:
       - '.github/workflows/desktop-binaries.yml'
+      - 'cmd/nodexlm/main.go'
+      - 'internal/hardware/report.go'
+      - 'internal/worker/runner.go'
+      - 'internal/coordinator/server.go'
       - 'internal/dashboard/static/**'
       - 'scripts/test-dashboard-models.cjs'
     tags:
@@ -33,6 +37,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Go tests and vet (Linux Guest metrics, CLI and Host)
+        run: |
+          go test ./...
+          go vet ./...
       - name: Dashboard model list regression test
         run: |
           node --check internal/dashboard/static/app.js

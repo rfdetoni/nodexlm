@@ -9,6 +9,7 @@ let pendingApply = null;
 let actionBusy = false;
 let catalogSearching = false;
 let catalogSearched = false;
+let downloadPollBusy = false;
 const fmt = bytes => bytes > 0 ? (bytes / 1073741824).toFixed(2) + ' GiB' : '—';
 function notice(message) { $('toast').textContent=message; $('toast').style.display='block'; clearTimeout(notice.timer); notice.timer=setTimeout(() => $('toast').style.display='none', 4800); }
 async function api(path, method='GET', body) {
@@ -43,16 +44,21 @@ function action(label, className, handler, disabled=false) {
  return btn;
 }
 function renderDownload(download) {
- const area=$('downloadProgress');area.replaceChildren();
- if(!download)return;
- const status=el('div','download-label', (download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':'Falhou')+' · '+download.name);
- area.append(status);
- if(download.status==='downloading') {
-  const bar=el('progress','download-bar');bar.max=download.total>0?download.total:1;
-  if(download.total>0)bar.value=download.received;
-  area.append(bar);
-  area.append(el('small','muted',fmt(download.received)+(download.total>0?' / '+fmt(download.total)+' · '+Math.min(100,Math.floor(download.received*100/download.total))+'%':'')));
- } else if(download.error)area.append(el('small','muted',download.error));
+ for(const id of ['downloadProgress','catalogDownloadProgress']) {
+  const area=$(id); if(!area)continue; area.replaceChildren();
+  if(!download)continue;
+  const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':'Falhou';
+  area.append(el('div','download-label',label+' · '+download.name));
+  if(download.status==='downloading') {
+   const bar=el('progress','download-bar');
+   bar.max=download.total>0?download.total:1;
+   if(download.total>0)bar.value=download.received;
+   bar.setAttribute('aria-label','Progresso do download de '+download.name);
+   area.append(bar);
+   const percent=download.total>0?Math.min(100,Math.floor(download.received*100/download.total))+'%':'Tamanho desconhecido';
+   area.append(el('small','muted',fmt(download.received)+(download.total>0?' / '+fmt(download.total):'')+' · '+percent));
+  }else if(download.error) area.append(el('small','muted',download.error));
+ }
 }
 async function applyModel(name) {
  if(actionBusy)return;
@@ -138,6 +144,16 @@ function renderCatalog() {
   if(installed)tags.append(el('span','model-tag active','Baixado'));
   info.append(tags);
   if(m.reason)info.append(el('p','model-reason',m.reason));
+  const transfer=latestStatus?.download;
+  if(transfer?.status==='downloading' && transfer.name===name) {
+   const bar=el('progress','download-bar');bar.max=transfer.total>0?transfer.total:1;
+   if(transfer.total>0)bar.value=transfer.received;
+   bar.setAttribute('aria-label','Baixando '+name);
+   info.append(bar);
+   info.append(el('div','model-meta',transfer.total>0?
+    Math.min(100,Math.floor(transfer.received*100/transfer.total))+'% · '+fmt(transfer.received)+' / '+fmt(transfer.total):
+    'Baixando · '+fmt(transfer.received)));
+  }
   const actions=el('div','model-actions');
   if(installed)actions.append(action('Aplicar','',()=>applyModel(name),actionBusy));
   else if(name && m.url) {
@@ -161,7 +177,11 @@ async function refresh(){
   $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; settingsInitialized=true;
  }
  renderLocalModels(models,status);renderCatalog();
- const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':''),(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');const btn=document.createElement('button');btn.className='secondary';btn.textContent='Revogar';btn.addEventListener('click',async()=>{if(!confirm('Revogar acesso de '+n.name+'?'))return;try{await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh();}catch(e){notice(e.message)}});td.append(btn);tr.append(td);tbody.append(tr)}
+ const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
+ const gpus=Array.isArray(n.gpus)?n.gpus:[];
+ const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
+ const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
+ const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');const btn=document.createElement('button');btn.className='secondary';btn.textContent='Revogar';btn.addEventListener('click',async()=>{if(!confirm('Revogar acesso de '+n.name+'?'))return;try{await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh();}catch(e){notice(e.message)}});td.append(btn);tr.append(td);tbody.append(tr)}
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -181,6 +201,17 @@ $('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pa
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{const prompt=$('prompt').value;$('chatOutput').textContent='Gerando resposta...';const result=await api('/api/chat','POST',{messages:[{role:'user',content:prompt}],max_tokens:512});$('chatOutput').textContent=result.answer})});
 setupAuth();if(token)guard(refresh);
 setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)},10000);
+// Poll only transfer status during downloads, avoiding full cluster refresh each second.
+setInterval(async()=>{
+ if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;
+ downloadPollBusy=true;
+ try {
+  const d=await api('/api/download');
+  latestStatus.download=d;renderDownload(d);renderCatalog();
+  if(d?.status!=='downloading')await refresh();
+ } catch(e) {console.warn('Download status unavailable',e);}
+ finally {downloadPollBusy=false;}
+},1000);
 
 $('catalogFilter').addEventListener('change',renderCatalog);
 $('catalogForm').addEventListener('submit',e=>{e.preventDefault();if(catalogSearching)return;guard(async()=>{

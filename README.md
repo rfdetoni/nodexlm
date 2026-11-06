@@ -271,3 +271,29 @@ The `edge` channel is experimental.
 You can inspect and manually download all binaries at
 [GitHub Releases](https://github.com/rfdetoni/nodexlm/releases).
 
+
+## Linux Guests, Host panel and Android screen-off processing
+
+Run `nodexlm host` to start the Host. The terminal shows the local
+management URL `http://localhost:8787` (not exposed to the LAN), along
+with LAN HTTPS endpoints for Guest pairing. On a separate Linux machine run
+`nodexlm guest`: it discovers the Host via local UDP broadcast, requests
+the 8-character pairing code, verifies the Host certificate and starts a
+distributed RPC Guest. Existing pairing is reused. Use
+`nodexlm guest --backend cpu` for CPU-only operation or
+`nodexlm guest --server https://HOST-IP:8443` if discovery is blocked.
+The admin token is never required to join.
+
+Standard Linux model workers send live RAM/VRAM with their leases.
+Linux native RPC Guests send authenticated hardware heartbeats.
+NVIDIA is queried via nvidia-smi; AMD and Intel DRM drivers report
+dedicated VRAM when measurable. Shared GPU memory is never fabricated.
+The cluster view displays the measured resources per Guest.
+
+The Host's Hugging Face model list shows download progress next to
+the selected GGUF and in the download panel, updated every second.
+Android 10+ keeps the explicitly started foreground worker's CPU active
+when the screen is locked. This increases battery consumption; stop the
+worker when idle, and remove vendor battery restrictions if necessary.
+The Android implementation currently runs complete-model inference and
+does not provide a native distributed RPC Guest.
