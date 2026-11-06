@@ -8,12 +8,18 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <thread>
+#include <exception>
+#include <android/log.h>
 #include "llama.h"
+#include "ggml-backend.h"
+#include "ggml-rpc.h"
 
 namespace {
 std::mutex guard;
 std::atomic<bool> cancelled{false};
 std::once_flag initialized;
+std::atomic<bool> rpcStarted{false};
 jbyteArray bytes(JNIEnv* env,const std::string& value) {
     auto result=env->NewByteArray((jsize)value.size());
     if (result) env->SetByteArrayRegion(result,0,(jsize)value.size(),(const jbyte*)value.data());
@@ -131,4 +137,43 @@ Java_dev_nodexlm_app_NativeEntry_unload(JNIEnv*,jobject) {
 extern "C" JNIEXPORT void JNICALL
 Java_dev_nodexlm_app_NativeEntry_cancel(JNIEnv*,jobject) {
     cancelled.store(true);
+}
+
+
+// Started only inside RpcGuestService's dedicated :rpc Android process.
+// ggml_backend_rpc_start_server() is intentionally blocking and provides no
+// stop function in this pinned upstream version. Stopping that foreground
+// service tears down the isolated process instead of affecting the main UI.
+// The server binds to loopback only; only the authenticated TLS tunnel reaches
+// the Host. The entire GGUF stays on the Host.
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads) {
+    if (threads < 1 || threads > 8) {
+        return env->NewStringUTF("RPC CPU threads must be between 1 and 8");
+    }
+    if (rpcStarted.exchange(true)) {
+        return env->NewStringUTF("");
+    }
+    try {
+        std::thread([threads] {
+            try {
+                ggml_backend_load_all();
+                ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+                if (!cpu) {
+                    __android_log_print(ANDROID_LOG_ERROR, "NodexLM-RPC", "CPU backend not found");
+                    return;
+                }
+                ggml_backend_rpc_start_server("127.0.0.1:50052", nullptr,
+                                              static_cast<size_t>(threads), 1, &cpu);
+            } catch (const std::exception &e) {
+                __android_log_print(ANDROID_LOG_ERROR, "NodexLM-RPC", "Native RPC exception: %s", e.what());
+            } catch (...) {
+                __android_log_print(ANDROID_LOG_ERROR, "NodexLM-RPC", "Unknown native RPC exception");
+            }
+        }).detach();
+    } catch (const std::exception &e) {
+        rpcStarted.store(false);
+        return env->NewStringUTF(e.what());
+    }
+    return env->NewStringUTF("");
 }

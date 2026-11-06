@@ -14,6 +14,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".RpcGuestService" android:exported="false"
+            android:process=":rpc" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-initiated on-device CPU inference as a secure distributed GGML RPC Guest, including when the screen is off, with a persistent notification and stop control." />
+        </service>
         <service android:name=".ComputeService" android:exported="false"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
