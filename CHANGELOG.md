@@ -6,10 +6,10 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ### Estabilidade RPC — Host, Linux e Android
 - Limite de tempo para TLS e resposta CONNECT; reconexões progressivas com reinício após sessão bem-sucedida.
-- O Guest Linux monitora o processo GGML nativo e rejeita porta RPC ocupada.
-- O Guest Android monitora a thread RPC nativa, encerra o serviço caso ela morra e reduz as alocações na leitura HTTP.
+- O Guest Linux monitora o processo GGML nativo, rejeita porta RPC ocupada e reserva 8 túneis para picos de descoberta do modelo.
+- O Guest Android monitora a thread RPC nativa, encerra o serviço caso ela morra, reserva 8 túneis e reduz as alocações na leitura HTTP.
 - Build Android disparado somente por alterações em `android/**` ou no próprio workflow.
-- Mensagens GGML de EOF em conexões de sondagem diferenciadas de falhas efetivas do Host.
+- Mensagens GGML de EOF em conexões de sondagem diferenciadas de falhas efetivas do Host; relay registra esgotamento e timeout de túneis.
 
 ### Adicionado
 - Guest Android RPC com servidor GGML nativo em processo isolado, usando túnel TLS autenticado e certificado do Host fixado.
