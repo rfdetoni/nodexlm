@@ -134,21 +134,21 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 // nativeRPCEnvironment makes the bundled GGML shared libraries visible to the
 // dynamic loader without requiring global installation or sudo.
 func nativeRPCEnvironment(executable string) []string {
-    env := os.Environ()
-    dir := filepath.Dir(executable)
-    switch runtime.GOOS {
-    case "linux":
-        value := dir
-        if inherited := os.Getenv("LD_LIBRARY_PATH"); inherited != "" {
-            value += string(os.PathListSeparator) + inherited
-        }
-        return append(env, "LD_LIBRARY_PATH="+value)
-    case "darwin":
-        value := dir
-        if inherited := os.Getenv("DYLD_LIBRARY_PATH"); inherited != "" {
-            value += string(os.PathListSeparator) + inherited
-        }
-        return append(env, "DYLD_LIBRARY_PATH="+value)
-    }
-    return env
+	env := os.Environ()
+	dir := filepath.Dir(executable)
+	switch runtime.GOOS {
+	case "linux":
+		value := dir
+		if inherited := os.Getenv("LD_LIBRARY_PATH"); inherited != "" {
+			value += string(os.PathListSeparator) + inherited
+		}
+		return append(env, "LD_LIBRARY_PATH="+value)
+	case "darwin":
+		value := dir
+		if inherited := os.Getenv("DYLD_LIBRARY_PATH"); inherited != "" {
+			value += string(os.PathListSeparator) + inherited
+		}
+		return append(env, "DYLD_LIBRARY_PATH="+value)
+	}
+	return env
 }
