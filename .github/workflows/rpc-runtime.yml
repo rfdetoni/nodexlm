@@ -45,7 +45,7 @@ jobs:
             -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_EXAMPLES=ON \
             -DLLAMA_BUILD_SERVER=ON
-          cmake --build build --config Release --parallel 2
+          cmake --build build --config Release --parallel 2 --target llama-server ggml-rpc-server
           test -x build/bin/llama-server
           if test -x build/bin/ggml-rpc-server; then rpc=ggml-rpc-server
           elif test -x build/bin/rpc-server; then rpc=rpc-server
@@ -63,11 +63,9 @@ jobs:
             cp -L "$lib" "staging/bin/$(basename "$lib")"
           done < <(find build \( -type f -o -type l \) \
             \( -name 'libggml*.so*' -o -name 'libllama*.so*' \) -print0)
-          test -f staging/bin/libggml.so.0 || {
-            echo "::error::GGML SONAME library missing from packaged runtime"
-            find build -name 'libggml*.so*' -print
-            exit 1
-          }
+          # A fully static GGML build needs no libggml.so.N. A shared GGML
+          # build does; the definitive check is the ELF dependency resolver
+          # below, rather than testing an unconditional SONAME filename.
           # Let both executables and their dependent libraries resolve siblings
           # without LD_LIBRARY_PATH or sudo. $ORIGIN is relative to each ELF.
           for candidate in staging/bin/*; do
@@ -106,5 +104,5 @@ jobs:
             --repo "$GH_REPO" \
             --target main \
             --title "NodexLM pinned RPC runtime (llama.cpp b12143)" \
-            --notes 'Verified pinned llama.cpp b12143, source commit 2bc46baa9207d098d03741ac394e7faaf1a955b6. Contains matching llama-server + ggml-rpc-server with all required versioned GGML ELF libraries and $ORIGIN RPATH, portable CPU backend for Linux x86_64. Download integrity is checked using SHA256SUMS.txt. This runtime is experimental and intended only for trusted LAN tunnels.' \
+            --notes 'Verified pinned llama.cpp b12143, source commit 2bc46baa9207d098d03741ac394e7faaf1a955b6. Contains matching llama-server + ggml-rpc-server with GGML linked statically or all required versioned ELF libraries included, plus $ORIGIN RPATH, portable CPU backend for Linux x86_64. Download integrity is checked using SHA256SUMS.txt. This runtime is experimental and intended only for trusted LAN tunnels.' \
             --prerelease --latest=false
