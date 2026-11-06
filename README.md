@@ -80,7 +80,7 @@ When no model is loaded, `llama-server` is not running. Model weights and accele
 memory are held in the separate native inference process only while loaded.
 
 ```sh
-# Make sure a compatible llama-server executable is installed separately.
+# llama.cpp is provisioned automatically when a model is loaded.
 nodexlm host --model-dir "$HOME/.nodexlm/models" --llama-bin llama-server
 # On the same host, read the private admin token for the login form:
 nodexlm web-token
@@ -142,10 +142,17 @@ credential and Host certificate pin, carry the binary RPC streams. Each Host
 relay also binds to loopback and gets passed to `llama-server --rpc`.
 
 In the Host Web UI, select a model, check **Distribuir o modelo entre os Guests
-RPC conectados**, save settings, and load it. With `gpu_layers=auto` the host
-uses `all` in distributed mode, allowing llama.cpp to place GGUF layers across
-local and remote devices. Actual layer splits are decided by llama.cpp based
-on device memory. The model GGUF remains on the Host.
+RPC conectados**, save settings, and load it. NodexLM reads the GGUF
+`<architecture>.block_count` without mapping its weights; it calculates how many
+first layers to retain on the Host CPU from reported available RAM/VRAM and
+assigns the remaining layers to the native RPC devices. The Host keeps
+`output.weight` and `token_embd.weight` locally via a tensor override and
+disables host operation offload. llama.cpp distributes the remote layers over
+the reported RPC devices based on free device memory; it may fail to load if
+a device is incompatible or has insufficient memory despite the estimate.
+The GGUF remains on the Host; Guests receive tensor data and compute graphs,
+not another persistent model copy. Host and Guest executables must use
+compatible llama.cpp RPC protocol builds.
 
 Do not confuse this with the separate `nodexlm node --model-path` workflow,
 which handles whole requests using independent model copies on worker nodes.
@@ -154,6 +161,8 @@ which handles whole requests using independent model copies on worker nodes.
 CPU/GPU driver support, equal runtime versions and memory limits determine
 whether a particular model can load and run. A wired LAN is recommended.
 Active RPC tunnels consume sockets and a small amount of memory; when the
-native worker exits, its process releases allocated model buffers. Android
-integration and live heterogeneous benchmarks are pending. The model discovery
+native worker exits, its process releases allocated model buffers. A Guest
+without a valid memory report cannot be used for automatic layer placement.
+Android still needs a dedicated native RPC worker implementation and live
+heterogeneous benchmarks are pending. The model discovery
 panel provides memory *estimates*, not verified compatibility guarantees.

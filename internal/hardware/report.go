@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -51,8 +52,30 @@ func memoryLinux() (uint64, uint64) {
 func memoryDarwin() (uint64, uint64) {
 	raw := command(1*time.Second, "sysctl", "-n", "hw.memsize")
 	n, _ := strconv.ParseUint(raw, 10, 64)
-	// Do not invent "free RAM" from total RAM: memory pressure is dynamic.
-	return n, 0
+	// vm_stat reports currently reclaimable pages, unlike hw.memsize alone.
+	stats := command(time.Second, "vm_stat")
+	pageSize := uint64(4096)
+	if match := regexp.MustCompile(`page size of (\d+) bytes`).FindStringSubmatch(stats); len(match) == 2 {
+		if value, err := strconv.ParseUint(match[1], 10, 64); err == nil && value >= 4096 && value <= 65536 {
+			pageSize = value
+		}
+	}
+	var pages uint64
+	for _, line := range strings.Split(stats, "\n") {
+		for _, prefix := range []string{"Pages free:", "Pages inactive:", "Pages speculative:"} {
+			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+				value := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(line), prefix), "."))
+				if v, err := strconv.ParseUint(value, 10, 64); err == nil {
+					pages += v
+				}
+			}
+		}
+	}
+	available := pages * pageSize
+	if available > n {
+		available = n
+	}
+	return n, available
 }
 func gpuNVIDIA() []protocol.GPUDevice {
 	out := command(2*time.Second, "nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits")
@@ -84,6 +107,8 @@ func Collect(name string, models []string) protocol.Device {
 		d.RAMBytes, d.AvailableRAMBytes = memoryLinux()
 	case "darwin":
 		d.RAMBytes, d.AvailableRAMBytes = memoryDarwin()
+	case "windows":
+		d.RAMBytes, d.AvailableRAMBytes = memoryWindows()
 	}
 	d.GPUs = gpuNVIDIA()
 	d.Runtime = protocol.RuntimeCapability{Engine: "llama.cpp", Version: llamaruntime.Version}

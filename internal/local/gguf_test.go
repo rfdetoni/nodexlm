@@ -23,7 +23,7 @@ func ggufTestFile(arch string, experts, used uint32) []byte {
 	b.WriteString("GGUF")
 	write(uint32(3))
 	write(uint64(0))
-	count := uint64(2) // arch and unknown tokenizer array
+	count := uint64(3) // arch, transformer blocks, and unknown tokenizer array
 	if experts != 0 {
 		count += 2
 	}
@@ -31,6 +31,8 @@ func ggufTestFile(arch string, experts, used uint32) []byte {
 	key("general.architecture", ggufString)
 	write(uint64(len(arch)))
 	b.WriteString(arch)
+	key(arch+".block_count", ggufUint32)
+	write(uint32(32))
 	key("tokenizer.ggml.tokens", ggufArray)
 	write(uint32(ggufString))
 	write(uint64(2))
@@ -65,7 +67,7 @@ func TestInspectMoEAndDenseGGUF(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if info.Architecture != test.arch || info.ExpertCount != test.experts || info.ActiveExperts != test.used || info.IsMoE != test.moe {
+			if info.Architecture != test.arch || info.BlockCount != 32 || info.ExpertCount != test.experts || info.ActiveExperts != test.used || info.IsMoE != test.moe {
 				t.Fatalf("info %+v", info)
 			}
 			models, err := Models(filepath.Dir(path))
@@ -103,7 +105,7 @@ func TestMoEOptions(t *testing.T) {
 		t.Fatal("dense accepted MoE-only flags")
 	}
 	m := &Managed{MoECPU: true, MoECacheMiB: 256, ModelPath: "model.gguf", Alias: "model"}
-	args := m.args(8080, 2048, 4, "auto")
+	args := m.args(8080, 2048, 4, "auto", 0)
 	if !reflect.DeepEqual(args[len(args)-3:], []string{"--cpu-moe", "--moe-cache-mib", "256"}) {
 		t.Fatalf("wrong args: %v", args)
 	}

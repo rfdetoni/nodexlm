@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/config"
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
 	"github.com/rfdetoni/nodexlm/internal/dashboard"
@@ -235,7 +236,19 @@ func serve(args []string) error {
 			return err
 		}
 		defer manager.Close()
-		manager.SetRPCProvider(s.RPCEndpoints)
+		manager.SetRPCProvider(func() []dashboard.RPCGuest {
+			ready := s.RPCNodes()
+			profiles := s.DevicesSnapshot()
+			out := make([]dashboard.RPCGuest, 0, len(ready))
+			for _, profile := range profiles {
+				endpoint, ok := ready[profile.ID]
+				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
+					continue
+				}
+				out = append(out, dashboard.RPCGuest{Endpoint: endpoint, CapacityBytes: clusterplan.Budget(profile)})
+			}
+			return out
+		})
 		webListener, err = net.Listen("tcp", *webAddr)
 		if err != nil {
 			return fmt.Errorf("Web UI listen: %w", err)

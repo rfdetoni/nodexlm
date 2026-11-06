@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
+	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
@@ -53,7 +55,7 @@ type Manager struct {
 	download              *Download
 	cancel                context.CancelFunc
 	httpClient            *http.Client
-	rpcEndpoints          func() []string
+	rpcEndpoints          func() []RPCGuest
 }
 
 func NewManager(dir, modelDir, binary string) (*Manager, error) {
@@ -85,7 +87,15 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	return m, nil
 }
 
-func (m *Manager) SetRPCProvider(provider func() []string) {
+// RPCGuest is one authenticated, currently connected device backed by a
+// loopback-only relay. CapacityBytes is a conservative available weight budget.
+// No model bytes are copied to the Guest filesystem.
+type RPCGuest struct {
+	Endpoint      string
+	CapacityBytes uint64
+}
+
+func (m *Manager) SetRPCProvider(provider func() []RPCGuest) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rpcEndpoints = provider
@@ -198,13 +208,39 @@ func (m *Manager) Load(ctx context.Context) error {
 		return err
 	}
 	rpcEndpoints := []string(nil)
+	localLayers := 0
 	if s.Distributed {
 		if m.rpcEndpoints == nil {
 			return errors.New("distributed inference needs a Host coordinator")
 		}
-		rpcEndpoints = m.rpcEndpoints()
-		if len(rpcEndpoints) == 0 {
+		guests := m.rpcEndpoints()
+		if len(guests) == 0 {
 			return errors.New("no authenticated RPC Guests are connected")
+		}
+		model, err := local.InspectGGUF(path)
+		if err != nil {
+			return err
+		}
+		if model.BlockCount == 0 {
+			return errors.New("model lacks GGUF block_count needed for distributed placement")
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		name, _ := os.Hostname()
+		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
+		remoteCapacities := make([]uint64, 0, len(guests))
+		for _, guest := range guests {
+			if guest.CapacityBytes == 0 {
+				return errors.New("RPC Guest lacks a usable free-memory report; cannot safely place layers")
+			}
+			rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
+			remoteCapacities = append(remoteCapacities, guest.CapacityBytes)
+		}
+		localLayers, err = clusterplan.LocalLayerCount(model.BlockCount, uint64(info.Size()), hostCapacity, remoteCapacities)
+		if err != nil {
+			return err
 		}
 	}
 	var resolved string
@@ -222,6 +258,7 @@ func (m *Manager) Load(ctx context.Context) error {
 	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, KeepLoaded: true}
 	if s.Distributed {
 		engine.RPCServers = rpcEndpoints
+		engine.RPCLocalLayers = localLayers
 		if s.GPULayers == "auto" {
 			engine.GPULayers = "all"
 		}

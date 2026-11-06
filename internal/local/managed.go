@@ -36,9 +36,12 @@ type Managed struct {
 	Idle                     time.Duration
 	KeepLoaded               bool
 	RPCServers               []string
-	started                  *exec.Cmd
-	endpoint                 *Engine
-	idleTimer                *time.Timer
+	// RPCLocalLayers keeps the first N transformer blocks on the host CPU;
+	// remaining blocks are placed on RPC devices using layer-split mode.
+	RPCLocalLayers int
+	started        *exec.Cmd
+	endpoint       *Engine
+	idleTimer      *time.Timer
 }
 
 // Load starts a resident llama-server only when explicitly requested.
@@ -92,6 +95,21 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if err := m.validateMoE(meta); err != nil {
 		return err
 	}
+	if len(m.RPCServers) > 0 {
+		if meta.BlockCount == 0 {
+			return errors.New("distributed model requires GGUF architecture.block_count metadata")
+		}
+		if m.RPCLocalLayers < 0 || uint32(m.RPCLocalLayers) > meta.BlockCount {
+			return errors.New("invalid local-layer placement for distributed GGUF")
+		}
+		for _, addr := range m.RPCServers {
+			host, _, err := net.SplitHostPort(addr)
+			ip := net.ParseIP(host)
+			if err != nil || ip == nil || !ip.IsLoopback() {
+				return errors.New("RPC endpoints must be loopback-only authenticated relays")
+			}
+		}
+	}
 	bind, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -110,7 +128,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if gpu == "" {
 		gpu = "auto"
 	}
-	args := m.args(port, nctx, threads, gpu)
+	args := m.args(port, nctx, threads, gpu, meta.BlockCount)
 	cmd := exec.Command(m.Binary, args...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = os.Stderr
@@ -185,7 +203,7 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 	return nil
 }
 
-func (m *Managed) args(port, nctx, threads int, gpu string) []string {
+func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []string {
 	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui"}
 	switch {
 	case m.MoECPU:
@@ -196,16 +214,33 @@ func (m *Managed) args(port, nctx, threads int, gpu string) []string {
 	if m.MoECacheMiB > 0 {
 		args = append(args, "--moe-cache-mib", strconv.Itoa(m.MoECacheMiB))
 	}
-	if len(m.RPCServers) > 0 {
-		// Never accept arbitrary network addresses from the Web UI or a remote
-		// model request. Only loopback relays owned by the coordinator are used.
+	if len(m.RPCServers) > 0 && blocks > 0 {
+		// Only use authenticated loopback relay endpoints in the native process.
+		// ensure() returns a hard error if one is invalid, too.
 		for _, addr := range m.RPCServers {
 			host, _, err := net.SplitHostPort(addr)
-			if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			ip := net.ParseIP(host)
+			if err != nil || ip == nil || !ip.IsLoopback() {
 				return args
 			}
 		}
-		args = append(args, "--rpc", strings.Join(m.RPCServers, ","), "--split-mode", "layer")
+		// llama.cpp offloads the LAST N blocks; the host CPU keeps the FIRST
+		// RPCLocalLayers blocks. Include the output layer in the count because
+		// it would otherwise be pushed onto a Guest by llama.cpp.
+		offloaded := int(blocks) + 1 - m.RPCLocalLayers
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == "--gpu-layers" {
+				args[i+1] = strconv.Itoa(offloaded)
+				break
+			}
+		}
+		args = append(args,
+			"--rpc", strings.Join(m.RPCServers, ","),
+			"--split-mode", "layer",
+			"--override-tensor", `^(output|token_embd)\.weight$=CPU`,
+			"--no-op-offload",
+		)
 	}
+
 	return args
 }

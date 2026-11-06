@@ -3,6 +3,7 @@
 package clusterplan
 
 import (
+	"errors"
 	"sort"
 	"time"
 
@@ -108,4 +109,41 @@ func Assess(s Summary, m ModelCandidate) Recommendation {
 		result.Reason = "Estimated free model budget is below GGUF weights plus headroom"
 	}
 	return result
+}
+
+// LocalLayerCount mirrors the PrivateLM layer planner: first transformer
+// blocks remain on the host CPU, remaining blocks are offloaded to the RPC
+// backends. Model bytes are an estimate, not a guarantee of allocation.
+// The output embedding is separately pinned to the host by the runtime.
+func LocalLayerCount(blocks uint32, modelBytes, hostBudget uint64, guests []uint64) (int, error) {
+	if blocks == 0 || modelBytes == 0 || len(guests) == 0 {
+		return 0, errors.New("distributed layer placement requires GGUF blocks, size and RPC Guests")
+	}
+	remote := uint64(0)
+	for _, capacity := range guests {
+		if capacity == 0 || remote > ^uint64(0)-capacity {
+			return 0, errors.New("invalid RPC Guest memory budget")
+		}
+		remote += capacity
+	}
+	if hostBudget > ^uint64(0)-remote {
+		return 0, errors.New("cluster memory total overflow")
+	}
+	total := hostBudget + remote
+	// Add headroom for runtime buffers and KV cache, without integer overflow.
+	if modelBytes > ^uint64(0)/115 || modelBytes*115/100 > total {
+		return 0, errors.New("not enough reported cluster memory for GGUF weights and context headroom")
+	}
+	// Local share is proportional to measured free memory, rounded to nearest
+	// block. A Host with unknown capacity keeps no transformer blocks locally.
+	if uint64(blocks) > ^uint64(0)/max(hostBudget, uint64(1)) {
+		return 0, errors.New("layer calculation overflow")
+	}
+	local := int((uint64(blocks)*hostBudget + total/2) / total)
+	// A distributed configuration must actually place a transformer block
+	// remotely; otherwise the Guest does no useful model computation.
+	if local >= int(blocks) {
+		local = int(blocks) - 1
+	}
+	return local, nil
 }

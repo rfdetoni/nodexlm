@@ -375,7 +375,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		return "", "", errors.New("pinned llama.cpp source commit mismatch")
 	}
 	build := filepath.Join(stage, "build")
-	flags := []string{"-S", src, "-B", build, "-DGGML_RPC=ON", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=OFF", "-DLLAMA_SERVER=ON", "-DCMAKE_BUILD_TYPE=Release"}
+	flags := []string{"-S", src, "-B", build, "-DGGML_RPC=ON", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=ON", "-DLLAMA_BUILD_SERVER=ON", "-DCMAKE_BUILD_TYPE=Release"}
 	switch backend {
 	case "vulkan":
 		flags = append(flags, "-DGGML_VULKAN=ON")

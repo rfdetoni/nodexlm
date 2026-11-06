@@ -65,7 +65,7 @@ Java_dev_nodexlm_app_NativeEntry_load(JNIEnv* env,jobject,jstring path,jint cont
     return env->NewStringUTF("");
 }
 
-extern "C" JNIEXPORT jstring JNICALL
+extern "C" JNIEXPORT jbyteArray JNICALL
 Java_dev_nodexlm_app_NativeEntry_generate(JNIEnv* env,jobject,jobjectArray javaRoles,jobjectArray javaContents,jint tokenLimit) {
     std::lock_guard<std::mutex> lock(guard);
     if(!ctx||!model)return bytes(env,"NODEXLM_ERROR: no loaded model");

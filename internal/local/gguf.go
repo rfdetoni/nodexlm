@@ -15,6 +15,7 @@ import (
 // Metadata is read sequentially, with bounded allocations even for tokenizer arrays.
 type GGUFInfo struct {
 	Architecture  string `json:"architecture,omitempty"`
+	BlockCount    uint32 `json:"block_count,omitempty"`
 	ExpertCount   uint32 `json:"expert_count,omitempty"`
 	ActiveExperts uint32 `json:"active_experts,omitempty"`
 	IsMoE         bool   `json:"moe"`
@@ -192,8 +193,8 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 		return GGUFInfo{}, errors.New("too many GGUF metadata entries")
 	}
 	var result GGUFInfo
-	var experts, active uint32
-	var expertKey, activeKey string
+	var experts, active, blocks uint32
+	var expertKey, activeKey, blockKey string
 	for i := uint64(0); i < count; i++ {
 		key, err := g.str(4096)
 		if err != nil {
@@ -203,7 +204,7 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 		if err != nil {
 			return GGUFInfo{}, err
 		}
-		capture := key == "general.architecture" || strings.HasSuffix(key, ".expert_count") || strings.HasSuffix(key, ".expert_used_count")
+		capture := key == "general.architecture" || strings.HasSuffix(key, ".expert_count") || strings.HasSuffix(key, ".expert_used_count") || strings.HasSuffix(key, ".block_count")
 		value, text, err := g.value(kind, capture)
 		if err != nil {
 			return GGUFInfo{}, fmt.Errorf("GGUF metadata %s: %w", key, err)
@@ -211,11 +212,16 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 		switch {
 		case key == "general.architecture":
 			result.Architecture = text
+		case strings.HasSuffix(key, ".block_count"):
+			blocks, blockKey = value, key
 		case strings.HasSuffix(key, ".expert_count"):
 			experts, expertKey = value, key
 		case strings.HasSuffix(key, ".expert_used_count"):
 			active, activeKey = value, key
 		}
+	}
+	if result.Architecture != "" && blockKey == result.Architecture+".block_count" {
+		result.BlockCount = blocks
 	}
 	if result.Architecture != "" && expertKey == result.Architecture+".expert_count" {
 		result.ExpertCount = experts

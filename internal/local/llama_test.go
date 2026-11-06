@@ -52,14 +52,22 @@ func TestEngineAndGGUFScanner(t *testing.T) {
 
 func TestRPCArgsDoNotExposeExternalEndpoints(t *testing.T) {
 	m := &Managed{ModelPath: "model.gguf", Alias: "model.gguf", RPCServers: []string{"127.0.0.1:50051", "127.0.0.1:50052"}}
-	args := m.args(17000, 2048, 4, "all")
+	args := m.args(17000, 2048, 4, "all", 32)
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--rpc 127.0.0.1:50051,127.0.0.1:50052") || !strings.Contains(joined, "--split-mode layer") {
+	if !strings.Contains(joined, "--rpc 127.0.0.1:50051,127.0.0.1:50052") || !strings.Contains(joined, "--split-mode layer") || !strings.Contains(joined, "--gpu-layers 33") || !strings.Contains(joined, "--override-tensor") || !strings.Contains(joined, "--no-op-offload") {
 		t.Fatalf("missing distributed parameters: %v", args)
 	}
 	m.RPCServers = []string{"192.168.1.5:50052"}
-	args = m.args(17000, 2048, 4, "all")
+	args = m.args(17000, 2048, 4, "all", 32)
 	if strings.Contains(strings.Join(args, " "), "--rpc") {
 		t.Fatal("nonloopback RPC endpoint must not be forwarded")
+	}
+}
+
+func TestRPCFirstLayersStayLocal(t *testing.T) {
+	m := &Managed{ModelPath: "model.gguf", Alias: "model", RPCServers: []string{"127.0.0.1:50052"}, RPCLocalLayers: 12}
+	args := strings.Join(m.args(17000, 4096, 8, "auto", 40), " ")
+	if !strings.Contains(args, "--gpu-layers 29") {
+		t.Fatalf("expected 28 remote layers plus the locally overridden output tensor; got %s", args)
 	}
 }
