@@ -103,7 +103,8 @@ class MainActivity : Activity() {
         val overview=card()
         overview.addView(label("Visão geral do dispositivo",18,true))
         val selected=ModelFiles.selected(this)
-        overview.addView(label("Modelo: ${selected?.name ?: "Nenhum modelo selecionado"}",14,false))
+        overview.addView(label("Guest RPC: o GGUF fica no Host; este celular recebe apenas tensores e operações de camadas designadas.",14,false))
+        overview.addView(label("Modelo local opcional: ${selected?.name ?: "Nenhum"}",12,false))
         overview.addView(label("Sistema: Android ${Build.VERSION.RELEASE} · ${Build.SUPPORTED_ABIS.firstOrNull() ?: "?"}",12,false))
         overview.addView(label("Memória estimada para pesos: ${"%.2f".format(java.util.Locale.US,HuggingFaceHub(this).localBudgetBytes().toDouble()/(1L shl 30))} GiB",12,false))
         overview.addView(action("Explorar modelos GGUF") {showTab(1)})
@@ -123,11 +124,17 @@ class MainActivity : Activity() {
         content.addView(pairing)
         val worker=card()
         worker.addView(label("Processamento",18,true))
-        worker.addView(label("Processa solicitações completas usando um GGUF local. Participação RPC como parte de um único modelo permanece experimental e não está ativa neste APK.",13,false))
-        worker.addView(action("Iniciar processamento em segundo plano") {startWorker()})
-        worker.addView(action("Parar processamento") {
+        worker.addView(label("Guest RPC distribuído · CPU/RAM do celular processam partes do mesmo modelo selecionado no Host. Não é necessário baixar o GGUF no Android. Requer Host usando llama.cpp ${NativeRpc.VERSION}.",13,false))
+        worker.addView(action("Ativar Guest RPC (sem GGUF local)") {startRpcGuest()})
+        worker.addView(action("Parar Guest RPC") {
+            startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
+            setStatus("Desativando Guest RPC")
+        })
+        worker.addView(label("Opcional: modo independente com um GGUF instalado no Android (não soma memória ao modelo distribuído).",12,false))
+        worker.addView(action("Iniciar inferência independente") {startWorker()})
+        worker.addView(action("Parar inferência independente") {
             startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))
-            setStatus("Parando processamento")
+            setStatus("Parando inferência independente")
         })
         content.addView(worker)
     }
@@ -168,6 +175,32 @@ class MainActivity : Activity() {
                 }
             }catch(e:Exception) {runOnUiThread {setStatus("Falha no emparelhamento: ${e.message}")}}
         }
+    }
+
+    private fun startRpcGuest() {
+        val token = prefs.getString("node_token","").orEmpty()
+        val id = prefs.getString("node_id","").orEmpty()
+        val endpoint = prefs.getString("coordinator","").orEmpty()
+        if (token.isBlank() || id.isBlank() || !endpoint.startsWith("https://")) {
+            setStatus("Emparelhe este celular com o Host antes de ativar o Guest RPC")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
+        }
+        try {
+            // Prevent an old whole-model worker from competing for the same RAM.
+            startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))
+            val intent = Intent(this,RpcGuestService::class.java)
+                .setAction(RpcGuestService.START)
+                .putExtra(RpcGuestService.EXTRA_ENDPOINT,endpoint)
+                .putExtra(RpcGuestService.EXTRA_NODE,id)
+                .putExtra(RpcGuestService.EXTRA_TOKEN,token)
+                .putExtra(RpcGuestService.EXTRA_NAME,prefs.getString("name",Build.MODEL) ?: Build.MODEL)
+            startForegroundService(intent)
+            setStatus("Iniciando Guest RPC · acompanhe a notificação e o painel do Host")
+        } catch(e:Exception) {setStatus("Falha ao iniciar Guest RPC: ${e.message}")}
     }
 
     private fun startWorker() {

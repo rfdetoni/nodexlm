@@ -73,7 +73,7 @@ internal class PairingClient(private val context: Context) {
         (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
         val device = JSONObject().put("ram_bytes",memory.totalMem)
             .put("available_ram_bytes",memory.availMem)
-            .put("runtime",JSONObject().put("engine","llama.cpp JNI").put("installed",true).put("rpc_ready",false))
+            .put("runtime",JSONObject().put("engine","ggml-rpc-cpu").put("installed",false).put("rpc_ready",false))
             .put("name", name.take(80).ifBlank { Build.MODEL })
             .put("platform", "android")
             .put("architecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")

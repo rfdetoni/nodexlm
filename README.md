@@ -299,3 +299,34 @@ The Android implementation currently runs complete-model inference and
 does not provide a native distributed RPC Guest.
 
 ## Linux x64: Guest RPC sem toolchain\n\nA primeira execução de `nodexlm guest` em Linux x86_64 com backend CPU\nbaixa o par `llama-server` e `ggml-rpc-server` de uma release\nNodexLM separada e versionada, compilada a partir do llama.cpp b12143\n(commit `2bc46baa9207d098d03741ac394e7faaf1a955b6`).\nO instalador confere SHA-256 e extrai com proteção contra caminhos fora do diretório.\nA versão do RPC é compartilhada com o Host; use NodexLM atualizado nos dois lados.\nCaso a release não esteja acessível, permanece a opção de compilação local\n(`sudo apt install -y git cmake build-essential` no Ubuntu/Debian).\nBackends GPU, sistemas e arquiteturas ainda sem runtime RPC publicado\ncontinuam usando a compilação local.\n\n```sh\ncurl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh\nnodexlm guest --backend cpu\n```\n
+
+## Android como Guest RPC verdadeiro (Android 10+, ARMv7/ARM64)
+
+Em **Cluster → Conectar ao Host**, emparelhe usando o código temporário de
+8 caracteres. Em seguida pressione **Ativar Guest RPC (sem GGUF local)**.
+O app executa um servidor `ggml` RPC CPU nativo, ligado somente a
+`127.0.0.1:50052`, em um processo Android isolado da interface.
+Quatro túneis TLS iniciados pelo telefone passam pelo Host pareado usando
+certificado fixado e credencial por dispositivo. O Host mantém o GGUF e
+distribui tensores e grafos de cálculo conforme o orçamento de memória.
+O Android não precisa baixar o GGUF inteiro.
+
+**Compatibilidade crítica:** o APK e o runtime RPC do Host devem usar
+o mesmo `llama.cpp` `b12143`, commit
+`2bc46baa9207d098d03741ac394e7faaf1a955b6`. Este APK
+inicialmente oferece somente CPU; GPUs móveis via Vulkan ainda não
+participam do backend RPC. Androids de 32 bits estão sujeitos ao limite
+de espaço de endereçamento e podem aceitar apenas poucas camadas.
+
+Ative `Distribuir o modelo entre os Guests RPC conectados` no Host Web
+antes de carregar o GGUF. O Host só contabiliza os recursos de nós
+online que enviam heartbeats e pode deixar de colocar camadas no celular
+se a memória disponível for insuficiente. Ao desligar a tela, o serviço
+de primeiro plano mantém a CPU e Wi-Fi ativos quando possível; aumenta
+o consumo de bateria e não impede que fabricantes matem processos.
+A notificação persistente e o botão no aplicativo permitem interromper
+o Guest. A opção **Inferência independente** continua disponível para
+usuários que desejam executar GGUF local sem distribuir camadas.
+
+A implementação nativa é experimental; validação em telefones físicos,
+especialmente Android 10 de 32 bits, ainda é necessária.

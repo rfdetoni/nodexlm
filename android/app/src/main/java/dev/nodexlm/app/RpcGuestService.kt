@@ -199,7 +199,7 @@ class RpcGuestService : Service() {
         val memory = ActivityManager.MemoryInfo()
         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
         // Address space on ARMv7 is smaller even on devices with more physical RAM.
-        val available = if (Build.SUPPORTED_32_BIT_ABIS.contains(Build.SUPPORTED_ABIS.firstOrNull())) {
+        val available = if (Build.SUPPORTED_ABIS.firstOrNull()?.let { Build.SUPPORTED_32_BIT_ABIS.contains(it) } == true) {
             minOf(memory.availMem, 2L * 1024 * 1024 * 1024)
         } else memory.availMem
         val device = JSONObject()

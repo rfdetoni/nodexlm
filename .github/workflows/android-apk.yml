@@ -19,6 +19,8 @@ on:
       - 'android/app/src/main/java/dev/nodexlm/app/ModelLibraryView.kt'
       - 'android/app/src/main/java/dev/nodexlm/app/PairingClient.kt'
       - 'android/app/src/main/java/dev/nodexlm/app/ComputeService.kt'
+      - 'android/app/src/main/java/dev/nodexlm/app/RpcGuestService.kt'
+      - 'android/app/src/main/java/dev/nodexlm/app/NativeRpc.kt'
     tags:
       - 'v*'
 
