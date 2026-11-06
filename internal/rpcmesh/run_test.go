@@ -30,7 +30,7 @@ func TestNativeRPCExitDoesNotLeaveTunnelsRunning(t *testing.T) {
   t.Skip("requires a POSIX executable")
  }
  executable := filepath.Join(t.TempDir(), "rpc-exit")
- if err := os.WriteFile(executable, []byte("#!/bin/sh\\nexit 19\\n"), 0700); err != nil {
+ if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 19\n"), 0700); err != nil {
   t.Fatal(err)
  }
  ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
