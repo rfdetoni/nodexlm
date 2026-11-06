@@ -269,7 +269,7 @@ internal class ModelLibraryView(
         layoutParams=LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.WRAP_CONTENT).apply {bottomMargin=(12*resources.displayMetrics.density).toInt()}
     }
     private fun action(label:String,handler:()->Unit) = Button(activity).apply {
-        text=label;textAllCaps=false
+        text=label;isAllCaps=false
         setTextColor(0xffdceaff.toInt())
         backgroundTintList=android.content.res.ColorStateList.valueOf(0xff30476b.toInt())
         setOnClickListener{handler()}

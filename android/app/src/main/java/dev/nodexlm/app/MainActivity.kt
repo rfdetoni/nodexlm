@@ -61,7 +61,7 @@ class MainActivity : Activity() {
         space(base,12)
         toastStatus=label("Pronto para configurar o cluster",12,false)
         base.addView(toastStatus)
-        val scroll=ScrollView(this).apply {fillViewport=true;isVerticalScrollBarEnabled=false;addView(base,
+        val scroll=ScrollView(this).apply {isFillViewport=true;isVerticalScrollBarEnabled=false;addView(base,
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))}
         setContentView(scroll)
         library=ModelLibraryView(this,
@@ -82,7 +82,7 @@ class MainActivity : Activity() {
         navigation.removeAllViews()
         listOf("Cluster","Modelos","Ajustes").forEachIndexed {i,title ->
             val button=Button(this).apply {
-                text=title;textAllCaps=false;textSize=13f
+                text=title;isAllCaps=false;textSize=13f
                 setTextColor(if(i==index)0xfff8fbff.toInt() else 0xffa9b7cb.toInt())
                 backgroundTintList=ColorStateList.valueOf(if(i==index)0xff365885.toInt() else 0xff202b3b.toInt())
                 setOnClickListener { if(tab!=i) showTab(i) }
@@ -216,7 +216,7 @@ class MainActivity : Activity() {
         setPadding(0,dp(5),0,dp(5))
     }
     private fun action(value:String,handler:()->Unit)=Button(this).apply {
-        text=value;textAllCaps=false;textSize=13f
+        text=value;isAllCaps=false;textSize=13f
         setTextColor(0xffedf3fd.toInt())
         backgroundTintList=ColorStateList.valueOf(0xff30527b.toInt())
         setOnClickListener {handler()}
