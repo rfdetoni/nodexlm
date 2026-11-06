@@ -1,0 +1,28 @@
+# Copyright (C) 2026 Rodrigo Felipe de Toni Grave
+# SPDX-License-Identifier: AGPL-3.0-only
+# Install binary at /usr/local/bin/nodexlm. Create a dedicated `nodexlm` user
+# and give it ownership of /var/lib/nodexlm before enabling this unit.
+[Unit]
+Description=NodexLM local cluster host and Web console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nodexlm
+Group=nodexlm
+Environment=NODEXLM_HOME=/var/lib/nodexlm
+ExecStart=/usr/local/bin/nodexlm host --dir /var/lib/nodexlm --model-dir /var/lib/nodexlm/models --web-addr 127.0.0.1:8787
+Restart=on-failure
+RestartSec=4
+StateDirectory=nodexlm
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nodexlm
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

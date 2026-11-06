@@ -1,0 +1,152 @@
+// Copyright (C) 2026 Rodrigo Felipe de Toni Grave
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.nodexlm.app
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import android.os.PowerManager
+import android.util.Log
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
+import kotlin.math.min
+
+/** Explicit user-started foreground worker; the UI process can leave the screen. */
+class ComputeService : Service() {
+    companion object { const val START="dev.nodexlm.START";const val STOP="dev.nodexlm.STOP";private const val CHANNEL="nodexlm_worker" }
+    private val running = AtomicBoolean(false)
+    private val prefs by lazy {getSharedPreferences("nodexlm",MODE_PRIVATE)}
+    private val logTag="NodexLMWorker"
+    override fun onBind(intent:Intent?):IBinder?=null
+
+    override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
+        if (intent?.action==STOP) {stopWorker();return START_NOT_STICKY}
+        if (!running.compareAndSet(false,true))return START_STICKY
+        val manager=getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(CHANNEL,"NodexLM background inference",NotificationManager.IMPORTANCE_LOW))
+        val stop=PendingIntent.getService(this,11,Intent(this,ComputeService::class.java).setAction(STOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification=Notification.Builder(this,CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("NodexLM worker active")
+            .setContentText("Available for local cluster inference")
+            .setOngoing(true)
+            .addAction(Notification.Action.Builder(null,"Stop",stop).build())
+            .build()
+        if (Build.VERSION.SDK_INT>=34) startForeground(42,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        else startForeground(42,notification)
+        thread(name="nodexlm-worker",isDaemon=false) {workerLoop()}
+        return START_STICKY
+    }
+
+    private fun stopWorker() {
+        running.set(false)
+        try{NativeEntry.cancel()}catch (_:Throwable){}
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+    override fun onDestroy() {running.set(false);super.onDestroy()}
+
+    private fun workerLoop() {
+        var backoff=1000L
+        val model=File(filesDir,"models/active.gguf")
+        val coordinator=(prefs.getString("coordinator","")?:"").trimEnd('/')
+        if (!coordinator.startsWith("https://")||!model.isFile){Log.e(logTag,"Invalid worker configuration");stopWorker();return}
+        try {
+            var id=prefs.getString("node_id","")?:""
+            var token=prefs.getString("node_token","")?:""
+            if (id.isEmpty()||token.isEmpty()) error("Device not paired; enter the host's pairing code in the app first")
+            var loaded=false
+            var lastInference=android.os.SystemClock.elapsedRealtime()
+            while(running.get()) {
+                try {
+                    val payload=JSONObject().put("models",JSONArray().put(prefs.getString("model","model.gguf")))
+                    val job=request(coordinator+"/v1/nodes/lease",token,id,payload)
+                    if(job.length()==0) {
+                        if(loaded && android.os.SystemClock.elapsedRealtime()-lastInference>120_000L) {
+                            NativeEntry.unload()
+                            loaded=false
+                        }
+                        continue
+                    }
+                    val jid=job.getString("id")
+                    var answer="";var failure=""
+                    val pm=getSystemService(POWER_SERVICE) as PowerManager
+                    val wake=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"NodexLM:inference")
+                    // Token generation is time-bounded; never hold the lock while idle/polling.
+                    wake.acquire(180_000L)
+                    try {
+                        if (!loaded) {
+                            val init=NativeEntry.load(model.absolutePath,2048,maxOf(1,Runtime.getRuntime().availableProcessors()-2))
+                            if(init.isNotEmpty())throw IllegalStateException(init)
+                            loaded=true
+                        }
+                        val input=job.getJSONObject("request")
+                        val messages=input.getJSONArray("messages")
+                        val roles=Array(messages.length()) { idx -> messages.getJSONObject(idx).getString("role") }
+                        val contents=Array(messages.length()) { idx -> messages.getJSONObject(idx).getString("content") }
+                        answer=String(NativeEntry.generate(roles,contents,(input.optInt("max_tokens",256)).coerceIn(1,1024)),Charsets.UTF_8)
+                        if(answer.startsWith("NODEXLM_ERROR:")){failure=answer;answer=""}
+                    }catch(e:Exception){failure=e.message?:"inference error"}
+                    finally {if(wake.isHeld)wake.release()}
+                    lastInference=android.os.SystemClock.elapsedRealtime()
+                    val result=JSONObject().put("result",answer).put("error",failure.take(1000))
+                    request(coordinator+"/v1/nodes/result/$jid",token,id,result)
+                    backoff=1000L
+                }catch(e:Exception) {
+                    Log.w(logTag,"Worker request failed (will retry): ${e.message}")
+                    Thread.sleep(backoff)
+                    backoff=min(backoff*2,30_000L)
+                }
+            }
+        }catch(e:Exception){Log.e(logTag,"Worker stopped",e)}
+        finally {try{NativeEntry.unload()}catch (_:Throwable){};stopSelf()}
+    }
+
+    private fun request(url:String,token:String,node:String,body:JSONObject):JSONObject {
+        val c=(URL(url).openConnection() as HttpURLConnection)
+        if(c is HttpsURLConnection) {
+            val ca=File(filesDir,"coordinator.crt")
+            if(ca.exists()) {
+                val cert=CertificateFactory.getInstance("X.509").generateCertificate(ca.inputStream())
+                val store=KeyStore.getInstance(KeyStore.getDefaultType())
+                store.load(null,null)
+                store.setCertificateEntry("nodexlm-coordinator",cert)
+                val factory=TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+                factory.init(store)
+                val ssl=SSLContext.getInstance("TLS")
+                ssl.init(null,factory.trustManagers,null)
+                c.sslSocketFactory=ssl.socketFactory
+                // Never override the TLS hostname verifier.
+            }
+        }
+        c.requestMethod="POST"
+        c.connectTimeout=7_000
+        c.readTimeout=35_000
+        c.doOutput=true
+        c.setRequestProperty("Content-Type","application/json")
+        c.setRequestProperty("Authorization","Bearer $token")
+        if(node.isNotEmpty())c.setRequestProperty("X-Nodex-Node",node)
+        return try {
+            c.outputStream.use {out ->out.write(body.toString().toByteArray(Charsets.UTF_8))}
+            if(c.responseCode==204) JSONObject()
+            else if(c.responseCode in 200..299) c.inputStream.bufferedReader(Charsets.UTF_8).use {reader->JSONObject(reader.readText())}
+            else throw IllegalStateException("coordinator HTTP ${c.responseCode}")
+        } finally {c.disconnect()}
+    }
+}

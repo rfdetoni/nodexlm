@@ -1,0 +1,17 @@
+# NodexLM generated artifacts
+/nodexlm
+/bin/
+/.gradle/
+**/build/
+.dart_tool/
+**/.idea/
+*.log
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.key
+models/
+*.gguf
