@@ -1,349 +1,63 @@
 # NodexLM
 
-Local AI inference and a lightweight coordinator/worker runtime for heterogeneous Linux, Windows, macOS and Android devices.
+**Cluster local de inferência com GGUF, Host, Guests e distribuição de camadas por RPC.**
 
-**Status: alpha.** The Go CLI/coordinator and local `llama-server` integration are functional; Android JNI service and Flutter desktop UI are experimental and have not yet been validated by device builds. Remote requests are scheduled as whole jobs on workers. A proof-of-concept of **one-model layer-distributed RPC inference** is now available for desktop Guests through a pinned and authenticated LAN tunnel; it has not been benchmarked against real multi-device GGUF workloads. The Android CPU RPC Guest has a dedicated JNI service and authenticated tunnels, but physical-device RPC inference has not yet been validated; MoE expert-parallelism remains unimplemented.
+O NodexLM usa o [llama.cpp](https://github.com/ggml-org/llama.cpp) para executar modelos de linguagem em uma rede local. Um Host coordena os dispositivos; Guests Linux, Windows, macOS e Android podem disponibilizar recursos computacionais, conforme a compatibilidade do backend.
 
-This is an independent implementation. PrivateLM was a functional reference, but no application source code from PrivateLM has been copied. Model execution uses [llama.cpp](https://github.com/ggml-org/llama.cpp) as an external runtime / native dependency.
+> **Estado: experimental (alpha).** A compilação não comprova inferência distribuída em qualquer combinação de aparelhos. Desempenho, memória disponível, drivers e estabilidade precisam ser medidos em hardware real.
 
-## Build (Go CLI)
+## Instalação rápida
 
-```sh
-go build -o nodexlm ./cmd/nodexlm
-go test ./...
-```
-
-## Join a cluster with an 8-character code
-
-**Host:**
-
-```sh
-nodexlm host
-# NODEXLM PAIRING CODE: K7M2X8Q9  (example, random each time)
-```
-
-**Guest on the same LAN:**
-
-```sh
-nodexlm join
-# Enter host pairing code: [enter the host's code]
-nodexlm node --model model.gguf --model-path ./models/model.gguf
-```
-
-Guests can also join through the desktop **Cluster** panel or the native Android **Join local cluster securely** screen. The code expires after 10 minutes, is not a persistent credential, and can be renewed with `nodexlm pairing`. For revocation use `nodexlm revoke --id NODE_ID`.
-
-The discovery protocol uses `46465/udp`; all requests use `8443/tcp` with a pinned HTTPS certificate. `nodexlm join --server https://HOST_IP:8443` works when UDP broadcast is blocked. Pairing is intentionally LAN-only; no public Internet exposure. See [Pairing, security model, Android and limitations](docs/PAIRING.md) for details.
-
-## Local inference
-
-Requires a compatible `llama-server` available in `PATH`, and a supported GGUF model. The CLI loads the model in a separate process on demand and releases it after a configurable idle interval when used as a worker.
-
-```sh
-./nodexlm local --model ./models/model.gguf --prompt 'Hello'
-./nodexlm models --dir ./models
-```
-
-## MoE models
-
-The CLI discovers MoE models from GGUF metadata (`<architecture>.expert_count` and `.expert_used_count`), without mapping model tensors. Compatible llama.cpp MoE architectures run directly; no special flag is needed for default placement.
-
-To reduce VRAM use by storing expert weights in system RAM:
-
-```sh
-./nodexlm local --model ./models/moe.gguf --moe-cpu --prompt 'Hello'
-```
-
-For partial placement and an optional GPU expert cache:
-
-```sh
-./nodexlm local --model ./models/moe.gguf --moe-cpu-layers 24 --moe-cache-mib 256 --prompt 'Hello'
-```
-
-The same options work for `nodexlm node --model-path ...` and are forwarded to a compatible `llama-server`. `--moe-cpu` and `--moe-cpu-layers` cannot be combined. Expert weights kept on CPU can consume substantial RAM; fewer experts active per token **does not** imply lower total model memory usage. Benchmark actual hardware before choosing settings.
-
-More details: [docs/MOE.md](docs/MOE.md).
-
-## Security and deployment
-
-The coordinator uses HTTPS, per-node credentials and certificate pinning for newly paired guests. Local 8-character code onboarding is an alpha implementation and is **not yet a vetted PAKE**. Use a trusted LAN. Raw llama.cpp RPC is not exposed on untrusted networks. Do not expose the coordinator or workers to the public Internet. Complete example commands: `nodexlm help`.
-
-## License
-
-[AGPL-3.0-only](LICENSE). Copyright (C) 2026 Rodrigo Felipe de Toni Grave. Each dependency retains its original license and notices.
-
-## Lightweight Web management (headless Linux / Windows / macOS)
-
-`nodexlm host` also starts the **embedded Web console** on `http://127.0.0.1:8787`.
-The static UI, dashboard API and cluster coordinator run in **one Go process**;
-no Electron, Flutter, Node.js, browser process or desktop session is required on the server.
-When no model is loaded, `llama-server` is not running. Model weights and accelerator
-memory are held in the separate native inference process only while loaded.
-
-```sh
-# llama.cpp is provisioned automatically when a model is loaded.
-nodexlm host --model-dir "$HOME/.nodexlm/models" --llama-bin llama-server
-# On the same host, read the private admin token for the login form:
-nodexlm web-token
-# Open in your browser: http://127.0.0.1:8787
-```
-
-The panel can **download Hugging Face GGUF models** (streaming into a temporary file
-with no full-file buffering), list model metadata, persist context/CPU/GPU/MoE
-settings, explicitly load/unload a model, run local chat, show node status,
-revoke nodes and renew LAN pairing codes. An active local model is managed by
-`llama-server`, which is required for native inference. Models are not automatically
-published as cluster workers; use `nodexlm node` for distributed job participation.
-
-**Remote management of a machine without a desktop:**
-
-```sh
-ssh -L 8787:127.0.0.1:8787 username@server
-# Browse http://127.0.0.1:8787 on your own computer.
-# Run `nodexlm web-token` over the SSH connection on the server.
-```
-
-The Web UI deliberately binds **only to localhost**, uses a separate HTTP
-listener from the LAN's HTTPS worker API and requires the administrator bearer
-credential for all data/actions. The browser keeps this credential in tab-scoped
-`sessionStorage` (not a persistent cookie). Avoid exposing 8787 via port-forward
-or reverse proxy without separate HTTPS and authentication; SSH tunneling is
-preferred. Disable the console with `nodexlm host --web-addr off`. To change its
-local port, use `--web-addr 127.0.0.1:8888`.
-
-Web resource usage scales with the number of live requests, not with keeping
-an application window open. Refreshing the page does not restart inference.
-
-## Single-model distributed inference (experimental)
-
-The Host loads **one** GGUF. The Guests only run native ggml RPC compute
-servers and do **not** download or load a second copy of the model. This is
-the same layer-based RPC design used by PrivateLM, implemented independently.
-
-**Host**, on a trusted LAN:
-
-```sh
-nodexlm host
-# Open http://127.0.0.1:8787, authenticate with `nodexlm web-token`.
-```
-
-**Guest** on the same LAN:
-
-```sh
-nodexlm join --code <8-CHAR-CODE>
-nodexlm rpc-node
-```
-
-`rpc-node` installs a pinned llama.cpp runtime automatically if needed. When
-precompiled releases do not include RPC, NodexLM builds a matched server and
-RPC worker from pinned upstream source (requires Git, CMake and C/C++ toolchain).
-A native `ggml-rpc-server` listens only on `127.0.0.1:50052`, never on the
-public LAN. Guest-initiated TLS connections, authenticated with the paired node
-credential and Host certificate pin, carry the binary RPC streams. Each Host
-relay also binds to loopback and gets passed to `llama-server --rpc`.
-
-In the Host Web UI, select a model, check **Distribuir o modelo entre os Guests
-RPC conectados**, save settings, and load it. NodexLM reads the GGUF
-`<architecture>.block_count` without mapping its weights; it calculates how many
-first layers to retain on the Host CPU from reported available RAM/VRAM and
-assigns the remaining layers to the native RPC devices. The Host keeps
-`output.weight` and `token_embd.weight` locally via a tensor override and
-disables host operation offload. llama.cpp distributes the remote layers over
-the reported RPC devices based on free device memory; it may fail to load if
-a device is incompatible or has insufficient memory despite the estimate.
-The GGUF remains on the Host; Guests receive tensor data and compute graphs,
-not another persistent model copy. Host and Guest executables must use
-compatible llama.cpp RPC protocol builds.
-
-Do not confuse this with the separate `nodexlm node --model-path` workflow,
-which handles whole requests using independent model copies on worker nodes.
-
-**Limitations**: llama.cpp's RPC backend remains experimental. Network bandwidth,
-CPU/GPU driver support, equal runtime versions and memory limits determine
-whether a particular model can load and run. A wired LAN is recommended.
-Active RPC tunnels consume sockets and a small amount of memory; when the
-native worker exits, its process releases allocated model buffers. A Guest
-without a valid memory report cannot be used for automatic layer placement.
-Native Android RPC CPU implementation is experimental; real-world validation and live
-heterogeneous benchmarks are pending. The model discovery
-panel provides memory *estimates*, not verified compatibility guarantees.
-
-## Android APK (GitHub Actions)
-
-The [Android APK workflow](.github/workflows/android-apk.yml) runs **only on manual dispatch** or when pushing a `v*` tag, to minimize CI consumption. It installs Java 17, Gradle 8.11.1, Android SDK 35, NDK 27.2 and CMake, builds native `llama.cpp` from the pinned Git commit in `android/app/src/main/cpp/CMakeLists.txt`, checks that `libnodexlm.so` is packaged, and verifies APK signing.
-
-**Manual debug APK:** open GitHub **Actions → Android APK → Run workflow** on `main`. Download the `nodexlm-android-debug` artifact when the run succeeds. This is an installable **debug-signed** ARM64 APK, not a production release. No signing secrets are required.
-
-**Signed release APK:** configure these four repository **Actions secrets** before pushing a tag:
-
-| Secret | Value |
-| --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | Base64 of a *persistent* Android `.jks` keystore (one line) |
-| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
-| `ANDROID_KEY_ALIAS` | Alias of the release key |
-| `ANDROID_KEY_PASSWORD` | Password of the release key |
-
-Create and **back up** the keystore securely, outside the repository. Example (use a strong password and your own valid subject):
-
-```sh
-keytool -genkeypair -v -keystore nodexlm-release.jks -alias nodexlm \
-  -keyalg RSA -keysize 3072 -validity 10000
-base64 -w 0 nodexlm-release.jks  # Linux; paste the output in ANDROID_KEYSTORE_BASE64
-```
-
-Then push a version tag (`git tag v0.1.0 && git push origin v0.1.0`). The workflow requires **all four secrets** on tags, signs the ARM64 release APK, verifies the signature and embedded library, uploads the artifact and publishes it in **GitHub Releases as a prerelease**. The SHA-256 file accompanies the release. A partial set of secrets causes an explicit failure instead of silently producing an unsigned APK. Versions are derived from the Git tag and workflow run number.
-
-If you need to trigger a build manually, avoid creating a release tag. Reuse the same signing keystore for upgrades; a newly generated keystore cannot update previously installed releases. Android/NDK compilation requires network access to fetch the pinned `llama.cpp` source. Native Android and actual device inference have not been validated yet, so a successful workflow build does not prove functional RPC inference on physical phones.
-
-## Instalação Android direta (sem Play Store)
-
-O NodexLM distribui **APK ARM64 assinado** diretamente pelo [GitHub Releases](https://github.com/rfdetoni/nodexlm/releases). Não requer Google Play, conta Google ou instalação pela loja.
-
-- **Primeira instalação:** abra [Baixar a última versão estável](https://github.com/rfdetoni/nodexlm/releases/latest/download/NodexLM-android-arm64.apk) no celular, baixe o APK e confirme a instalação no Android (autorize a origem, se solicitado).
-- **Atualizações:** o app verifica o `update.json` da última versão estável ao ser aberto (no máximo uma vez por dia), baixa um APK novo automaticamente apenas por rede não tarifada e confere seu SHA-256 e identificador de pacote. Também há botão **Verificar atualizações** para forçar busca/download na rede atual.
-- **Instalação de atualização:** o NodexLM abre a tela **Instalar atualização** do Android. **Não existe instalação silenciosa** para apps comuns sem privilégios de sistema; o usuário precisa autorizar a origem e confirmar a instalação. O APK deve manter a **mesma chave de assinatura** da versão anterior.
-- **Publicação:** tags `v1.2.3` criam releases estáveis e publicam `NodexLM-android-arm64.apk`, `SHA256SUMS.txt` e `update.json`; tags como `v1.2.3-rc.1` geram pré-lançamentos e não são oferecidas pelo atualizador automático. O fluxo exige os quatro secrets de assinatura Android existentes; sem eles não publica APK de produção.
-- **CI mínimo:** execução manual gera um APK de testes assinado com a chave debug do runner e armazenado em Artifacts. Esses APKs debug não servem como atualização para uma instalação release. Nenhum build roda a cada push na `main`.
-
-O aplicativo só baixa e prepara atualizações quando é aberto; o serviço de inferência em segundo plano não roda verificações periódicas. O processo Android e a compilação NDK precisam ser validados por uma execução real do workflow antes da distribuição ao público.
-
-## Android 10+ and older devices
-
-The Android APK has a minimum SDK of **29 (Android 10)** and includes both
-`armeabi-v7a` (32-bit ARM) and `arm64-v8a` (64-bit ARM) native libraries in
-a single **universal APK**. A device automatically selects the matching ABI.
-Earlier ARM64-only debug builds will not install on 32-bit-only devices.
-
-The APK is distributed directly via the GitHub Actions artifact (debug builds)
-or GitHub Releases (signed builds). For updates, keep the same application ID
-and signing certificate; debug and release APKs use different signatures.
-Android may require enabling installation from the browser or file manager.
-On low-memory 32-bit phones, native inference is constrained by available RAM
-and 32-bit address space, so use small quantized GGUF models. Build success
-proves ABI packaging, not real-world model performance on every phone.
-
-## Install (Linux, macOS and Windows)
-
-The standalone **Go CLI and embedded headless Web console** are installed in user space,
-without sudo/administrator privileges and without requiring Go locally. The installer
-selects the CPU architecture, downloads an official GitHub Release archive, checks its
-SHA-256 against `SHA256SUMS.txt`, and installs `nodexlm` to your user PATH.
-Re-run the same command to upgrade. The default channel is the public `edge` prerelease;
-versioned stable releases are available when published. Installation does **not**
-include the optional Flutter desktop GUI, and a native `llama.cpp` runtime is provisioned
-on demand when inference is started.
-
-**Linux (amd64, arm64, armv7) / macOS (Intel, Apple Silicon):**
+**Linux e macOS** (CLI e painel Web integrado):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh
 nodexlm host
 ```
 
-Install a published stable release instead of edge:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | NODEXLM_CHANNEL=stable sh
-```
-
-Default destination: `~/.local/bin/nodexlm`. If needed, the script adds this directory
-to `~/.profile` (Linux) or `~/.zprofile` (macOS) for **new** terminal sessions.
-Override with `NODEXLM_INSTALL_DIR` (then manage PATH yourself). No `sudo` is used.
-
-**Windows PowerShell 5.1+ (x64/ARM64):**
+**Windows PowerShell** (CLI e painel Web integrado):
 
 ```powershell
 irm https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.ps1 | iex
 nodexlm host
 ```
 
-Stable release (once available):
+**Android 10+**: [APK experimental no GitHub Releases](https://github.com/rfdetoni/nodexlm/releases/tag/android-debug). O Android ARM64 pode tentar Vulkan + CPU; ARMv7 permanece CPU. A GPU móvel depende do driver e de suporte Vulkan efetivo. A versão debug não equivale a uma release assinada para produção.
 
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.ps1))) -Channel stable
-```
+O instalador de desktop distribui **a CLI e o painel Web**, não a interface Flutter opcional.
 
-Installs to `%LOCALAPPDATA%\Programs\NodexLM` by default and updates the **user** PATH;
-restart the terminal if it does not recognize `nodexlm` immediately. Manual inspection
-of the installer before executing it is recommended. Release SHA-256 manifests detect
-corrupted downloads but are **not** code-signature or publisher-identity verification.
-The `edge` channel is experimental.
+## Começando
 
-You can inspect and manually download all binaries at
-[GitHub Releases](https://github.com/rfdetoni/nodexlm/releases).
+1. Inicie `nodexlm host` no computador principal.
+2. Acesse **http://localhost:8787** e obtenha o acesso com `nodexlm web-token` em outro terminal do Host.
+3. Execute `nodexlm guest` no Linux secundário; informe o código de pareamento temporário que o Host exibiu.
+4. No Android, abra **Cluster**, faça o pareamento e ative **Guest RPC** com o backend adequado.
+5. No painel Web, pesquise ou importe um GGUF, habilite distribuição por RPC quando houver Guests prontos e carregue o modelo.
 
+O código de pareamento **não** é o token de administrador. O GGUF de um modelo distribuído fica no Host; o protocolo RPC movimenta tensores e operações entre dispositivos.
 
-## Linux Guests, Host panel and Android screen-off processing
+## Documentação em português
 
-Run `nodexlm host` to start the Host. The terminal shows the local
-management URL `http://localhost:8787` (not exposed to the LAN), along
-with LAN HTTPS endpoints for Guest pairing. On a separate Linux machine run
-`nodexlm guest`: it discovers the Host via local UDP broadcast, requests
-the 8-character pairing code, verifies the Host certificate and starts a
-distributed RPC Guest. Existing pairing is reused. Use
-`nodexlm guest --backend cpu` for CPU-only operation or
-`nodexlm guest --server https://HOST-IP:8443` if discovery is blocked.
-The admin token is never required to join.
+- [Instalação e atualização](INSTALL.md)
+- [Guia do Host e painel Web](docs/GUIA_HOST.md)
+- [Guia do Guest Linux](docs/GUIA_GUEST_LINUX.md)
+- [Guia do Android: CPU e GPU](docs/GUIA_ANDROID.md)
+- [Modelos GGUF e Hugging Face](docs/GUIA_MODELOS.md)
+- [Diagnóstico e solução de problemas](docs/GUIA_DIAGNOSTICO.md)
+- [Pareamento e segurança](docs/PAIRING.md)
+- [Model Hub: detalhes técnicos](docs/MODEL_HUB.md)
+- [MoE e limitações](docs/MOE.md)
+- [Histórico de alterações](CHANGELOG.md)
 
-Standard Linux model workers send live RAM/VRAM with their leases.
-Linux native RPC Guests send authenticated hardware heartbeats.
-NVIDIA is queried via nvidia-smi; AMD and Intel DRM drivers report
-dedicated VRAM when measurable. Shared GPU memory is never fabricated.
-The cluster view displays the measured resources per Guest.
+## Rede e limitações
 
-The Host's Hugging Face model list shows download progress next to
-the selected GGUF and in the download panel, updated every second.
-Android 10+ keeps the explicitly started foreground worker's CPU active
-when the screen is locked. This increases battery consumption; stop the
-worker when idle, and remove vendor battery restrictions if necessary.
-The Android application supports both independent whole-model inference and
-an opt-in, isolated RPC CPU Guest that receives tensors from the Host.
+| Serviço | Porta | Acesso |
+|---|---|---|
+| Painel Web | `127.0.0.1:8787/tcp` | Apenas no Host local |
+| Coordenador HTTPS | `8443/tcp` | Dispositivos pareados na LAN |
+| Descoberta de Host | `46465/udp` | Rede local |
+| RPC nativo | `127.0.0.1:50052/tcp` | Loopback do Guest, via túnel autenticado |
 
-## Linux x64: Guest RPC sem toolchain
+**RAM e VRAM não são simplesmente somadas.** GPUs integradas normalmente compartilham memória com o sistema, e os cálculos de compatibilidade são estimativas. Android pode interromper serviços em segundo plano conforme o fabricante. A distribuição RPC não representa paralelismo de especialistas MoE automático.
 
-A primeira execução de `nodexlm guest` em Linux x86_64 com backend CPU
-baixa o par `llama-server` e `ggml-rpc-server` de uma release
-NodexLM separada e versionada, compilada a partir do llama.cpp b12143
-(commit `2bc46baa9207d098d03741ac394e7faaf1a955b6`).
-O instalador confere SHA-256 e extrai com proteção contra caminhos fora do diretório.
-A versão do RPC é compartilhada com o Host; use NodexLM atualizado nos dois lados.
-Caso a release não esteja acessível, permanece a opção de compilação local
-(`sudo apt install -y git cmake build-essential` no Ubuntu/Debian).
-Backends GPU, sistemas e arquiteturas ainda sem runtime RPC publicado
-continuam usando a compilação local.
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh
-nodexlm guest --backend cpu
-```
-
-
-## Android como Guest RPC verdadeiro (Android 10+, ARMv7/ARM64)
-
-Em **Cluster → Conectar ao Host**, emparelhe usando o código temporário de
-8 caracteres. Em seguida pressione **Ativar Guest RPC (sem GGUF local)**.
-O app executa um servidor `ggml` RPC CPU nativo, ligado somente a
-`127.0.0.1:50052`, em um processo Android isolado da interface.
-Quatro túneis TLS iniciados pelo telefone passam pelo Host pareado usando
-certificado fixado e credencial por dispositivo. O Host mantém o GGUF e
-distribui tensores e grafos de cálculo conforme o orçamento de memória.
-O Android não precisa baixar o GGUF inteiro.
-
-**Compatibilidade crítica:** o APK e o runtime RPC do Host devem usar
-o mesmo `llama.cpp` `b12143`, commit
-`2bc46baa9207d098d03741ac394e7faaf1a955b6`. Este APK
-inicialmente oferece somente CPU; GPUs móveis via Vulkan ainda não
-participam do backend RPC. Androids de 32 bits estão sujeitos ao limite
-de espaço de endereçamento e podem aceitar apenas poucas camadas.
-
-Ative `Distribuir o modelo entre os Guests RPC conectados` no Host Web
-antes de carregar o GGUF. O Host só contabiliza os recursos de nós
-online que enviam heartbeats e pode deixar de colocar camadas no celular
-se a memória disponível for insuficiente. Ao desligar a tela, o serviço
-de primeiro plano mantém a CPU e Wi-Fi ativos quando possível; aumenta
-o consumo de bateria e não impede que fabricantes matem processos.
-A notificação persistente e o botão no aplicativo permitem interromper
-o Guest. A opção **Inferência independente** continua disponível para
-usuários que desejam executar GGUF local sem distribuir camadas.
-
-A implementação nativa é experimental; validação em telefones físicos,
-especialmente Android 10 de 32 bits, ainda é necessária.
+Código-fonte licenciado sob **AGPL-3.0-only**. Projeto independente; não utiliza código do aplicativo PrivateLM.

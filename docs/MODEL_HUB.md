@@ -1,11 +1,6 @@
-# NodexLM Model Hub — Android, Desktop, CLI and Host
+# Model Hub — funcionamento técnico
 
-All clients use public **Hugging Face Hub REST APIs** to locate single-file GGUF
-weights; the Go `internal/catalog` package is the shared library for the CLI,
-Host web dashboard and Flutter desktop controller. The Android application has
-a minimal Kotlin Hub API adapter, and a paired Android node can also ask its
-Host for capacity-aware results via `GET /v1/nodes/catalog?q=...` using its node
-credential (never the Host admin token).
+O Model Hub pesquisa modelos GGUF pela API REST pública do Hugging Face. A CLI Go, o painel Web do Host e a interface Flutter reutilizam `internal/catalog`; o Android utiliza um adaptador Kotlin e pode consultar o catálogo estimado do Host pareado.
 
 ## CLI
 
@@ -13,48 +8,23 @@ credential (never the Host admin token).
 nodexlm hub search --query "qwen" --json
 nodexlm hub search --query "qwen" --server https://HOST:8443 --ca server.crt
 nodexlm hub download --repo OWNER/REPOSITORY --file MODEL-Q4_K_M.gguf --dir ./models
-nodexlm hub import --file /path/to/model.gguf --dir ./models
-nodexlm models --dir ./models
+nodexlm hub import --file /caminho/model.gguf --dir ./models
 ```
 
-`--server` includes **currently RPC-ready** Guests for estimated cluster fit.
-An authenticated Host admin credential is required, obtainable from the local
-Host via `nodexlm web-token` (or `NODEXLM_ADMIN_TOKEN`). Never put the admin
-credential in command-line flags. The desktop interface passes it to its Go
-CLI subprocess through the environment.
+Quando a pesquisa utiliza a capacidade do Host, somente Guests RPC prontos entram na estimativa distribuída. Isso não garante que o driver real suporte todas as operações do modelo.
 
-## Android 10+
+## Android
 
-The **Modelos** tab searches the Hub, shows file sizes, and flags estimated
-single-node or distributed candidates. Downloads go through Android's native
-`DownloadManager` to app-specific storage and are not loaded into process RAM.
-The tab exposes byte progress, cancellation, import from Android's document
-picker, local model selection and direct reuse by the native worker. Downloads
-must complete and pass GGUF header and size checks before selection.
+A aba **Modelos** permite pesquisar, baixar com progresso/cancelamento, selecionar e importar GGUF. No modo **Guest RPC**, esses arquivos locais não são obrigatórios: o Host gerencia o GGUF e transmite tensores. Na inferência independente, o arquivo é carregado no próprio aparelho.
 
-After pairing, Android obtains Host-managed cluster recommendations. When the
-Host is unreachable, Android falls back to the public Hub API and a conservative
-local RAM estimate. Android RPC compute participation is **not yet implemented**:
-its installed app currently executes complete model inference jobs. Do not treat
-aggregate capacity as a promise of successful execution. Model shards, gated
-repos, projector files and models requiring authentication are excluded from
-this lightweight first implementation.
+ARM64 pode incluir CPU e GPU Vulkan como backends RPC, caso o driver seja compatível. ARMv7 usa CPU. A memória GPU de aparelhos integrados pode ser compartilhada com RAM.
 
-## Desktop
+## Segurança e limitações
 
-In the **Models** rail tab, search and download Hugging Face GGUF models or
-import a previously downloaded GGUF file path. The GUI launches `nodexlm hub`
-so downloads, storage validation and file naming behave exactly like the CLI.
-The `nodexlm` CLI must be available alongside the GUI or in the user's PATH.
-The local default directory is `./models`, editable in the UI.
+- Downloads explícitos são transmitidos para disco, sem manter o GGUF inteiro na memória.
+- O arquivo deve passar pela validação antes de ser selecionado.
+- Repositórios autenticados, modelos divididos em múltiplos arquivos e arquivos auxiliares podem exigir fluxo manual.
+- Estimativas incluem margem para buffers, mas são apenas orientativas.
+- O token administrativo do Host não deve ser enviado ao Guest.
 
-## Security and limits
-
-- Only explicit searches/downloads execute; the daemon never silently downloads large weights.
-- Downloaded weights are streamed to disk; existing destination files are not overwritten.
-- Supported public Hub downloads may redirect to Hugging Face CDN/Xet servers.
-- All memory estimates reserve headroom and remain advisory; model formats,
-  buffer placement, KV cache, actual RPC readiness and throughput may differ.
-- An Android device must have sufficient free storage and memory. On 32-bit
-  Android, even moderately sized models may exceed address-space limits.
-- Never install an arbitrary downloaded GGUF as executable code.
+Leia [guia de modelos](GUIA_MODELOS.md) e [guia Android](GUIA_ANDROID.md).
