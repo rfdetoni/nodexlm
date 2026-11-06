@@ -220,3 +220,54 @@ Android may require enabling installation from the browser or file manager.
 On low-memory 32-bit phones, native inference is constrained by available RAM
 and 32-bit address space, so use small quantized GGUF models. Build success
 proves ABI packaging, not real-world model performance on every phone.
+
+## Install (Linux, macOS and Windows)
+
+The standalone **Go CLI and embedded headless Web console** are installed in user space,
+without sudo/administrator privileges and without requiring Go locally. The installer
+selects the CPU architecture, downloads an official GitHub Release archive, checks its
+SHA-256 against `SHA256SUMS.txt`, and installs `nodexlm` to your user PATH.
+Re-run the same command to upgrade. The default channel is the public `edge` prerelease;
+versioned stable releases are available when published. Installation does **not**
+include the optional Flutter desktop GUI, and a native `llama.cpp` runtime is provisioned
+on demand when inference is started.
+
+**Linux (amd64, arm64, armv7) / macOS (Intel, Apple Silicon):**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh
+nodexlm host
+```
+
+Install a published stable release instead of edge:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | NODEXLM_CHANNEL=stable sh
+```
+
+Default destination: `~/.local/bin/nodexlm`. If needed, the script adds this directory
+to `~/.profile` (Linux) or `~/.zprofile` (macOS) for **new** terminal sessions.
+Override with `NODEXLM_INSTALL_DIR` (then manage PATH yourself). No `sudo` is used.
+
+**Windows PowerShell 5.1+ (x64/ARM64):**
+
+```powershell
+irm https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.ps1 | iex
+nodexlm host
+```
+
+Stable release (once available):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.ps1))) -Channel stable
+```
+
+Installs to `%LOCALAPPDATA%\Programs\NodexLM` by default and updates the **user** PATH;
+restart the terminal if it does not recognize `nodexlm` immediately. Manual inspection
+of the installer before executing it is recommended. Release SHA-256 manifests detect
+corrupted downloads but are **not** code-signature or publisher-identity verification.
+The `edge` channel is experimental.
+
+You can inspect and manually download all binaries at
+[GitHub Releases](https://github.com/rfdetoni/nodexlm/releases).
+

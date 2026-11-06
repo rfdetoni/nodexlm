@@ -1,0 +1,93 @@
+name: Desktop and CLI binaries
+
+# A single cross-compilation job creates reusable executables for all platforms.
+# 'edge' is publicly downloadable without a version tag; stable tags are optional.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/desktop-binaries.yml'
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nodexlm-desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: POSIX installer smoke test
+        run: sh ./scripts/test-install.sh
+      - name: Cross compile and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="0.1.0-edge.${GITHUB_RUN_NUMBER}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          mkdir -p dist stage
+          for target in linux_amd64 linux_arm64 linux_armv7 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64; do
+            os="${target%%_*}"
+            arch="${target#*_}"
+            goarch="$arch"
+            goarm=''
+            if [[ "$arch" == armv7 ]]; then goarch=arm; goarm=7; fi
+            exe=nodexlm
+            if [[ "$os" == windows ]]; then exe=nodexlm.exe; fi
+            rm -rf stage/*
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$goarch" GOARM="$goarm" \
+              go build -trimpath -ldflags="-s -w -X main.version=$version" -o "stage/$exe" ./cmd/nodexlm
+            cp LICENSE stage/LICENSE
+            if [[ "$os" == windows ]]; then
+              (cd stage && zip -q "../dist/nodexlm_${target}.zip" "$exe" LICENSE)
+            else
+              (cd stage && tar -czf "../dist/nodexlm_${target}.tar.gz" "$exe" LICENSE)
+            fi
+          done
+          (cd dist && sha256sum nodexlm_* > SHA256SUMS.txt)
+          test "$(find dist -name 'nodexlm_*.tar.gz' -o -name 'nodexlm_*.zip' | wc -l)" -eq 7
+          cat dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nodexlm-desktop-binaries
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish public release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag='nodexlm-edge'
+          flags=(--prerelease --latest=false)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            flags=(--latest)
+            if [[ "$tag" == *-* ]]; then flags=(--prerelease --latest=false); fi
+          fi
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --repo "$GH_REPO" --clobber
+          else
+            gh release create "$tag" dist/* --repo "$GH_REPO" \
+              --target "$GITHUB_SHA" --title "NodexLM $tag" \
+              --notes 'CLI and embedded headless Web console for Linux, macOS and Windows. Platform-native llama.cpp runtime is provisioned when needed. Checksums are in SHA256SUMS.txt. For permanent upgrades use the same release channel.' \
+              "${flags[@]}"
+          fi
