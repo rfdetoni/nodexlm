@@ -16,9 +16,17 @@ import (
 	"time"
 )
 
+// idleTunnel owns its idle reader until a Host-side RPC connection claims it.
+// The Guest cannot send application data before receiving the relay marker.
+type idleTunnel struct {
+	conn    net.Conn
+	claimed chan struct{}
+	stopped chan struct{}
+}
+
 type relay struct {
 	listener  net.Listener
-	waiting   chan net.Conn
+	waiting   chan *idleTunnel
 	closed    chan struct{}
 	mu        sync.Mutex
 	available int
@@ -59,7 +67,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 			http.Error(w, "local RPC relay unavailable", 503)
 			return
 		}
-		item = &relay{listener: ln, waiting: make(chan net.Conn, 8), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
+		item = &relay{listener: ln, waiting: make(chan *idleTunnel, 8), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
 		h.nodes[nodeID] = item
 		go item.accept()
 	}
@@ -88,12 +96,55 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 		item.finish(conn)
 		return
 	}
+	pending := &idleTunnel{
+		conn:    conn,
+		claimed: make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
 	select {
-	case item.waiting <- conn:
+	case item.waiting <- pending:
+		// Once ServeHTTP returns, the HTTP request context is canceled even
+		// though the hijacked connection may stay open. Monitor the raw socket.
+		go item.watchIdle(pending)
 	case <-item.closed:
 		item.finish(conn)
 	case <-r.Context().Done():
 		item.finish(conn)
+	}
+}
+
+// watchIdle detects a Guest that disconnected before being assigned to a
+// GGML session. Only this goroutine reads from the idle socket; accept() stops
+// it before writing the ready marker and starting the bidirectional bridge.
+func (r *relay) watchIdle(t *idleTunnel) {
+	defer close(t.stopped)
+	var b [1]byte
+	for {
+		select {
+		case <-t.claimed:
+			return
+		case <-r.closed:
+			return
+		default:
+		}
+		if err := t.conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			r.finish(t.conn)
+			return
+		}
+		n, err := t.conn.Read(b[:])
+		if n != 0 {
+			slog.Warn("RPC Guest sent data before relay ready marker")
+			r.finish(t.conn)
+			return
+		}
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			continue
+		}
+		if err != nil {
+			r.finish(t.conn)
+			return
+		}
 	}
 }
 func (r *relay) decrement()          { r.mu.Lock(); r.available--; r.mu.Unlock() }
@@ -108,6 +159,12 @@ func (r *relay) finish(conn net.Conn) {
 	conn.Close()
 }
 func (r *relay) count() int { r.mu.Lock(); defer r.mu.Unlock(); return r.available }
+func (r *relay) tracked(conn net.Conn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.peers[conn]
+	return ok
+}
 func (r *relay) accept() {
 	for {
 		upstream, err := r.listener.Accept()
@@ -119,17 +176,27 @@ func (r *relay) accept() {
 			var guest net.Conn
 			timeout := time.NewTimer(8 * time.Second)
 			defer timeout.Stop()
-			select {
-			case guest = <-r.waiting:
-			case <-timeout.C:
-				slog.Warn("RPC relay timed out waiting for an idle Guest tunnel",
-					"endpoint", r.listener.Addr().String(),
-					"connected_tunnels", r.count(), "idle_tunnels", len(r.waiting))
-				upstream.Close()
-				return
-			case <-r.closed:
-				upstream.Close()
-				return
+			// Disconnected idle connections can remain in the buffered queue
+			// briefly after watchIdle closes them. Skip them until the deadline.
+			for guest == nil {
+				select {
+				case pending := <-r.waiting:
+					close(pending.claimed)
+					<-pending.stopped
+					_ = pending.conn.SetReadDeadline(time.Time{})
+					if r.tracked(pending.conn) {
+						guest = pending.conn
+					}
+				case <-timeout.C:
+					slog.Warn("RPC relay timed out waiting for an idle Guest tunnel",
+						"endpoint", r.listener.Addr().String(),
+						"connected_tunnels", r.count(), "idle_tunnels", len(r.waiting))
+					upstream.Close()
+					return
+				case <-r.closed:
+					upstream.Close()
+					return
+				}
 			}
 			// Tell the guest to dial its loopback-only native rpc-server.
 			if _, err := guest.Write([]byte{1}); err != nil {
@@ -197,8 +264,10 @@ func (h *Hub) Remove(id string) {
 		_ = r.listener.Close()
 		for {
 			select {
-			case c := <-r.waiting:
-				r.finish(c)
+			case pending := <-r.waiting:
+				close(pending.claimed)
+				<-pending.stopped
+				r.finish(pending.conn)
 			default:
 				return
 			}
