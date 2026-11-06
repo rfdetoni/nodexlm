@@ -124,3 +124,22 @@ do **Host** no momento em que aplicar o GGUF. Verifique a mensagem de erro de
 Compare `nodexlm version` nos dispositivos. Não exclua credenciais ou o
 runtime apenas por esse texto; as falhas de modelo devem ser diagnosticadas
 pelo erro de carregamento, não por fechamento de socket isolado.
+
+## Host: `Remote RPC server crashed or returned malformed response`
+
+O erro `recv failed (bytes_recv=0, size_to_recv=8)` durante
+`load_model` significa que o Host não recebeu o cabeçalho de resposta ao
+comando `HELLO` do GGML. Não comprova, sozinho, que o servidor nativo
+do Guest caiu.
+
+Verifique, no mesmo momento, as mensagens do **Host**:
+- `RPC relay timed out waiting for an idle Guest tunnel`: o Host solicitou
+  outra conexão, mas os túneis estavam ocupados ou desconectados.
+- `RPC tunnel capacity reached`: o Guest ultrapassou o limite por nó.
+- Saída inesperada do `ggml-rpc-server`: verificar o stderr do Guest.
+
+O padrão Linux passa a reservar 8 túneis, dentro do limite do relay.
+Para investigar protocolos e desempenho de um modelo novo, reproduza primeiro
+com um GGUF pequeno e um Guest CPU; se o mesmo `HELLO` falhar, o problema
+não depende do tamanho ou da quantização do modelo. Compare as versões do
+runtime `llama.cpp b12143` nos dois lados.
