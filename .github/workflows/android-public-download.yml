@@ -1,0 +1,85 @@
+name: Android APK - Public Download
+
+# Reuse a successful Android build instead of recompiling native llama.cpp.
+# Publish an openly downloadable testing APK for Android 10+ sideload users.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Successful Android APK workflow run ID (blank = latest successful run)'
+        type: string
+        required: false
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/android-public-download.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: nodexlm-public-android-debug
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Public Android 10+ test APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download APK from successful Android build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REQUESTED_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          run_id="$REQUESTED_RUN_ID"
+          if [[ -z "$run_id" ]]; then
+            run_id="$(gh run list --repo "$GH_REPO" --workflow android-apk.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          fi
+          if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "::error::No successful Android APK build found"
+            exit 1
+          fi
+          mkdir -p dist
+          gh run download "$run_id" --repo "$GH_REPO" --name nodexlm-android-debug --dir dist
+          shopt -s nullglob
+          apks=(dist/*-debug.apk)
+          if [[ "${#apks[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one APK in the successful Android artifact"
+            exit 1
+          fi
+          mv "${apks[0]}" dist/NodexLM-android10-plus-debug.apk
+          test -s dist/NodexLM-android10-plus-debug.apk
+          for abi in armeabi-v7a arm64-v8a; do
+            unzip -Z1 dist/NodexLM-android10-plus-debug.apk | grep -Fqx "lib/${abi}/libnodexlm.so" || {
+              echo "::error::APK is missing the ${abi} native library"
+              exit 1
+            }
+          done
+          (cd dist && sha256sum NodexLM-android10-plus-debug.apk > SHA256SUMS.txt)
+          echo "Published from Android APK workflow run: $run_id" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish downloadable APK in public GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="android-debug"
+          files=(dist/NodexLM-android10-plus-debug.apk dist/SHA256SUMS.txt)
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --repo "$GH_REPO" --clobber
+          else
+            gh release create "$tag" "${files[@]}" --repo "$GH_REPO" \
+              --target "$GITHUB_SHA" \
+              --title 'NodexLM Android 10+ - APK de teste' \
+              --notes 'APK universal ARMv7/ARM64 para Android 10+. Instalação direta, sem Play Store. Versão de teste assinada com chave debug gerada no CI, que pode mudar entre compilações: pode ser necessário desinstalar a versão anterior, perdendo os dados locais. Para atualizações sem desinstalação utilize versões oficiais assinadas sempre com a mesma chave.' \
+              --prerelease --latest=false
+          fi
+          echo "Download público: https://github.com/$GH_REPO/releases/download/$tag/NodexLM-android10-plus-debug.apk" >> "$GITHUB_STEP_SUMMARY"
