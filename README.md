@@ -2,7 +2,7 @@
 
 Local AI inference and a lightweight coordinator/worker runtime for heterogeneous Linux, Windows, macOS and Android devices.
 
-**Status: alpha.** The Go CLI/coordinator and local `llama-server` integration are functional; Android JNI service and Flutter desktop UI are experimental and have not yet been validated by device builds. Remote requests are scheduled as whole jobs on workers. A proof-of-concept of **one-model layer-distributed RPC inference** is now available for desktop Guests through a pinned and authenticated LAN tunnel; it has not been benchmarked against real multi-device GGUF workloads. Android as an RPC Guest and MoE expert-parallelism remain unimplemented.
+**Status: alpha.** The Go CLI/coordinator and local `llama-server` integration are functional; Android JNI service and Flutter desktop UI are experimental and have not yet been validated by device builds. Remote requests are scheduled as whole jobs on workers. A proof-of-concept of **one-model layer-distributed RPC inference** is now available for desktop Guests through a pinned and authenticated LAN tunnel; it has not been benchmarked against real multi-device GGUF workloads. The Android CPU RPC Guest has a dedicated JNI service and authenticated tunnels, but physical-device RPC inference has not yet been validated; MoE expert-parallelism remains unimplemented.
 
 This is an independent implementation. PrivateLM was a functional reference, but no application source code from PrivateLM has been copied. Model execution uses [llama.cpp](https://github.com/ggml-org/llama.cpp) as an external runtime / native dependency.
 
@@ -163,7 +163,7 @@ whether a particular model can load and run. A wired LAN is recommended.
 Active RPC tunnels consume sockets and a small amount of memory; when the
 native worker exits, its process releases allocated model buffers. A Guest
 without a valid memory report cannot be used for automatic layer placement.
-Android still needs a dedicated native RPC worker implementation and live
+Native Android RPC CPU implementation is experimental; real-world validation and live
 heterogeneous benchmarks are pending. The model discovery
 panel provides memory *estimates*, not verified compatibility guarantees.
 
@@ -295,10 +295,27 @@ the selected GGUF and in the download panel, updated every second.
 Android 10+ keeps the explicitly started foreground worker's CPU active
 when the screen is locked. This increases battery consumption; stop the
 worker when idle, and remove vendor battery restrictions if necessary.
-The Android implementation currently runs complete-model inference and
-does not provide a native distributed RPC Guest.
+The Android application supports both independent whole-model inference and
+an opt-in, isolated RPC CPU Guest that receives tensors from the Host.
 
-## Linux x64: Guest RPC sem toolchain\n\nA primeira execução de `nodexlm guest` em Linux x86_64 com backend CPU\nbaixa o par `llama-server` e `ggml-rpc-server` de uma release\nNodexLM separada e versionada, compilada a partir do llama.cpp b12143\n(commit `2bc46baa9207d098d03741ac394e7faaf1a955b6`).\nO instalador confere SHA-256 e extrai com proteção contra caminhos fora do diretório.\nA versão do RPC é compartilhada com o Host; use NodexLM atualizado nos dois lados.\nCaso a release não esteja acessível, permanece a opção de compilação local\n(`sudo apt install -y git cmake build-essential` no Ubuntu/Debian).\nBackends GPU, sistemas e arquiteturas ainda sem runtime RPC publicado\ncontinuam usando a compilação local.\n\n```sh\ncurl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh\nnodexlm guest --backend cpu\n```\n
+## Linux x64: Guest RPC sem toolchain
+
+A primeira execução de `nodexlm guest` em Linux x86_64 com backend CPU
+baixa o par `llama-server` e `ggml-rpc-server` de uma release
+NodexLM separada e versionada, compilada a partir do llama.cpp b12143
+(commit `2bc46baa9207d098d03741ac394e7faaf1a955b6`).
+O instalador confere SHA-256 e extrai com proteção contra caminhos fora do diretório.
+A versão do RPC é compartilhada com o Host; use NodexLM atualizado nos dois lados.
+Caso a release não esteja acessível, permanece a opção de compilação local
+(`sudo apt install -y git cmake build-essential` no Ubuntu/Debian).
+Backends GPU, sistemas e arquiteturas ainda sem runtime RPC publicado
+continuam usando a compilação local.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh
+nodexlm guest --backend cpu
+```
+
 
 ## Android como Guest RPC verdadeiro (Android 10+, ARMv7/ARM64)
 
