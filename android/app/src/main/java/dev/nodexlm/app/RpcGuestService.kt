@@ -52,7 +52,7 @@ class RpcGuestService : Service() {
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
         private const val PORT = 50052
-        private const val TUNNELS = 4
+        private const val TUNNELS = 8
     }
 
     private val running = AtomicBoolean(false)
