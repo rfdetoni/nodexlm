@@ -232,7 +232,7 @@ class RpcGuestService : Service() {
         } finally { connection.disconnect() }
     }
 
-    private fun track(socket: Socket): Socket {
+    private fun <T : Socket> track(socket: T): T {
         sockets.add(socket)
         return socket
     }
