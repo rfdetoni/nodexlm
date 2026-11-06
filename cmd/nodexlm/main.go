@@ -343,7 +343,9 @@ func join(args []string) error {
 	if nodeName == "" {
 		nodeName, _ = os.Hostname()
 	}
-	d := protocol.Device{Name: nodeName, Platform: runtime.GOOS, Architecture: runtime.GOARCH, CPUCount: runtime.NumCPU()}
+	d := hardware.Collect(nodeName, nil)
+    // Record measured Ubuntu RAM/VRAM on initial enrollment, not only after
+    // the first RPC heartbeat. Runtime availability is still checked at use.
 	if *model != "" {
 		d.Models = []string{*model}
 	}
@@ -799,25 +801,32 @@ func rpcNode(args []string) error {
 	defer cancel()
 	// A lightweight heartbeat informs the Host of real hardware availability.
 	name, _ := os.Hostname()
-	profile := hardware.Collect(name, nil)
-	profile.Runtime.Installed = true
-	profile.Runtime.Version = llamaruntime.Version
-	go func() {
-		tick := time.NewTicker(30 * time.Second)
-		defer tick.Stop()
-		for {
-			profile = hardware.Collect(name, nil)
-			profile.Runtime.Installed = true
-			profile.Runtime.Version = llamaruntime.Version
-			beatCtx, stop := context.WithTimeout(c, 5*time.Second)
-			_, _ = cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
-			stop()
-			select {
-			case <-c.Done():
-				return
-			case <-tick.C:
-			}
-		}
-	}()
+    heartbeat := func() {
+        profile := hardware.Collect(name, nil)
+        profile.Runtime.Installed = true
+        profile.Runtime.Version = llamaruntime.Version
+        beatCtx, stop := context.WithTimeout(c, 8*time.Second)
+        defer stop()
+        _, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+        if err != nil {
+            slog.Warn("Guest RAM/VRAM heartbeat failed", "error", err,
+                "ram_bytes", profile.RAMBytes, "available_ram_bytes", profile.AvailableRAMBytes,
+                "gpus", len(profile.GPUs))
+        } else if profile.RAMBytes == 0 {
+            slog.Warn("Ubuntu Guest RAM could not be measured; check /proc/meminfo access")
+        }
+    }
+    // Report immediately, before the first RPC tunnel begins serving layers.
+    heartbeat()
+    go func() {
+        tick := time.NewTicker(30 * time.Second)
+        defer tick.Stop()
+        for {
+            select {
+            case <-c.Done(): return
+            case <-tick.C: heartbeat()
+            }
+        }
+    }()
 	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots)
 }
