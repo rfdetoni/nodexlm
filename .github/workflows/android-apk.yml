@@ -5,6 +5,11 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
+    # Validate workflow edits without running CI on every application commit.
+    branches:
+      - main
+    paths:
+      - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
 
@@ -38,7 +43,10 @@ jobs:
           java-version: '17'
 
       - name: Android SDK command-line tools
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          # The removed legacy SDK 'tools' package breaks setup-android@v3.
+          packages: 'platform-tools'
 
       - name: Install pinned Android SDK, NDK and CMake
         shell: bash
