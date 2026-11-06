@@ -77,7 +77,7 @@ class RpcGuestService : Service() {
         val token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { Build.MODEL }
         val parsed = try { URI(endpoint) } catch (_: Exception) { null }
-        if (parsed?.scheme != "https" || parsed.host.isNullOrEmpty() || parsed.rawUserInfo != null ||
+        if (parsed == null || parsed.scheme != "https" || parsed.host.isNullOrEmpty() || parsed.rawUserInfo != null ||
             parsed.rawQuery != null || parsed.rawFragment != null || endpoint.contains('\r') ||
             endpoint.contains('\n') || node.contains('\r') || node.contains('\n') ||
             token.contains('\r') || token.contains('\n') || node.length !in 32..128 ||
