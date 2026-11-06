@@ -1,0 +1,87 @@
+name: Pinned Linux RPC runtime
+
+# One-time build for the pinned llama.cpp revision. The CLI downloads this
+# artifact at runtime so regular Linux Guests do not need CMake or compilers.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/rpc-runtime.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nodexlm-rpc-runtime-b12143
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 70
+    steps:
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq git cmake make g++ pkg-config
+      - name: Fetch and verify pinned upstream source
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --branch b12143 https://github.com/ggml-org/llama.cpp.git llama-source
+          test "$(git -C llama-source rev-parse HEAD)" = "2bc46baa9207d098d03741ac394e7faaf1a955b6"
+      - name: Build matched static CPU RPC pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S llama-source -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_RPC=ON \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=ON \
+            -DLLAMA_BUILD_SERVER=ON
+          cmake --build build --config Release --parallel 2
+          test -x build/bin/llama-server
+          if test -x build/bin/ggml-rpc-server; then rpc=ggml-rpc-server
+          elif test -x build/bin/rpc-server; then rpc=rpc-server
+          else echo "::error::Pinned llama.cpp build has no RPC server"; exit 1
+          fi
+          output="$(build/bin/llama-server --help 2>&1 || true)"
+          grep -Fq -- '--rpc' <<< "$output" || { echo "::error::llama-server is missing --rpc"; exit 1; }
+          mkdir -p staging/bin dist
+          cp -L build/bin/llama-server "build/bin/$rpc" staging/bin/
+          # Preserve any required shared runtime libraries as regular files.
+          shopt -s nullglob
+          for lib in build/bin/*.so build/bin/*.so.*; do
+            cp -L "$lib" staging/bin/
+          done
+          cp llama-source/LICENSE staging/LICENSE.llama.cpp
+          chmod 755 staging/bin/llama-server "staging/bin/$rpc"
+          archive='nodexlm-rpc_b12143_linux_amd64_cpu.tar.gz'
+          tar -czf "dist/$archive" -C staging bin LICENSE.llama.cpp
+          (cd dist && sha256sum "$archive" > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+      - name: Publish verified CPU RPC runtime for Linux x64
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=nodexlm-rpc-b12143
+          # Do not overwrite a pinned runtime release with an unreviewed build.
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Pinned $tag already exists; keeping existing asset immutable."
+            exit 0
+          fi
+          gh release create "$tag" dist/* \
+            --repo "$GH_REPO" \
+            --target main \
+            --title "NodexLM pinned RPC runtime (llama.cpp b12143)" \
+            --notes 'Verified pinned llama.cpp b12143, source commit 2bc46baa9207d098d03741ac394e7faaf1a955b6. Contains matching llama-server + ggml-rpc-server with GGML_RPC=ON, portable CPU backend for Linux x86_64. Download integrity is checked using SHA256SUMS.txt. This runtime is experimental and intended only for trusted LAN tunnels.' \
+            --prerelease --latest=false
