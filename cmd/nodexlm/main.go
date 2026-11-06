@@ -81,6 +81,8 @@ func run(args []string) error {
 		return localChat(args[1:])
 	case "models":
 		return models(args[1:])
+	case "hub":
+		return hub(args[1:])
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 		return nil
@@ -106,6 +108,9 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm revoke --id NODE_ID --server https://host:8443 --ca ./server.crt
   nodexlm chat --server https://host:8443 --model model.gguf --prompt "Hello" --ca ./server.crt
   nodexlm models --dir ./models
+  nodexlm hub search --query "qwen gguf" --json [--server https://host:8443 --ca ./server.crt]
+  nodexlm hub download --repo owner/repo --file model.Q4_K_M.gguf --dir ./models
+  nodexlm hub import --file /path/to/manual.gguf --dir ./models
   nodexlm local --model ./models/model.gguf --prompt "hello"
   nodexlm local --model ./models/moe.gguf --moe-cpu --prompt "hello"
   nodexlm node --model moe.gguf --model-path ./models/moe.gguf --moe-cpu --ca ./server.crt

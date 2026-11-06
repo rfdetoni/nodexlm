@@ -3,6 +3,9 @@ name: Android APK - Public Download
 # Reuse a successful Android build instead of recompiling native llama.cpp.
 # Publish an openly downloadable testing APK for Android 10+ sideload users.
 on:
+  workflow_run:
+    workflows: ['Android APK']
+    types: [completed]
   workflow_dispatch:
     inputs:
       run_id:
@@ -26,6 +29,7 @@ concurrency:
 jobs:
   publish:
     name: Public Android 10+ test APK
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -34,7 +38,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          REQUESTED_RUN_ID: ${{ inputs.run_id }}
+          REQUESTED_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
         run: |
           set -euo pipefail
           run_id="$REQUESTED_RUN_ID"

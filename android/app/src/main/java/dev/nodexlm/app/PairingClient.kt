@@ -3,6 +3,7 @@
 package dev.nodexlm.app
 
 import android.content.Context
+import android.app.ActivityManager
 import android.os.Build
 import org.json.JSONArray
 import org.json.JSONObject
@@ -68,7 +69,12 @@ internal class PairingClient(private val context: Context) {
         }
         if (matches.size != 1) error(if (matches.isEmpty()) "No host matches that code" else "Multiple matching hosts; enter the host URL")
         val (endpoint, certificate) = matches.single()
-        val device = JSONObject().put("name", name.take(80).ifBlank { Build.MODEL })
+        val memory = ActivityManager.MemoryInfo()
+        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+        val device = JSONObject().put("ram_bytes",memory.totalMem)
+            .put("available_ram_bytes",memory.availMem)
+            .put("runtime",JSONObject().put("engine","llama.cpp JNI").put("installed",true).put("rpc_ready",false))
+            .put("name", name.take(80).ifBlank { Build.MODEL })
             .put("platform", "android")
             .put("architecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
             .put("cpu_count", Runtime.getRuntime().availableProcessors())

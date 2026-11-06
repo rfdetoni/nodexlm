@@ -143,3 +143,14 @@ func TestRejections(t *testing.T) {
 	s.mu.Unlock()
 	// Cleanup is exercised with normal timed state by the integration tests.
 }
+
+func TestCatalogRequiresPairedNode(t *testing.T) {
+	s, err := New(adminSecret, joinSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := call(t, s.Handler(), "GET", "/v1/nodes/catalog?q=Qwen", "", "", nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", response.Code)
+	}
+}

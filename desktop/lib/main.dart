@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'hub_panel.dart';
 
 void main() => runApp(const NodexApp());
 
@@ -249,11 +250,12 @@ class _ControlCenterState extends State<ControlCenter> {
         labelType:NavigationRailLabelType.all,leading:const Padding(padding:EdgeInsets.symmetric(vertical:20),child:Icon(Icons.hub,size:30)),destinations:const [
         NavigationRailDestination(icon:Icon(Icons.hub_outlined),selectedIcon:Icon(Icons.hub),label:Text('Cluster')),
         NavigationRailDestination(icon:Icon(Icons.chat_bubble_outline),selectedIcon:Icon(Icons.chat_bubble),label:Text('Chat')),
+        NavigationRailDestination(icon:Icon(Icons.download_outlined),selectedIcon:Icon(Icons.download),label:Text('Models')),
         NavigationRailDestination(icon:Icon(Icons.settings_outlined),selectedIcon:Icon(Icons.settings),label:Text('Settings')),
       ]),
       const VerticalDivider(width:1),
       Expanded(child:Padding(padding:const EdgeInsets.all(22),child:Column(children:[
-        Expanded(child:page==0?cluster():page==1?chat():connection()),
+        Expanded(child:page==0?cluster():page==1?chat():page==2?HubPanel(binary:cliBinary(),coordinator:url.text.trim(),caFile:caFile.text.trim(),adminToken:token.text.trim(),onSelected:(name) {model.text=name;setState(() {status='Selected model: $name';page=1;});}):connection()),
         const Divider(),Row(children:[Icon(busy?Icons.sync:Icons.circle,size:12,color:busy?Colors.orange:Colors.green),
           const SizedBox(width:8),Expanded(child:Text(status,overflow:TextOverflow.ellipsis,style:const TextStyle(color:Colors.white54,fontSize:12)))]),
       ]))),

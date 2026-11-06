@@ -67,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/pairing/start", s.pairingStart)
 	mux.HandleFunc("POST /v1/pairing/enroll", s.pairingEnroll)
 	mux.HandleFunc("POST /v1/nodes/heartbeat", s.heartbeat)
+	mux.HandleFunc("GET /v1/nodes/catalog", s.modelCatalog)
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
 	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
 	mux.HandleFunc("POST /v1/nodes/result/{id}", s.result)
@@ -200,7 +201,9 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Models []string `json:"models"`
+		Models            []string `json:"models"`
+		RAMBytes          uint64   `json:"ram_bytes"`
+		AvailableRAMBytes uint64   `json:"available_ram_bytes"`
 	}
 	if !parse(w, r, &req) {
 		return
@@ -216,6 +219,10 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		n.device.LastSeen = time.Now()
 		n.device.Status = "online"
 		n.device.Models = append([]string(nil), req.Models...)
+		if req.RAMBytes > 0 && req.RAMBytes < 1<<50 && req.AvailableRAMBytes <= req.RAMBytes {
+			n.device.RAMBytes = req.RAMBytes
+			n.device.AvailableRAMBytes = req.AvailableRAMBytes
+		}
 		if n.active == "" {
 			for i, jid := range s.queue {
 				j := s.jobs[jid]

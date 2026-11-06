@@ -3,6 +3,7 @@
 package dev.nodexlm.app
 
 import android.app.Notification
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -64,9 +65,9 @@ class ComputeService : Service() {
 
     private fun workerLoop() {
         var backoff=1000L
-        val model=File(filesDir,"models/active.gguf")
+        val model=ModelFiles.selected(this)
         val coordinator=(prefs.getString("coordinator","")?:"").trimEnd('/')
-        if (!coordinator.startsWith("https://")||!model.isFile){Log.e(logTag,"Invalid worker configuration");stopWorker();return}
+        if (!coordinator.startsWith("https://")||model == null || !model.isFile){Log.e(logTag,"Invalid worker configuration");stopWorker();return}
         try {
             var id=prefs.getString("node_id","")?:""
             var token=prefs.getString("node_token","")?:""
@@ -75,7 +76,10 @@ class ComputeService : Service() {
             var lastInference=android.os.SystemClock.elapsedRealtime()
             while(running.get()) {
                 try {
+                    val memory = ActivityManager.MemoryInfo()
+                    (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
                     val payload=JSONObject().put("models",JSONArray().put(prefs.getString("model","model.gguf")))
+                        .put("ram_bytes",memory.totalMem).put("available_ram_bytes",memory.availMem)
                     val job=request(coordinator+"/v1/nodes/lease",token,id,payload)
                     if(job.length()==0) {
                         if(loaded && android.os.SystemClock.elapsedRealtime()-lastInference>120_000L) {
@@ -92,7 +96,7 @@ class ComputeService : Service() {
                     wake.acquire(180_000L)
                     try {
                         if (!loaded) {
-                            val init=NativeEntry.load(model.absolutePath,2048,maxOf(1,Runtime.getRuntime().availableProcessors()-2))
+                            val init=NativeEntry.load(model!!.absolutePath,2048,maxOf(1,Runtime.getRuntime().availableProcessors()-2))
                             if(init.isNotEmpty())throw IllegalStateException(init)
                             loaded=true
                         }
