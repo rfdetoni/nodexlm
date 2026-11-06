@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -95,7 +96,7 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 				if err == nil {
 					// A completed RPC session must not inherit a previous failure backoff.
 					delay = time.Second
-				} else if runCtx.Err() == nil && !strings.Contains(err.Error(), "EOF") {
+				} else if runCtx.Err() == nil && !errors.Is(err, io.EOF) {
 					slog.Warn("RPC tunnel disconnected", "slot", slot, "error", err)
 				}
 				if runCtx.Err() != nil {
