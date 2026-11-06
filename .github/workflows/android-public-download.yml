@@ -12,11 +12,6 @@ on:
         description: 'Successful Android APK workflow run ID (blank = latest successful run)'
         type: string
         required: false
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/android-public-download.yml'
 
 permissions:
   actions: read
@@ -29,7 +24,7 @@ concurrency:
 jobs:
   publish:
     name: Public Android 10+ test APK
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

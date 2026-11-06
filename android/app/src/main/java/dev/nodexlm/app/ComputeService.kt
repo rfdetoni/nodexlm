@@ -32,6 +32,16 @@ import kotlin.math.min
 class ComputeService : Service() {
     companion object { const val START="dev.nodexlm.START";const val STOP="dev.nodexlm.STOP";private const val CHANNEL="nodexlm_worker" }
     private val running = AtomicBoolean(false)
+    // This is an explicitly user-started foreground worker. Keep CPU/network
+    // polling running through screen-off Doze, but never outside worker lifetime.
+    private var workerWakeLock: PowerManager.WakeLock? = null
+    private fun releaseWorkerWakeLock() {
+        synchronized(this) {
+            try { if (workerWakeLock?.isHeld == true) workerWakeLock?.release() }
+            catch (e: Exception) { Log.w(logTag, "Wake lock release failed", e) }
+            workerWakeLock = null
+        }
+    }
     private val prefs by lazy {getSharedPreferences("nodexlm",MODE_PRIVATE)}
     private val logTag="NodexLMWorker"
     override fun onBind(intent:Intent?):IBinder?=null
@@ -45,23 +55,38 @@ class ComputeService : Service() {
         val notification=Notification.Builder(this,CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle("NodexLM worker active")
-            .setContentText("Available for local cluster inference")
+            .setContentText("Cluster ativo mesmo com a tela bloqueada · consome bateria")
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null,"Stop",stop).build())
             .build()
         if (Build.VERSION.SDK_INT>=34) startForeground(42,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         else startForeground(42,notification)
+        try {
+            synchronized(this) {
+                releaseWorkerWakeLock()
+                workerWakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NodexLM:background-worker")
+                    .apply { setReferenceCounted(false); acquire() }
+            }
+        } catch (e: Exception) {
+            Log.e(logTag, "Cannot keep cluster polling active while screen is locked", e)
+        }
         thread(name="nodexlm-worker",isDaemon=false) {workerLoop()}
         return START_STICKY
     }
 
     private fun stopWorker() {
         running.set(false)
+        releaseWorkerWakeLock()
         try{NativeEntry.cancel()}catch (_:Throwable){}
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
-    override fun onDestroy() {running.set(false);super.onDestroy()}
+    override fun onDestroy() {
+        running.set(false)
+        releaseWorkerWakeLock()
+        super.onDestroy()
+    }
 
     private fun workerLoop() {
         var backoff=1000L
@@ -119,7 +144,11 @@ class ComputeService : Service() {
                 }
             }
         }catch(e:Exception){Log.e(logTag,"Worker stopped",e)}
-        finally {try{NativeEntry.unload()}catch (_:Throwable){};stopSelf()}
+        finally {
+            try { NativeEntry.unload() } catch (_: Throwable) {}
+            releaseWorkerWakeLock()
+            stopSelf()
+        }
     }
 
     private fun request(url:String,token:String,node:String,body:JSONObject):JSONObject {

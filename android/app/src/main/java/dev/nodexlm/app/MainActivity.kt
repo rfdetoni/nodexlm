@@ -12,6 +12,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -134,6 +136,17 @@ class MainActivity : Activity() {
         val settings=card()
         settings.addView(label("Ajustes e manutenção",18,true))
         settings.addView(label("Modelos são armazenados no espaço privado do aplicativo. Downloads e importações não exigem Play Store.",13,false))
+        settings.addView(label("Para manter o cluster conectado com a tela apagada, permita o funcionamento em segundo plano nas configurações de bateria. O worker ativo usa mais bateria.",13,false))
+        settings.addView(action("Configurar restrições de bateria") {
+            try {
+                val manager = getSystemService(POWER_SERVICE) as PowerManager
+                if (manager.isIgnoringBatteryOptimizations(packageName)) {
+                    setStatus("O NodexLM já está sem as restrições de bateria do Android")
+                } else {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+            } catch (e: Exception) { setStatus("Abra as configurações do sistema para permitir atividade em segundo plano") }
+        })
         settings.addView(action("Verificar atualizações") {updateManager.check(manual=true)})
         settings.addView(label("Versão: ${packageManager.getPackageInfo(packageName,0).versionName}",12,false))
         content.addView(settings)
