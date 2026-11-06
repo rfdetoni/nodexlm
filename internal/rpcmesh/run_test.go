@@ -4,6 +4,7 @@ package rpcmesh
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,5 +47,17 @@ func TestNativeRPCExitDoesNotLeaveTunnelsRunning(t *testing.T) {
 	err := RunNativeGuest(ctx, &netclient.Client{}, executable, "127.0.0.1:0", 1)
 	if err == nil || !strings.Contains(err.Error(), "native RPC server exited before readiness") {
 		t.Fatalf("expected prompt native RPC process-exit error; got %v", err)
+	}
+}
+
+func TestNativeRPCRejectsAlreadyOccupiedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	err = RunNativeGuest(context.Background(), nil, "nonexistent-rpc", listener.Addr().String(), 1)
+	if err == nil || !strings.Contains(err.Error(), "native RPC listen address unavailable") {
+		t.Fatalf("expected occupied RPC port to be rejected; got %v", err)
 	}
 }
