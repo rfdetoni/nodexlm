@@ -1,11 +1,15 @@
 package rpcmesh
 
 import (
+ "context"
  "os"
  "path/filepath"
  "runtime"
  "strings"
  "testing"
+ "time"
+
+ "github.com/rfdetoni/nodexlm/internal/netclient"
 )
 
 func TestNativeRPCEnvironmentIncludesBundledLibraries(t *testing.T) {
@@ -18,5 +22,21 @@ func TestNativeRPCEnvironmentIncludesBundledLibraries(t *testing.T) {
  for _,entry:=range got {if strings.HasPrefix(entry,"LD_LIBRARY_PATH=") {value=strings.TrimPrefix(entry,"LD_LIBRARY_PATH=")}}
  if value!=filepath.Join(dir,"bin")+string(os.PathListSeparator)+"/opt/example" {
   t.Fatalf("RPC sibling libraries must precede system path: %q",value)
+ }
+}
+
+func TestNativeRPCExitDoesNotLeaveTunnelsRunning(t *testing.T) {
+ if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+  t.Skip("requires a POSIX executable")
+ }
+ executable := filepath.Join(t.TempDir(), "rpc-exit")
+ if err := os.WriteFile(executable, []byte("#!/bin/sh\\nexit 19\\n"), 0700); err != nil {
+  t.Fatal(err)
+ }
+ ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+ defer cancel()
+ err := RunNativeGuest(ctx, &netclient.Client{}, executable, "127.0.0.1:0", 1)
+ if err == nil || !strings.Contains(err.Error(), "native RPC server exited before readiness") {
+  t.Fatalf("expected prompt native RPC process-exit error; got %v", err)
  }
 }
