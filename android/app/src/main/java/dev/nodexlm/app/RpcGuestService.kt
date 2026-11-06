@@ -103,7 +103,7 @@ class RpcGuestService : Service() {
                 // be shared with RAM and must never be counted twice by the Host.
                 thread(name = "nodexlm-rpc-heartbeat", isDaemon = true) {
                     while (running.get()) {
-                        try { sendHeartbeat(endpoint, node, token, name, sslContext) }
+                        try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
                         catch (e: Exception) { if (running.get()) Log.w(LOG, "Heartbeat failed: ${e.message}") }
                         sleepWhileRunning(30_000)
                     }
@@ -197,7 +197,7 @@ class RpcGuestService : Service() {
     }
 
     private fun sendHeartbeat(endpoint: String, node: String, token: String,
-                              name: String, ssl: SSLContext) {
+                              name: String, mode: String, ssl: SSLContext) {
         val memory = ActivityManager.MemoryInfo()
         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
         // Address space on ARMv7 is smaller even on devices with more physical RAM.
@@ -210,15 +210,21 @@ class RpcGuestService : Service() {
             .put("architecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
             .put("cpu_count", Runtime.getRuntime().availableProcessors())
             .put("ram_bytes", memory.totalMem)
-            .put("available_ram_bytes", available)
-            .put("gpus", try {
+            .put("available_ram_bytes", if (mode == "gpu") 0L else available)
+            // Only expose GPU memory when this worker allows Vulkan offload.
+            // A CPU-only Guest must not make the Host allocate layers to GPU.
+            .put("gpus", if (mode == "cpu") JSONArray() else try {
                 JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
             } catch (e: Exception) {
                 Log.w(LOG, "Vulkan metrics unavailable", e)
                 JSONArray()
             })
             .put("runtime", JSONObject()
-                .put("engine", "ggml-rpc-cpu-vulkan")
+                .put("engine", when(mode) {
+                    "cpu" -> "ggml-rpc-cpu"
+                    "gpu" -> "ggml-rpc-vulkan"
+                    else -> "ggml-rpc-cpu-vulkan"
+                })
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
                 .put("rpc_ready", false))

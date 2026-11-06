@@ -27,6 +27,19 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     if(NOT NODEXLM_HOST_SPIRV_INCLUDE)
         message(FATAL_ERROR "SPIR-V headers required for Android Vulkan; install spirv-headers")
     endif()
+    # Vulkan-Hpp is C++ header-only and is absent from the Android NDK.
+    # Copy headers from the build host, but link against Android's Vulkan
+    # loader from the NDK sysroot, never the host x86_64 loader.
+    find_path(NODEXLM_HOST_VULKAN_INCLUDE
+        NAMES vulkan/vulkan.hpp
+        NO_CMAKE_FIND_ROOT_PATH)
+    if(NOT NODEXLM_HOST_VULKAN_INCLUDE)
+        message(FATAL_ERROR "Vulkan-Hpp headers missing; install libvulkan-dev")
+    endif()
+    set(NODEXLM_VULKAN_STAGING "${CMAKE_BINARY_DIR}/nodexlm-vulkan-headers")
+    file(MAKE_DIRECTORY "${NODEXLM_VULKAN_STAGING}")
+    file(COPY "${NODEXLM_HOST_VULKAN_INCLUDE}/vulkan"
+        DESTINATION "${NODEXLM_VULKAN_STAGING}")
     set(NODEXLM_SPIRV_STAGING "${CMAKE_BINARY_DIR}/nodexlm-spirv")
     file(MAKE_DIRECTORY "${NODEXLM_SPIRV_STAGING}")
     file(COPY "${NODEXLM_HOST_SPIRV_INCLUDE}/spirv"
@@ -54,7 +67,8 @@ FetchContent_Declare(llamacpp
 )
 FetchContent_MakeAvailable(llamacpp)
 if(ANDROID_ABI STREQUAL "arm64-v8a" AND TARGET ggml-vulkan)
-    target_include_directories(ggml-vulkan PRIVATE "${NODEXLM_SPIRV_STAGING}")
+    target_include_directories(ggml-vulkan BEFORE PRIVATE
+        "${NODEXLM_VULKAN_STAGING}" "${NODEXLM_SPIRV_STAGING}")
 endif()
 add_library(nodexlm SHARED native.cpp)
 target_link_libraries(nodexlm PRIVATE llama ggml ggml-rpc log android)
