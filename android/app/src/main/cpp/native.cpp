@@ -166,7 +166,7 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
     ggml_backend_load_all();
     std::ostringstream s;
-    s << "{\\"gpus\\":[";
+    s << "{\"gpus\":[";
     bool first = true;
     for(size_t i = 0; i < ggml_backend_dev_count(); ++i) {
         ggml_backend_dev_t d = ggml_backend_dev_get(i);
@@ -175,9 +175,9 @@ Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
         ggml_backend_dev_memory(d, &freeBytes, &totalBytes);
         if(!first) s << ",";
         first = false;
-        s << "{\\"name\\":\\"" << jsonEscaped(ggml_backend_dev_name(d))
-          << "\\",\\"vendor\\":\\"vulkan\\",\\"vram_bytes\\":" << totalBytes
-          << ",\\"free_vram_bytes\\":" << std::min(freeBytes,totalBytes) << "}";
+        s << "{\"name\":\"" << jsonEscaped(ggml_backend_dev_name(d))
+          << "\",\"vendor\":\"vulkan\",\"vram_bytes\":" << totalBytes
+          << ",\"free_vram_bytes\":" << std::min(freeBytes,totalBytes) << "}";
     }
     s << "]}";
     return env->NewStringUTF(s.str().c_str());
