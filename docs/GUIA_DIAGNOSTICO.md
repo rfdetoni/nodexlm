@@ -143,3 +143,20 @@ Para investigar protocolos e desempenho de um modelo novo, reproduza primeiro
 com um GGUF pequeno e um Guest CPU; se o mesmo `HELLO` falhar, o problema
 não depende do tamanho ou da quantização do modelo. Compare as versões do
 runtime `llama.cpp b12143` nos dois lados.
+
+## `RPC tunnel capacity reached` e `RPC tunnel refused: HTTP 503`
+
+O Host limita as conexões CONNECT autenticadas por nó a 8. O código
+anterior só liberava uma vaga quando uma inferência utilizava o túnel;
+se o Guest desconectasse antes disso, a vaga permanecia ocupada e os
+novos slots recebiam `HTTP 503`, mesmo após reiniciar o Guest.
+
+O Host agora observa o fechamento de cada túnel ocioso, remove a
+conexão da fila e libera sua vaga. A observação para assim que o
+túnel é entregue ao GGML; não há leitura paralela de bytes RPC.
+
+Se o Host continuar em `capacity=8` após a atualização, confira
+se existem **dois Guests executando ao mesmo tempo com o mesmo
+pareamento**: ambos compartilham o mesmo identificador do nó e o
+limite de 8 conexões. Pare o processo antigo e reinicie o Host e o Guest
+uma vez para descartar os túneis de uma versão anterior.
