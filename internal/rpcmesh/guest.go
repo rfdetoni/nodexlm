@@ -49,9 +49,13 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 		return err
 	}
 	secured := tls.Client(raw, cfg)
-	if err = secured.HandshakeContext(ctx); err != nil {
+	// Bound TLS negotiation independently of the long-lived tunnel context.
+	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, 5*time.Second)
+	err = secured.HandshakeContext(handshakeCtx)
+	cancelHandshake()
+	if err != nil {
 		secured.Close()
-		return err
+		return fmt.Errorf("RPC TLS handshake: %w", err)
 	}
     negotiated := secured.ConnectionState().NegotiatedProtocol
     if negotiated != "" && negotiated != "http/1.1" {
@@ -75,6 +79,10 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	}
 	req.Header.Set("Authorization", "Bearer "+client.Token)
 	req.Header.Set("X-Nodex-Node", client.NodeID)
+	// A stalled Host must not consume a tunnel slot indefinitely during CONNECT.
+	if err = secured.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
 	if err = req.Write(secured); err != nil {
 		return err
 	}
@@ -85,6 +93,10 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	}
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("RPC tunnel refused: HTTP %d", response.StatusCode)
+	}
+	// The relay intentionally remains idle until model loading requests a slot.
+	if err = secured.SetDeadline(time.Time{}); err != nil {
+		return err
 	}
 	// Marker is sent by coordinator only when llama.cpp connects to the relay.
 	marker, err := reader.ReadByte()
