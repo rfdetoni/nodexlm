@@ -1,7 +1,7 @@
 name: Android APK
 
 # Manual builds do not burn Actions minutes on every commit.
-# Tagged builds publish an installable, consistently signed release APK.
+# Version tags publish signed APKs directly in GitHub Releases; no Play Store.
 on:
   workflow_dispatch:
   push:
@@ -153,8 +153,25 @@ jobs:
           test -s "$apk"
           unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libnodexlm.so'
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
-          cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-android-arm64.apk"
-          (cd dist && sha256sum "NodexLM-${{ steps.version.outputs.name }}-android-arm64.apk" > SHA256SUMS.txt)
+          cp "$apk" dist/NodexLM-android-arm64.apk
+          (cd dist && sha256sum NodexLM-android-arm64.apk > SHA256SUMS.txt)
+
+      - name: Build update manifest for direct Android updates
+        if: steps.signing.outputs.configured == 'true' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYUPDATE'
+          import hashlib, json, os, pathlib
+          apk = pathlib.Path('dist/NodexLM-android-arm64.apk')
+          sha = hashlib.file_digest(apk.open('rb'), 'sha256').hexdigest()
+          url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['GITHUB_REF_NAME']}/{apk.name}"
+          info = {'schema': 1, 'versionCode': int(os.environ['VERSION_CODE']), 'versionName': os.environ['VERSION_NAME'], 'sha256': sha, 'apkUrl': url}
+          pathlib.Path('dist/update.json').write_text(json.dumps(info, indent=2) + '\n', encoding='utf-8')
+          PYUPDATE
 
       - name: Upload signed release APK
         if: steps.signing.outputs.configured == 'true'
@@ -162,8 +179,9 @@ jobs:
         with:
           name: nodexlm-android-release
           path: |
-            dist/*-android-arm64.apk
+            dist/NodexLM-android-arm64.apk
             dist/SHA256SUMS.txt
+            dist/update.json
           if-no-files-found: error
           retention-days: 30
 
@@ -181,7 +199,7 @@ jobs:
           name: nodexlm-android-release
           path: release
 
-      - name: Create or update prerelease
+      - name: Publish APK (stable or prerelease)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -189,14 +207,18 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          apks=(release/*-android-arm64.apk)
-          [[ "${#apks[@]}" -eq 1 ]] || { echo 'Expected exactly one signed APK'; exit 1; }
-          files=("${apks[0]}" release/SHA256SUMS.txt)
+          files=(release/NodexLM-android-arm64.apk release/SHA256SUMS.txt release/update.json)
+          for file in "${files[@]}"; do test -s "$file"; done
+          # Semver release tags such as v1.0.0 are stable and appear at
+          # /releases/latest; v1.0.0-rc.1 remains a prerelease.
+          options=(--title "NodexLM ${GITHUB_REF_NAME}" --generate-notes --verify-tag)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            options+=(--prerelease --latest=false)
+          else
+            options+=(--latest)
+          fi
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
-              --title "NodexLM ${GITHUB_REF_NAME}" \
-              --generate-notes \
-              --prerelease
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" "${options[@]}"
           fi

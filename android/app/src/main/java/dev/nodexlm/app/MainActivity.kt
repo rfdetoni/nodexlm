@@ -22,6 +22,7 @@ import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
     private val prefs by lazy { getSharedPreferences("nodexlm", MODE_PRIVATE) }
+    private val updateManager by lazy { UpdateManager(this) }
     private lateinit var coordinator: EditText
     private lateinit var pairCode: EditText
     private lateinit var name: EditText
@@ -87,9 +88,19 @@ class MainActivity : Activity() {
             catch (e: Exception) {toast("Cannot start: ${e.message}")}
         }
         button(root,"Stop background worker") {startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))}
+        button(root,"Verificar atualizações") { updateManager.check(manual = true) }
         val scroller = android.widget.ScrollView(this)
         scroller.addView(root,ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))
         setContentView(scroller)
+        updateManager.start()
+    }
+    override fun onResume() {
+        super.onResume()
+        updateManager.onResume()
+    }
+    override fun onDestroy() {
+        updateManager.stop()
+        super.onDestroy()
     }
     private fun field(root:LinearLayout,hint:String, value:String):EditText {
         val input=EditText(this).apply { this.hint=hint;setSingleLine(true);setText(value) }

@@ -193,3 +193,15 @@ base64 -w 0 nodexlm-release.jks  # Linux; paste the output in ANDROID_KEYSTORE_B
 Then push a version tag (`git tag v0.1.0 && git push origin v0.1.0`). The workflow requires **all four secrets** on tags, signs the ARM64 release APK, verifies the signature and embedded library, uploads the artifact and publishes it in **GitHub Releases as a prerelease**. The SHA-256 file accompanies the release. A partial set of secrets causes an explicit failure instead of silently producing an unsigned APK. Versions are derived from the Git tag and workflow run number.
 
 If you need to trigger a build manually, avoid creating a release tag. Reuse the same signing keystore for upgrades; a newly generated keystore cannot update previously installed releases. Android/NDK compilation requires network access to fetch the pinned `llama.cpp` source. Native Android and actual device inference have not been validated yet, so a successful workflow build does not prove functional RPC inference on physical phones.
+
+## Instalação Android direta (sem Play Store)
+
+O NodexLM distribui **APK ARM64 assinado** diretamente pelo [GitHub Releases](https://github.com/rfdetoni/nodexlm/releases). Não requer Google Play, conta Google ou instalação pela loja.
+
+- **Primeira instalação:** abra [Baixar a última versão estável](https://github.com/rfdetoni/nodexlm/releases/latest/download/NodexLM-android-arm64.apk) no celular, baixe o APK e confirme a instalação no Android (autorize a origem, se solicitado).
+- **Atualizações:** o app verifica o `update.json` da última versão estável ao ser aberto (no máximo uma vez por dia), baixa um APK novo automaticamente apenas por rede não tarifada e confere seu SHA-256 e identificador de pacote. Também há botão **Verificar atualizações** para forçar busca/download na rede atual.
+- **Instalação de atualização:** o NodexLM abre a tela **Instalar atualização** do Android. **Não existe instalação silenciosa** para apps comuns sem privilégios de sistema; o usuário precisa autorizar a origem e confirmar a instalação. O APK deve manter a **mesma chave de assinatura** da versão anterior.
+- **Publicação:** tags `v1.2.3` criam releases estáveis e publicam `NodexLM-android-arm64.apk`, `SHA256SUMS.txt` e `update.json`; tags como `v1.2.3-rc.1` geram pré-lançamentos e não são oferecidas pelo atualizador automático. O fluxo exige os quatro secrets de assinatura Android existentes; sem eles não publica APK de produção.
+- **CI mínimo:** execução manual gera um APK de testes assinado com a chave debug do runner e armazenado em Artifacts. Esses APKs debug não servem como atualização para uma instalação release. Nenhum build roda a cada push na `main`.
+
+O aplicativo só baixa e prepara atualizações quando é aberto; o serviço de inferência em segundo plano não roda verificações periódicas. O processo Android e a compilação NDK precisam ser validados por uma execução real do workflow antes da distribuição ao público.
