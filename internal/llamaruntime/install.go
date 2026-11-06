@@ -341,7 +341,19 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	if server, rpc, err := installedDistributed(home, backend); err == nil {
 		return server, rpc, nil
 	}
-	// The verified, prebuilt release may already contain both programs.
+	// Prefer a ready-to-run, pinned RPC pair: ordinary Linux Guests should not
+	// need CMake, a compiler or root access just to join a trusted cluster.
+	var publishedErr error
+	if publishedRPCSupported(backend) {
+		fmt.Fprintln(os.Stderr, "NodexLM: preparando runtime RPC Linux x64 verificado...")
+		var s, p string
+		s, p, publishedErr = fetchPublishedRPC(ctx, home, backend, publishedRPCBaseURL)
+		if publishedErr == nil && SupportsRPC(ctx, s) {
+			return s, p, nil
+		}
+		if publishedErr == nil { publishedErr = errors.New("downloaded runtime lacks RPC support") }
+	}
+	// Existing official archives may already include matching RPC binaries.
 	server, rpc, err := Ensure(ctx, home, backend)
 	if err == nil && rpc != "" && SupportsRPC(ctx, server) {
 		return server, rpc, nil
@@ -349,7 +361,13 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	// Some official releases omit GGML_RPC. Automatically build the missing
 	// backend from exactly the same signed release source for both executables.
 	if _, err := exec.LookPath("cmake"); err != nil {
-		return "", "", errors.New("RPC runtime needs CMake and a C/C++ compiler to build the pinned llama.cpp release")
+		if publishedErr != nil {
+			return "", "", fmt.Errorf("precompiled RPC download failed: %v; local fallback requires git, CMake and a C/C++ compiler (Ubuntu/Debian: sudo apt install -y git cmake build-essential)", publishedErr)
+		}
+		return "", "", errors.New("RPC runtime requires CMake and a C/C++ compiler to build the pinned llama.cpp release (Ubuntu/Debian: sudo apt install -y git cmake build-essential)")
+	}
+	if _, err := exec.LookPath("c++"); err != nil {
+		return "", "", errors.New("RPC source build requires a C++ compiler (Ubuntu/Debian: sudo apt install -y build-essential)")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", "", errors.New("RPC runtime needs git to retrieve pinned llama.cpp source")

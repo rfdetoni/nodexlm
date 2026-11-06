@@ -297,3 +297,5 @@ when the screen is locked. This increases battery consumption; stop the
 worker when idle, and remove vendor battery restrictions if necessary.
 The Android implementation currently runs complete-model inference and
 does not provide a native distributed RPC Guest.
+
+## Linux x64: Guest RPC sem toolchain\n\nA primeira execução de `nodexlm guest` em Linux x86_64 com backend CPU\nbaixa o par `llama-server` e `ggml-rpc-server` de uma release\nNodexLM separada e versionada, compilada a partir do llama.cpp b12143\n(commit `2bc46baa9207d098d03741ac394e7faaf1a955b6`).\nO instalador confere SHA-256 e extrai com proteção contra caminhos fora do diretório.\nA versão do RPC é compartilhada com o Host; use NodexLM atualizado nos dois lados.\nCaso a release não esteja acessível, permanece a opção de compilação local\n(`sudo apt install -y git cmake build-essential` no Ubuntu/Debian).\nBackends GPU, sistemas e arquiteturas ainda sem runtime RPC publicado\ncontinuam usando a compilação local.\n\n```sh\ncurl -fsSL https://raw.githubusercontent.com/rfdetoni/nodexlm/main/install.sh | sh\nnodexlm guest --backend cpu\n```\n
