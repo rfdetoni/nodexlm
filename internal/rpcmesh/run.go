@@ -36,6 +36,13 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	if _, err = strconv.Atoi(port); err != nil {
 		return err
 	}
+	// Do not mistake an older RPC process already bound to this port for
+	// the worker being launched; its protocol version could be incompatible.
+	probe, err := net.Listen("tcp", listen)
+	if err != nil {
+		return fmt.Errorf("native RPC listen address unavailable: %w", err)
+	}
+	_ = probe.Close()
 	// The native GGML RPC server is always restricted to loopback.
 	cmd := exec.CommandContext(ctx, executable, "--host", host, "--port", port)
 	cmd.Env = nativeRPCEnvironment(executable)
