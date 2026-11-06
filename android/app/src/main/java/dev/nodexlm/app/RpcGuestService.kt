@@ -90,8 +90,14 @@ class RpcGuestService : Service() {
         }
         val host = parsed.host
         val port = if (parsed.port > 0) parsed.port else 443
-        createNotification()
-        acquireLocks()
+        try {
+            createNotification()
+            acquireLocks()
+        } catch (e: Exception) {
+            Log.e(LOG, "Cannot start Android RPC foreground service", e)
+            shutdown()
+            return START_NOT_STICKY
+        }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
                 val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
@@ -112,16 +118,24 @@ class RpcGuestService : Service() {
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
                         while (running.get()) {
+                            var failed = false
                             try {
                                 connectAndRelay(host, port, node, token, sslContext)
                                 backoff = 1000L
                             } catch (e: Exception) {
+                                failed = true
                                 if (running.get()) Log.w(LOG, "RPC tunnel $slot: ${e.message}")
                             }
                             sleepWhileRunning(backoff)
-                            backoff = (backoff * 2).coerceAtMost(10_000)
+                            if (failed) backoff = (backoff * 2).coerceAtMost(10_000L)
                         }
                     }
+                }
+                // After startup the detached GGML thread may still exit.
+                // Do not keep publishing heartbeat or reconnecting to a dead worker.
+                while (running.get()) {
+                    check(NativeRpc.isRunning()) { "Native GGML RPC server exited unexpectedly" }
+                    sleepWhileRunning(1_000L)
                 }
             } catch (e: Throwable) {
                 Log.e(LOG, "RPC Guest cannot start", e)
