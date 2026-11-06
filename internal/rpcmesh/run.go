@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +39,7 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	// Official ggml-rpc-server accepts --host and --port. Native server is not
 	// reachable from other LAN devices; they only see the secured coordinator.
 	cmd := exec.CommandContext(ctx, executable, "--host", host, "--port", port)
+	cmd.Env = nativeRPCEnvironment(executable)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err = cmd.Start(); err != nil {
@@ -87,4 +90,26 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	<-ctx.Done()
 	wg.Wait()
 	return nil
+}
+
+// nativeRPCEnvironment makes the bundled GGML shared libraries visible to the
+// dynamic loader without requiring global installation or sudo.
+func nativeRPCEnvironment(executable string) []string {
+    env := os.Environ()
+    dir := filepath.Dir(executable)
+    switch runtime.GOOS {
+    case "linux":
+        value := dir
+        if inherited := os.Getenv("LD_LIBRARY_PATH"); inherited != "" {
+            value += string(os.PathListSeparator) + inherited
+        }
+        return append(env, "LD_LIBRARY_PATH="+value)
+    case "darwin":
+        value := dir
+        if inherited := os.Getenv("DYLD_LIBRARY_PATH"); inherited != "" {
+            value += string(os.PathListSeparator) + inherited
+        }
+        return append(env, "DYLD_LIBRARY_PATH="+value)
+    }
+    return env
 }

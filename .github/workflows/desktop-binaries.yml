@@ -11,6 +11,7 @@ on:
       - '.github/workflows/desktop-binaries.yml'
       - 'cmd/nodexlm/main.go'
       - 'internal/llamaruntime/**'
+      - 'internal/rpcmesh/**'
       - 'internal/hardware/report.go'
       - 'internal/worker/runner.go'
       - 'internal/coordinator/server.go'

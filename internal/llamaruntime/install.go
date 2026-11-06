@@ -315,9 +315,18 @@ func AutoExecutable(ctx context.Context, home, requested string) (string, error)
 const SourceCommit = "2bc46baa9207d098d03741ac394e7faaf1a955b6"
 
 func SupportsRPC(ctx context.Context, server string) bool {
+    // The precompiled release contains libggml.so.N beside the executable,
+    // not in the system library path. Match the runtime environment used by
+    // the Guest process, or --help will fail before checking RPC support.
 	testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(testCtx, server, "--help").CombinedOutput()
+	cmd := exec.CommandContext(testCtx, server, "--help")
+    if runtime.GOOS == "linux" {
+        p := filepath.Dir(server)
+        if prev := os.Getenv("LD_LIBRARY_PATH"); prev != "" { p += string(os.PathListSeparator)+prev }
+        cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+p)
+    }
+    out, err := cmd.CombinedOutput()
 	// llama-server commonly prints help to stderr and exits 0 or 1.
 	return (err == nil || len(out) > 0) && strings.Contains(string(out), "--rpc")
 }
