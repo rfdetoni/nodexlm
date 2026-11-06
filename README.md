@@ -205,3 +205,18 @@ O NodexLM distribui **APK ARM64 assinado** diretamente pelo [GitHub Releases](ht
 - **CI mínimo:** execução manual gera um APK de testes assinado com a chave debug do runner e armazenado em Artifacts. Esses APKs debug não servem como atualização para uma instalação release. Nenhum build roda a cada push na `main`.
 
 O aplicativo só baixa e prepara atualizações quando é aberto; o serviço de inferência em segundo plano não roda verificações periódicas. O processo Android e a compilação NDK precisam ser validados por uma execução real do workflow antes da distribuição ao público.
+
+## Android 10+ and older devices
+
+The Android APK has a minimum SDK of **29 (Android 10)** and includes both
+`armeabi-v7a` (32-bit ARM) and `arm64-v8a` (64-bit ARM) native libraries in
+a single **universal APK**. A device automatically selects the matching ABI.
+Earlier ARM64-only debug builds will not install on 32-bit-only devices.
+
+The APK is distributed directly via the GitHub Actions artifact (debug builds)
+or GitHub Releases (signed builds). For updates, keep the same application ID
+and signing certificate; debug and release APKs use different signatures.
+Android may require enabling installation from the browser or file manager.
+On low-memory 32-bit phones, native inference is constrained by available RAM
+and 32-bit address space, so use small quantized GGUF models. Build success
+proves ABI packaging, not real-world model performance on every phone.

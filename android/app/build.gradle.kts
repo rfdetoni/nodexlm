@@ -16,11 +16,13 @@ android {
     ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "dev.nodexlm.app"
-        minSdk = 26
+        minSdk = 29 // Android 10 (API 29) and newer
         targetSdk = 35
         versionCode = providers.gradleProperty("nodexVersionCode").orNull?.toIntOrNull() ?: 1
         versionName = providers.gradleProperty("nodexVersionName").orNull ?: "0.1.0-alpha"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        // Both common smartphone ABIs: 32-bit Android 10 and 64-bit Android 10+.
+        // Android loads only its matching library from the universal APK.
+        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
         externalNativeBuild { cmake { cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden") } }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }

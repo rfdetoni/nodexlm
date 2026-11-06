@@ -82,7 +82,10 @@ class UpdateManager(private val activity: Activity) {
                 require(version > 0 && name.length in 1..48 && name.all { it.isLetterOrDigit() || it in ".-_+" })
                 require(checksum.matches(Regex("[0-9a-f]{64}")))
                 require(url.startsWith("https://github.com/rfdetoni/nodexlm/releases/download/"))
-                require(url.endsWith("/NodexLM-android-arm64.apk"))
+                // Preserve compatibility with early arm64-only releases while moving
+                // to one APK for both ARMv7 and ARM64 Android 10+ devices.
+                require(url.endsWith("/NodexLM-android-universal.apk") ||
+                    url.endsWith("/NodexLM-android-arm64.apk"))
                 val installed = activity.packageManager.getPackageInfo(activity.packageName, 0).longVersionCode
                 prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
                 if (version <= installed) {

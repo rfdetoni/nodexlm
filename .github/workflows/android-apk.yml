@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   build:
-    name: Android ARM64 APK
+    name: Android 10+ universal APK
     runs-on: ubuntu-latest
     timeout-minutes: 75
     outputs:
@@ -122,10 +122,13 @@ jobs:
           set -euo pipefail
           apk='android/app/build/outputs/apk/debug/app-debug.apk'
           test -s "$apk"
-          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libnodexlm.so'
+          for abi in armeabi-v7a arm64-v8a; do
+            unzip -Z1 "$apk" | grep -Fqx "lib/${abi}/libnodexlm.so" || { echo "::error::Missing $abi native library"; exit 1; }
+          done
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify "$apk"
           mkdir -p dist
-          cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-arm64-debug.apk"
+          cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-android10-plus-debug.apk"
           sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
 
       - name: Upload debug APK
@@ -159,10 +162,13 @@ jobs:
           set -euo pipefail
           apk='android/app/build/outputs/apk/release/app-release.apk'
           test -s "$apk"
-          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libnodexlm.so'
+          for abi in armeabi-v7a arm64-v8a; do
+            unzip -Z1 "$apk" | grep -Fqx "lib/${abi}/libnodexlm.so" || { echo "::error::Missing $abi native library"; exit 1; }
+          done
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
-          cp "$apk" dist/NodexLM-android-arm64.apk
-          (cd dist && sha256sum NodexLM-android-arm64.apk > SHA256SUMS.txt)
+          cp "$apk" dist/NodexLM-android-universal.apk
+          (cd dist && sha256sum NodexLM-android-universal.apk > SHA256SUMS.txt)
 
       - name: Build update manifest for direct Android updates
         if: steps.signing.outputs.configured == 'true' && startsWith(github.ref, 'refs/tags/v')
@@ -174,7 +180,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PYUPDATE'
           import hashlib, json, os, pathlib
-          apk = pathlib.Path('dist/NodexLM-android-arm64.apk')
+          apk = pathlib.Path('dist/NodexLM-android-universal.apk')
           sha = hashlib.file_digest(apk.open('rb'), 'sha256').hexdigest()
           url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['GITHUB_REF_NAME']}/{apk.name}"
           info = {'schema': 1, 'versionCode': int(os.environ['VERSION_CODE']), 'versionName': os.environ['VERSION_NAME'], 'sha256': sha, 'apkUrl': url}
@@ -187,7 +193,7 @@ jobs:
         with:
           name: nodexlm-android-release
           path: |
-            dist/NodexLM-android-arm64.apk
+            dist/NodexLM-android-universal.apk
             dist/SHA256SUMS.txt
             dist/update.json
           if-no-files-found: error
@@ -215,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(release/NodexLM-android-arm64.apk release/SHA256SUMS.txt release/update.json)
+          files=(release/NodexLM-android-universal.apk release/SHA256SUMS.txt release/update.json)
           for file in "${files[@]}"; do test -s "$file"; done
           # Semver release tags such as v1.0.0 are stable and appear at
           # /releases/latest; v1.0.0-rc.1 remains a prerelease.
