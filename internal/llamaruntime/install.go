@@ -330,8 +330,19 @@ func SupportsRPC(ctx context.Context, server string) bool {
 	// llama-server commonly prints help to stderr and exits 0 or 1.
 	return (err == nil || len(out) > 0) && strings.Contains(string(out), "--rpc")
 }
+// Use a fresh cache for the corrected Linux x64 runtime package. Existing
+// b12143 cpu-rpc directories may contain binaries with missing GGML SONAME
+// libraries and must not be reused after upgrading the CLI.
+func distributedDir(home, backend string) string {
+    dir := installDir(home, backend) + "-rpc"
+    if publishedRPCSupported(backend) {
+        return dir + "-r2"
+    }
+    return dir
+}
+
 func installedDistributed(home, backend string) (string, string, error) {
-	dir := installDir(home, backend) + "-rpc"
+    dir := distributedDir(home, backend)
 	server := executable(dir, "llama-server")
 	rpc := executable(dir, "ggml-rpc-server")
 	if rpc == "" {
@@ -381,7 +392,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", "", errors.New("RPC runtime needs git to retrieve pinned llama.cpp source")
 	}
-	dest := installDir(home, backend) + "-rpc"
+	dest := distributedDir(home, backend)
 	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 		return "", "", err
 	}

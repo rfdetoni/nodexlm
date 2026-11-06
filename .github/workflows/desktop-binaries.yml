@@ -56,13 +56,14 @@ jobs:
           set -euo pipefail
           runtime_dir="$(mktemp -d)"
           trap 'rm -rf "$runtime_dir"' EXIT
-          url='https://github.com/rfdetoni/nodexlm/releases/download/nodexlm-rpc-b12143/nodexlm-rpc_b12143_linux_amd64_cpu.tar.gz'
+          url='https://github.com/rfdetoni/nodexlm/releases/download/nodexlm-rpc-b12143-r2/nodexlm-rpc_b12143_linux_amd64_cpu.tar.gz'
           curl -fsSL --retry 3 "$url" -o "$runtime_dir/rpc.tar.gz"
           mkdir "$runtime_dir/payload"
           tar -xzf "$runtime_dir/rpc.tar.gz" -C "$runtime_dir/payload"
           rpc="$runtime_dir/payload/bin/ggml-rpc-server"
           test -x "$rpc"
-          test -f "$runtime_dir/payload/bin/libggml.so.0"
+          # Pinned GGML may be fully static. Missing shared libraries are
+          # determined by the dynamic loader, not by requiring libggml.so.0.
           LD_LIBRARY_PATH="$runtime_dir/payload/bin" ldd "$rpc" | tee "$runtime_dir/dependencies.log"
           if grep -Fq 'not found' "$runtime_dir/dependencies.log"; then
             echo "::error::Published RPC bundle has missing ELF shared libraries"

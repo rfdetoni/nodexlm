@@ -20,13 +20,13 @@ import (
 // Each official NodexLM RPC bundle uses exactly the same pinned llama.cpp
 // commit as the source-build fallback. No locally installed compiler is needed.
 // This is a dedicated release, separate from the frequently updated CLI edge.
-const publishedRPCBaseURL = "https://github.com/rfdetoni/nodexlm/releases/download/nodexlm-rpc-b12143"
+const publishedRPCBaseURL = "https://github.com/rfdetoni/nodexlm/releases/download/nodexlm-rpc-b12143-r2"
 const maxPublishedArchive = int64(400 << 20)
 
 // pinnedRPCHash is set to the reviewed published artifact digest, independent
 // of the downloaded SHA256SUMS file. This avoids trusting a mutable manifest.
 // The initial release is built before this checksum can be filled.
-const pinnedRPCHash = ""
+const pinnedRPCHash = "17d10d9ac1864c86c5f6378a072ea7a38c2171e88ffe4639669c9688ca951bd9"
 
 func publishedRPCSupported(backend string) bool {
     return runtime.GOOS == "linux" && runtime.GOARCH == "amd64" && backend == "cpu"
@@ -59,7 +59,7 @@ func publishedChecksum(body []byte, name string) (string, error) {
 
 func fetchPublishedRPC(ctx context.Context, home, backend, baseURL string) (string, string, error) {
     name := fmt.Sprintf("nodexlm-rpc_%s_%s_%s_%s.tar.gz", Version, runtime.GOOS, runtime.GOARCH, backend)
-    dest := installDir(home, backend) + "-rpc"
+    dest := distributedDir(home, backend)
     if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
         return "", "", err
     }
@@ -91,7 +91,7 @@ func fetchPublishedRPC(ctx context.Context, home, backend, baseURL string) (stri
     if err != nil { return "", "", err }
     expected, err := publishedChecksum(manifest, name)
     if err != nil { return "", "", err }
-    if pinnedRPCHash != "" && expected != pinnedRPCHash {
+    if strings.TrimRight(baseURL, "/") == publishedRPCBaseURL && expected != pinnedRPCHash {
         return "", "", errors.New("RPC manifest disagrees with pinned artifact hash")
     }
 
@@ -116,7 +116,7 @@ func fetchPublishedRPC(ctx context.Context, home, backend, baseURL string) (stri
     if n > maxPublishedArchive { return "", "", errors.New("RPC runtime archive exceeds size limit") }
     actual := hex.EncodeToString(hash.Sum(nil))
     if actual != expected { return "", "", errors.New("RPC runtime archive SHA-256 mismatch") }
-    if pinnedRPCHash != "" && actual != pinnedRPCHash {
+    if strings.TrimRight(baseURL, "/") == publishedRPCBaseURL && actual != pinnedRPCHash {
         return "", "", errors.New("RPC runtime archive disagrees with pinned SHA-256")
     }
     if _, err := file.Seek(0, 0); err != nil { return "", "", err }

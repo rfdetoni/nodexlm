@@ -17,12 +17,12 @@ Esse erro significa que a biblioteca GGML compartilhada não está acessível ao
 
 1. Atualize a CLI pelo [instalador](../INSTALL.md).
 2. Encerre a execução antiga e reinicie `nodexlm guest --backend cpu`.
-3. Se persistir, procure as bibliotecas ao lado do executável RPC em `~/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc/`.
+3. Se persistir, procure as bibliotecas ao lado do executável RPC em `~/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-r2/`.
 
 Caso o diretório do runtime esteja incompleto e precise recriá-lo, o comando abaixo remove **apenas** o runtime baixado, não as credenciais do Guest:
 
 ```sh
-rm -rf "$HOME/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc"
+rm -rf "$HOME/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-r2"
 nodexlm guest --backend cpu
 ```
 
