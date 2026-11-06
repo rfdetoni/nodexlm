@@ -9,6 +9,8 @@ on:
       - main
     paths:
       - '.github/workflows/desktop-binaries.yml'
+      - 'internal/dashboard/static/**'
+      - 'scripts/test-dashboard-models.cjs'
     tags:
       - 'v*'
 
@@ -31,6 +33,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Dashboard model list regression test
+        run: |
+          node --check internal/dashboard/static/app.js
+          node scripts/test-dashboard-models.cjs
+          go test ./internal/dashboard
       - name: POSIX installer smoke test
         run: sh ./scripts/test-install.sh
       - name: Cross compile and package
