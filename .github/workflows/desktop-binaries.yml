@@ -9,14 +9,13 @@ on:
       - main
     paths:
       - '.github/workflows/desktop-binaries.yml'
-      - 'cmd/nodexlm/main.go'
-      - 'internal/llamaruntime/**'
-      - 'internal/rpcmesh/**'
-      - 'internal/hardware/report.go'
-      - 'internal/worker/runner.go'
-      - 'internal/coordinator/server.go'
-      - 'internal/dashboard/static/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
       - 'scripts/test-dashboard-models.cjs'
+      - 'scripts/test-install.sh'
+      - 'install.sh'
     tags:
       - 'v*'
 

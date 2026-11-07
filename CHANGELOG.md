@@ -4,6 +4,14 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Em desenvolvimento — 2026-11-06
 
+### Segurança, Windows e ciclo de vida
+- Atualizado o compilador das releases Go para 1.27.3, com correções de segurança recentes.
+- Reinicializações do Host no Windows deixam de interpretar permissões POSIX sintéticas como ACLs.
+- Encerramento HTTPS/Web aguarda `Shutdown` antes de liberar o coordenador RPC.
+- Cancelamento de uma geração Android não bloqueia a geração seguinte.
+- Testes de PR limitados a mudanças Go, com verificação de race no Linux e reinicialização de segredos no Windows.
+- Política de reporte de vulnerabilidades em `SECURITY.md`.
+
 ### Estabilidade RPC — Host, Linux e Android
 - Limite de tempo para TLS e resposta CONNECT; reconexões progressivas com reinício após sessão bem-sucedida.
 - O Guest Linux monitora o processo GGML nativo, rejeita porta RPC ocupada e reserva 8 túneis para picos de descoberta do modelo.

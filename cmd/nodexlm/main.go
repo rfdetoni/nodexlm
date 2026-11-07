@@ -287,7 +287,9 @@ func serve(args []string) error {
 			slog.Error("LAN discovery unavailable", "error", err)
 		}
 	}()
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-c.Done()
 		shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stop()
@@ -298,6 +300,8 @@ func serve(args []string) error {
 	}()
 	slog.Info("HTTPS coordinator listening", "addr", *addr, "discoveryUDP", *discoveryPort)
 	e := srv.ListenAndServeTLS(certFile, keyFile)
+	cancel()
+	<-shutdownDone // Keep coordinator and model manager alive through Shutdown.
 	if errors.Is(e, http.ErrServerClosed) {
 		return nil
 	}

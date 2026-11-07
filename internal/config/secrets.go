@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -32,7 +33,9 @@ func ReadSecrets(dir string) (Secrets, error) {
 	if err != nil {
 		return secrets, err
 	}
-	if info.Mode().Perm()&0077 != 0 {
+	// Windows reports synthetic Unix file modes; they do not reflect NTFS ACLs.
+	// Enforce POSIX mode bits only on platforms where the bits are meaningful.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
 		return secrets, errors.New("secrets.json must not be readable by other users")
 	}
 	body, err := os.ReadFile(path)
