@@ -112,3 +112,68 @@ func TestCatalogIncludesOnlyCompleteShardSets(t *testing.T) {
 		t.Fatalf("incorrect shard grouping: %+v", models[0])
 	}
 }
+
+
+func TestDownloadAndImportCompleteShardedSet(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch filepath.Base(r.URL.Path) {
+		case "model-00001-of-00002.gguf", "model-00002-of-00002.gguf":
+			_, _ = w.Write([]byte("GGUF" + filepath.Base(r.URL.Path)))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	hub := Hub{Client: &http.Client{Transport: rewriteTransport{endpoint: server.URL, base: http.DefaultTransport}}}
+	dir := t.TempDir()
+	first, err := hub.DownloadFile(context.Background(), "owner/repo",
+		"quant/model-00001-of-00002.gguf", dir, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(dir, "model-00002-of-00002.gguf")
+	if _, err := os.Stat(second); err != nil {
+		t.Fatalf("missing second downloaded shard: %v", err)
+	}
+	importedDir := filepath.Join(t.TempDir(), "models")
+	copied, err := ImportFile(context.Background(), first, importedDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(importedDir, "model-00002-of-00002.gguf")); err != nil {
+		t.Fatalf("missing imported shard: %v", err)
+	}
+	if filepath.Base(copied) != filepath.Base(first) {
+		t.Fatalf("unexpected import destination: %s", copied)
+	}
+}
+
+func TestShardedTransferRollsBackAfterMissingPart(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "model-00001-of-00002.gguf") {
+			_, _ = w.Write([]byte("GGUFfirst"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	hub := Hub{Client: &http.Client{Transport: rewriteTransport{endpoint: server.URL, base: http.DefaultTransport}}}
+	dir := t.TempDir()
+	if _, err := hub.DownloadFile(context.Background(), "owner/repo",
+		"model-00001-of-00002.gguf", dir, "", nil); err == nil {
+		t.Fatal("accepted incomplete sharded download")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "model-00001-of-00002.gguf")); !os.IsNotExist(err) {
+		t.Fatalf("partial downloaded model was published: %v", err)
+	}
+	source := filepath.Join(t.TempDir(), "model-00001-of-00002.gguf")
+	if err := os.WriteFile(source, []byte("GGUFfirst"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportFile(context.Background(), source, dir, ""); err == nil {
+		t.Fatal("accepted incomplete manual import")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "model-00001-of-00002.gguf")); !os.IsNotExist(err) {
+		t.Fatalf("partial manual import was published: %v", err)
+	}
+}
