@@ -14,15 +14,15 @@ Os 19 itens estão mapeados abaixo. As funcionalidades foram implementadas e val
 | 8 | bench | CLI/UI medem RTT/eco no túnel TLS e executam carga real de inferência no Host ou em um Guest escolhido. Resultados alimentam o plano. Exige descarregar modelos antes da carga; não desaloja modelos silenciosamente. E2E real passou. |
 | 9 | Energia Android | Carga, bateria mínima, horário noturno, térmico, notificação e parada deliberada. Regressões JUnit passaram; APK universal CPU ARMv7/CPU+Vulkan ARM64 compilado. Consumo/temperatura/ROM exigem aparelho físico. |
 | 10 | Mais bundles RPC | Cinco builds aprovados: Linux amd64 CPU/Vulkan, Linux arm64 CPU, macOS arm64 Metal e Windows amd64 CPU. [Release r3 publicada](https://github.com/rfdetoni/nodexlm/releases/tag/nodexlm-rpc-b12143-r3), com cinco hashes SHA-256 conferidos entre manifesto e metadados dos assets antes de ativá-los no código. O E2E Unix nativo Linux passou no build. [A validação dos cinco bundles publicados passou](https://github.com/rfdetoni/nodexlm/actions/runs/42370326838), com CPU explícito no macOS paravirtual. |
-| 11 | Releases assinadas | Atestações GitHub/SLSA, inventário CycloneDX com módulos Go e pacotes, verificação opcional de procedência nos instaladores e fluxo Android de assinatura persistente em tags. Authenticode e chaves Android de produção dependem de credenciais do proprietário; não foi gerada assinatura fictícia. |
-| 12 | Distribuição | CLI/Web em sete destinos, pacotes deb/rpm amd64/arm64/armhf, contas/units systemd e Docker/Compose Linux. Build/empacotamento desktop passou. Fórmula Homebrew/manifests winget são gerados de checksums reais em tags estáveis; aprovação/publicação nos índices externos permanece externa. [Docker validado em CI](https://github.com/rfdetoni/nodexlm/actions/runs/42369733864): Compose, imagem, Host sem root com filesystem somente leitura, API autenticada e identidade persistida no reinício. |
+| 11 | Releases assinadas | Atestações GitHub/SLSA, inventário CycloneDX com módulos Go e pacotes, verificação opcional de procedência nos instaladores e fluxo Android de assinatura persistente em tags. Identidade Android permanente RSA-4096 gerada com backup cifrado entregue separadamente da senha; instalação dos secrets ainda exige autenticação do proprietário. Pipeline Authenticode x64/ARM64, timestamp, verificação e regeneração de hashes/SBOM implementado; certificado Windows confiável continua externo. O teste de release Android usa chave efêmera sem publicá-la. |
+| 12 | Distribuição | CLI/Web em sete destinos, pacotes deb/rpm amd64/arm64/armhf, contas/units systemd e Docker/Compose Linux. Build/empacotamento desktop passou. Fórmula Homebrew/manifests winget são gerados de checksums reais em tags estáveis; tap Homebrew próprio e manifests WinGet preview foram adicionados com artefatos imutáveis. Aprovação nos índices centrais permanece externa; não é necessária para usar o tap próprio. [Docker validado em CI](https://github.com/rfdetoni/nodexlm/actions/runs/42369733864): Compose, imagem, Host sem root com filesystem somente leitura, API autenticada e identidade persistida no reinício. |
 | 13 | Inglês e contribuição | README EN, operações, guias Host/Guest/Android/modelos/diagnóstico/pareamento, CONTRIBUTING e recursos Android EN/pt-BR. Erros de sistema/runtime podem permanecer no idioma original. Frontend Flutter opcional corrigido e aprovado por `flutter analyze`. |
 | 14 | E2E e fuzz | E2E real TLS/RPC, pool, benchmark, SSE, chave restrita, navegador e mDNS em CI. Fuzz GGUF, pareamento e caminhos de extração. Testes/cross-build e análise de vulnerabilidades Go passaram. Não equivale a teste em todos os aparelhos/drivers. |
 | 15 | mDNS | DNS-SD `_nodexlm._tcp.local` e `nodexlm.local`, anúncios, conflito, TTL de saída e fallback UDP. Descoberta multicast real passou em CI Linux. Limitado a redes privadas IPv4 com multicast disponível; identidade ainda exige código/certificado. |
 | 16 | Múltiplos modelos/prioridade | Até quatro modelos residentes com orçamento de memória, processos/KV independentes, listagem e unload individual; prioridade estável -10..10 na fila. Principal pode usar RPC; adicionais usam o Host porque o GGML fixado atende um cliente por Guest. Pool e geração direcionada passaram em E2E. |
 | 17 | KV cache compartilhado | Reutilização de prefixo via `cache_prompt`, KV nos backends que executam as camadas e métricas de tokens reutilizados do runtime fixado. Estado isolado por modelo/processo. Não há compartilhamento genérico de tensores KV entre modelos ou sessões incompatíveis; isso exige outro contrato upstream. |
 | 18 | RPC Unix/fd | Patch real de `llama.cpp b12143`, build embarcado Android, Host/Guest POSIX por sockets privados e seleção explícita/automática de transporte. E2E Unix Linux passou no CI. Windows e runtime customizado sem suporte ficam em TCP; nenhum suporte fd inexistente é anunciado. |
-| 19 | PAKE auditado | **Bloqueado por avaliação externa.** O protocolo atual por código/certificado é customizado e não recebe o nome de PAKE auditado. Requer auditoria criptográfica independente ou migração interoperável revisada por especialista, incluindo Go/Android, vetores e rollout. Revisão interna/testes não substituem essa aceitação. |
+| 19 | PAKE auditado | **Bloqueado por avaliação externa.** O protocolo atual por código/certificado é customizado e não recebe o nome de PAKE auditado. Requer auditoria criptográfica independente ou migração interoperável revisada por especialista, incluindo Go/Android, vetores e rollout. KDF Go usa a biblioteca padrão; fingerprint completo opcional na CLI, certificado conhecido/importado respeitado no Android e leituras limitadas foram implementados. A revisão independente continua pendente. |
 
 ## Evidências reproduzíveis
 
@@ -43,8 +43,29 @@ Os 19 itens estão mapeados abaixo. As funcionalidades foram implementadas e val
 ## Dependências externas para aceite final
 
 1. Contratar/executar revisão criptográfica independente do pareamento ou aprovar uma migração PAKE interoperável auditada. Até lá, permanece o modelo de confiança LAN/VPN documentado.
-2. Fornecer certificados/chaves de assinatura de produção quando houver release estável. Atestação de procedência não é Authenticode nem certificado de auditoria.
+2. Instalar os quatro secrets da identidade Android já preparada e fornecer um certificado Windows Code Signing confiável quando houver release estável. Atestação de procedência não é Authenticode nem certificado de auditoria.
 3. Validar Android/Metal/Vulkan em aparelhos e drivers reais, energia/térmico em ROMs relevantes no ambiente alvo. O container foi validado no CI Linux; Docker Desktop e redes diferentes ainda exigem teste no destino. O CI com GPU virtual/software não comprova desempenho físico. A GPU paravirtual macOS não suporta RMS_NORM; o bundle Metal é exercitado com fallback CPU explícito, enquanto a aceleração exige hardware Apple compatível.
-4. Criar uma tag estável quando o produto estiver pronto e submeter os manifests gerados a Homebrew/winget. A aceitação desses projetos depende de seus mantenedores.
+4. Criar uma tag estável após o aceite e submeter os manifests aos índices centrais. Tap próprio e preview WinGet imutável já estão disponíveis. A aceitação desses projetos depende de seus mantenedores.
 
 Os contratos de texto OpenAI, pool e RPC estão descritos nos guias. Nenhum checkbox altera os limites efetivos do GGML ou certifica uma avaliação externa que não ocorreu.
+
+## Complementos de 07/11 — fechamento da preparação de release
+
+- [Guia executável de assinatura e aceite](RELEASE.md): chave Android, secrets, Authenticode, tap/preview e coleta em aparelhos.
+- Snapshot imutável `nodexlm-preview-274ef979` publicado com artefatos do build aprovado `42398200821`, sem promover a versão a produção.
+- Coletor `scripts/hardware-acceptance.py` mede de fato e mantém `physical_acceptance=not-established`; teste de CI não se passa por teste físico.
+- Colisão entre `SHA256SUMS.txt` Android/desktop corrigida usando `SHA256SUMS-android.txt`.
+- Scripts de assinatura não incluem credenciais no Git. Configuração de secrets depende da conta autenticada do proprietário; esta sessão não possui esse acesso administrativo.
+
+### Validação dos complementos
+
+| Verificação | Evidência |
+|---|---|
+| APK debug, bibliotecas nativas, JUnit e release minificada com identidade de teste | [Android aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42398200940) |
+| Instalação real pelo tap e `brew test` | [Homebrew aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42399443870) |
+| Schemas oficiais WinGet, hashes dos downloads e regressões de manifests | [Registry aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42399741601) |
+| Cinco bundles RPC publicados e coletor de medições | [RPC aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42399443830) |
+| Pareamento com rejeição de fingerprint errado, RPC real e navegador | [E2E aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42398983230) |
+| Snapshot imutável e publicação por digest | [Distribuição aprovada](https://github.com/rfdetoni/nodexlm/actions/runs/42398983229) |
+
+Esses testes não instalaram secrets de produção, não executaram uma auditoria externa nem comprovaram comportamento em aparelhos físicos.

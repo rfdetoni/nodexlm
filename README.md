@@ -49,6 +49,7 @@ O código de pareamento **não** é o token de administrador. O GGUF de um model
 - [Pareamento e segurança](docs/PAIRING.md)
 - [Model Hub: detalhes técnicos](docs/MODEL_HUB.md)
 - [MoE e limitações](docs/MOE.md)
+- [Assinatura, distribuição e aceite físico](docs/RELEASE.md)
 - [Histórico de alterações](CHANGELOG.md)
 
 O painel oferece chat incremental com histórico apagável, plano de camadas/KV, métricas e medições reais de rede/inferência. Até quatro modelos podem permanecer residentes: o principal pode usar RPC; os adicionais usam o Host, pois cada Guest nativo atende uma conexão de modelo de cada vez.

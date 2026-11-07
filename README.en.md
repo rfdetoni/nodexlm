@@ -53,3 +53,5 @@ python3 scripts/smoke.py
 ```
 
 Real RPC inference tests require the matching native bundle and a tiny GGUF; see `scripts/e2e-rpc.py`. They are manually dispatched or scoped to changes in the E2E workflow/browser checks to avoid routine native build minutes. Linux CPU tests do not establish Android/Vulkan or other-platform compatibility.
+
+Release signing, the immutable Homebrew/WinGet preview, and physical-device acceptance are documented in [the release guide](docs/RELEASE.md) (Portuguese). Production signing credentials, independent cryptographic review, and physical-device acceptance remain required before a stable release.

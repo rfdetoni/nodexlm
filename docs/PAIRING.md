@@ -39,3 +39,11 @@ O esquema combina código aleatório, compromisso criptográfico PBKDF2, TLS e v
 Proteja o conteúdo de `~/.nodexlm` e não publique tokens, certificados ou logs com credenciais. Para acessar o painel de outra máquina, prefira um túnel SSH ao invés de abrir a interface administrativa na rede.
 
 Os servidores RPC nativos escutam no loopback dos Guests; o tráfego do cluster passa por túneis TLS autenticados. Para detalhes operacionais, veja [Host](GUIA_HOST.md) e [Guest Linux](GUIA_GUEST_LINUX.md).
+
+## Restringir também pela identidade completa
+
+A CLI aceita `nodexlm guest --fingerprint SHA256_COMPLETO` e `nodexlm join --fingerprint SHA256_COMPLETO`. Obtenha esse fingerprint por um canal confiável fora da descoberta LAN (por exemplo, o diagnóstico do Host). Um digest diferente impede o cadastro antes de gravar credenciais.
+
+No Android, o certificado importado ou já conhecido passa a restringir o próximo pareamento. Para trocar de Host deliberadamente, importe o certificado do novo Host primeiro. As leituras de certificado/JSON são limitadas; a expiração máxima anunciada também é verificada.
+
+O KDF Go usa `crypto/pbkdf2` da biblioteca padrão e conserva os vetores Android. Essas melhorias não são uma auditoria PAKE. Veja [aceite de release](RELEASE.md).

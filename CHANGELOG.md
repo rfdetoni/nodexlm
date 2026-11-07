@@ -2,6 +2,14 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Preparação de release — 2026-11-07
+
+- Identidade Android permanente com backup protegido e bootstrap de secrets sem senha nos argumentos; compilação release minificada verificada com chave de teste quando não há identidade configurada.
+- Pipeline Authenticode Windows antes da publicação, timestamp RFC 3161, verificação de assinatura e atualização posterior de ZIPs, checksums e SBOM. Certificado de produção não é simulado.
+- Checksums Android separados dos desktop para impedir sobrescrita em uma release compartilhada.
+- KDF de pareamento movido para a biblioteca padrão Go; fingerprint completo opcional, certificado Android importado respeitado e leituras limitadas.
+- Preview imutável, tap Homebrew e manifests WinGet com URLs/hashes fixados; coletor de evidência de hardware com aceitação física explicitamente não presumida.
+
 ## Roadmap implementado — 2026-11-07
 
 - Credencial de inferência nativa removida dos argumentos do processo; ambiente privado e teste de regressão para evitar exposição em listagens.
