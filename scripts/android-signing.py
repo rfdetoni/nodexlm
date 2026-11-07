@@ -23,6 +23,8 @@ def private_write(path, data):
 
 
 def generate(directory):
+    if any((parent / '.git').exists() for parent in (directory, *directory.parents)):
+        raise ValueError('Generate signing identities outside Git repositories')
     directory.mkdir(mode=0o700, parents=True, exist_ok=False)
     password = secrets.token_urlsafe(36)
     environment = {**os.environ, 'NODEXLM_NEW_STORE_PASS': password}

@@ -1,0 +1,66 @@
+name: Publish immutable distribution preview
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/distribution-snapshot.yml', '.github/distribution-build.json']
+permissions: {contents: write, actions: read, id-token: write, attestations: write}
+concurrency:
+  group: nodexlm-distribution-preview
+  cancel-in-progress: false
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Verify approved CLI build and retrieve artifacts
+        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          meta=json.loads(pathlib.Path('.github/distribution-build.json').read_text())
+          get=lambda path:json.loads(subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+path]))
+          run=get('/actions/runs/'+str(meta['run_id']))
+          assert run['conclusion']=='success' and run['head_sha']==meta['commit'] and run['path']=='.github/workflows/desktop-binaries.yml'
+          assert run['head_repository']['full_name']==os.environ['GH_REPO']
+          jobs=get('/actions/runs/'+str(meta['run_id'])+'/jobs?per_page=100')['jobs']
+          signed=any(j['name']=='Sign Windows executables before publication' and j['conclusion']=='success' for j in jobs)
+          artifact='nodexlm-desktop-signed' if signed else 'nodexlm-desktop-binaries'
+          subprocess.run(['gh','run','download',str(meta['run_id']),'--name',artifact,'--dir','dist'],check=True)
+          inventory=json.loads(pathlib.Path('dist/nodexlm.cdx.json').read_text())
+          assert any(p['name']=='git:commit' and p['value']==meta['commit'] for p in inventory['metadata']['component']['properties'])
+          pathlib.Path('version.txt').write_text(inventory['metadata']['component']['version'])
+          PY
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+      - name: Generate preview manifests from immutable artifact hashes
+        run: |
+          version=$(cat version.txt)
+          tag=$(python3 -c 'import json;print(json.load(open(".github/distribution-build.json"))["tag"])')
+          python3 scripts/package-manifests.py --preview --version "$version" --release-tag "$tag" --checksums dist/SHA256SUMS.txt --output registry
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C registry . | gzip -n > dist/nodexlm-registry-manifests.tar.gz
+          cp .github/distribution-build.json dist/BUILD.json
+          (cd dist && sha256sum nodexlm-registry-manifests.tar.gz BUILD.json >> SHA256SUMS.txt)
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with: {subject-path: 'dist/*'}
+      - name: Publish preview without replacing existing assets
+        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          meta=json.loads(pathlib.Path('.github/distribution-build.json').read_text());tag=meta['tag']
+          result=subprocess.run(['gh','release','view',tag,'--json','isDraft'],capture_output=True,text=True)
+          if result.returncode:
+              subprocess.run(['gh','release','create',tag,'--target','main','--draft','--prerelease','--latest=false','--title','NodexLM immutable preview '+meta['commit'][:8],'--notes','Experimental CLI distribution snapshot of '+meta['commit']+'. This preview is not a production-signed stable release. Manifests pin these immutable files; physical-device and independent cryptographic acceptance remain pending.'],check=True)
+          release=json.loads(subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/releases/tags/'+tag]))
+          existing={a['name']:a for a in release['assets']}
+          for file in sorted(pathlib.Path('dist').iterdir()):
+              digest='sha256:'+hashlib.sha256(file.read_bytes()).hexdigest()
+              if file.name in existing:
+                  assert existing[file.name].get('digest')==digest,'Refusing to replace immutable asset '+file.name
+              else:
+                  subprocess.run(['gh','release','upload',tag,str(file)],check=True)
+          subprocess.run(['gh','release','edit',tag,'--draft=false','--prerelease','--latest=false'],check=True)
+          print('Published immutable preview: '+tag)
+          PY

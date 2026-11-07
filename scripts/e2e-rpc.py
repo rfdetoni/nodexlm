@@ -135,6 +135,14 @@ def main():
             api('/api/unload','POST',{}).close()
             measured=json.load(api('/api/bench/inference','POST',{'model':model.name,'node_id':nodes[0]['id']}))
             assert measured['tokens_per_second']>0 and measured['tokens']>0,measured
+            # Exercise the same collection tool used for physical-device sessions,
+            # explicitly labelled CI so it cannot masquerade as hardware acceptance.
+            import importlib.util
+            spec=importlib.util.spec_from_file_location('acceptance',ROOT/'scripts/hardware-acceptance.py')
+            acceptance=importlib.util.module_from_spec(spec);spec.loader.exec_module(acceptance)
+            report=acceptance.collect(base,token,model.name,nodes[0]['id'],2,'ci')
+            assert report['physical_acceptance']=='not-established' and len(report['measurements'])==2
+            assert all(p['inference']['tokens_per_second']>0 for p in report['measurements'])
             # An inference key must not access administrative resources.
             try:
                 api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])

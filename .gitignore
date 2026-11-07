@@ -15,3 +15,6 @@
 *.key
 models/
 *.gguf
+
+*.pfx
+/acceptance-results/
