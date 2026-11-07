@@ -94,3 +94,27 @@ func TestEngineSendsManagedBearerCredential(t *testing.T) {
 		t.Fatalf("authenticated generation: output %q err %v", out, err)
 	}
 }
+
+func TestModelSizeRequiresCompleteShardedGGUF(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "tiny-00001-of-00002.gguf")
+	second := filepath.Join(dir, "tiny-00002-of-00002.gguf")
+	model := ggufTestFile("llama", 0, 0)
+	if err := os.WriteFile(first, model, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ModelSize(first); err == nil {
+		t.Fatal("incomplete split GGUF must not be loadable")
+	}
+	if err := os.WriteFile(second, model, 0600); err != nil {
+		t.Fatal(err)
+	}
+	size, err := ModelSize(first)
+	if err != nil || size != int64(2*len(model)) {
+		t.Fatalf("size=%d err=%v", size, err)
+	}
+	models, err := Models(dir)
+	if err != nil || len(models) != 1 || models[0].Name != "tiny-00001-of-00002.gguf" || models[0].Size != size {
+		t.Fatalf("models=%+v err=%v", models, err)
+	}
+}
