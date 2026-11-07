@@ -325,4 +325,4 @@ async function refreshObservations(){
  if(!data.inference.length&&!data.nodes.length)area.append(el('p','muted','Nenhuma medição disponível.'));
 }
 
-setupAuth();if(token)guard(refresh);
+setupAuth();if(token){renderChat();guard(refresh);}

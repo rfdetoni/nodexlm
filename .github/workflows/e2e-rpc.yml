@@ -3,6 +3,9 @@ name: Real RPC end-to-end
 # Explicit dispatch keeps native model tests out of routine PR/build minutes.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/e2e-rpc.yml']
 permissions:
   contents: read
 concurrency:
@@ -39,8 +42,21 @@ jobs:
           mkdir native
           tar --no-same-owner -xzf rpc.tar.gz -C native
           go build -o nodexlm ./cmd/nodexlm
+      - name: Install browser test runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.56.1
+          "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Pair real Guest, place model layers and stream tokens
         env:
           NODEXLM_RPC_DIR: ${{ github.workspace }}/native
           NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
+          NODE_PATH: ${{ runner.temp }}/browser/node_modules
+          NODEXLM_UI_CHECK: ${{ github.workspace }}/scripts/test-console.cjs
         run: python3 scripts/e2e-rpc.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: console-browser-screenshots
+          path: ui-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

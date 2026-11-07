@@ -68,7 +68,7 @@ jobs:
           python3 - <<'PY'
           import hashlib,pathlib
           for p in pathlib.Path('dist').glob('*.tar.gz'):
-              with p.open('rb') as source:digest=hashlib.file_digest(source,'sha256').hexdigest()
+              digest=hashlib.sha256(p.read_bytes()).hexdigest()
               (p.parent/(p.name+'.sha256')).write_text(digest+'  '+p.name+'\n')
           PY
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
