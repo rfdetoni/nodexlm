@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func TestPublicIPRejectsPrivateAndReservedRanges(t *testing.T) {
@@ -56,5 +57,22 @@ func TestExpectedLFSChecksum(t *testing.T) {
 	h.Set("X-Linked-Etag", "W/\"not-a-checksum\"")
 	if _, ok := ExpectedSHA256(h); ok {
 		t.Fatal("weak ETag treated as SHA-256")
+	}
+}
+
+func TestIdleReadDeadlineStopsStalledTransfer(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	conn := &inactivityConn{Conn: client, idle: 25 * time.Millisecond}
+	start := time.Now()
+	var one [1]byte
+	_, err := conn.Read(one[:])
+	nerr, ok := err.(net.Error)
+	if !ok || !nerr.Timeout() {
+		t.Fatalf("stalled download did not time out: %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("idle read deadline was not applied promptly")
 	}
 }
