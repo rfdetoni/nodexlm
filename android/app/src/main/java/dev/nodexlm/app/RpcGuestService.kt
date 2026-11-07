@@ -56,8 +56,10 @@ class RpcGuestService : Service() {
         private const val TUNNELS = 8
     }
 
-    private var rpcPort = 0
+    private lateinit var rpcSocket: String
+    private val localSockets = Collections.synchronizedSet(mutableSetOf<android.net.LocalSocket>())
     private lateinit var energyPolicy: EnergyPolicy
+    private val reconnectFailures=java.util.concurrent.atomic.AtomicLong()
     private val running = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
@@ -110,8 +112,10 @@ class RpcGuestService : Service() {
             try {
                 val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
                 checkThermalsAndBattery()
-                rpcPort = java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { it.localPort }
-                val message = NativeRpc.start(threads, mode, rpcPort)
+                val socketFile=File(filesDir,"rpc.sock")
+                check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
+                rpcSocket=socketFile.absolutePath
+                val message = NativeRpc.start(threads, mode, rpcSocket)
                 check(message.isEmpty()) { message }
                 awaitNativeRPC()
                 val sslContext = pinnedSSLContext()
@@ -134,6 +138,7 @@ class RpcGuestService : Service() {
                                 backoff = 1000L
                             } catch (e: Exception) {
                                 failed = true
+                                reconnectFailures.incrementAndGet()
                                 if (running.get()) Log.w(LOG, "RPC tunnel $slot: ${e.message}")
                             }
                             sleepWhileRunning(backoff)
@@ -154,7 +159,7 @@ class RpcGuestService : Service() {
                 shutdown()
                 getSystemService(NotificationManager::class.java).notify(44,
                     Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_notify_error)
-                        .setContentTitle("NodexLM · Guest RPC interrompido")
+                        .setContentTitle(getString(R.string.ui_8ea70b71b55f))
                         .setContentText(reason).setStyle(Notification.BigTextStyle().bigText(reason)).build())
             }
         }
@@ -170,8 +175,8 @@ class RpcGuestService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("NodexLM · Guest RPC ativo")
-            .setContentText("Compartilhando CPU/RAM com o Host · consome bateria")
+            .setContentTitle(getString(R.string.ui_fc46b31da822))
+            .setContentText(getString(R.string.ui_343d89ad1a83))
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, "Parar", stop).build())
             .build()
@@ -197,7 +202,7 @@ class RpcGuestService : Service() {
     private fun checkThermalsAndBattery() {
         val power = getSystemService(POWER_SERVICE) as PowerManager
         check(power.currentThermalStatus < PowerManager.THERMAL_STATUS_SEVERE) {
-            "Device too hot for safe RPC processing"
+            getString(R.string.energy_thermal)
         }
         val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
         val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -205,7 +210,7 @@ class RpcGuestService : Service() {
             ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val charging = state == BatteryManager.BATTERY_STATUS_CHARGING || state == BatteryManager.BATTERY_STATUS_FULL
         val reason = energyPolicy.pauseReason(percent, charging, java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
-        check(reason == null) { reason ?: "Energy policy requires stopping the Guest" }
+        check(reason == null) { getString(when(reason){"charging"->R.string.energy_charging;"battery"->R.string.energy_battery;else->R.string.energy_schedule}) }
 
     }
 
@@ -222,7 +227,7 @@ class RpcGuestService : Service() {
         repeat(60) {
             if (!running.get()) error("Guest stopped")
             try {
-                Socket().use { it.connect(InetSocketAddress("127.0.0.1", rpcPort), 250) }
+                android.net.LocalSocket().use { it.connect(android.net.LocalSocketAddress(rpcSocket,android.net.LocalSocketAddress.Namespace.FILESYSTEM)) }
                 return
             } catch (_: Exception) { sleepWhileRunning(200) }
         }
@@ -264,6 +269,7 @@ class RpcGuestService : Service() {
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
                 .put("benchmark", true)
+                .put("reconnect_failures",reconnectFailures.get())
                 .put("rpc_ready", false))
         val connection = java.net.URL(endpoint.trimEnd('/') + "/v1/nodes/heartbeat")
             .openConnection() as HttpsURLConnection
@@ -360,10 +366,10 @@ class RpcGuestService : Service() {
                 return
             }
             check(marker == 1) { "Missing Host RPC relay marker" }
-            val local = track(Socket())
+            val local = android.net.LocalSocket()
+            localSockets.add(local)
             try {
-                local.keepAlive = true
-                local.connect(InetSocketAddress("127.0.0.1", rpcPort), 3000)
+                local.connect(android.net.LocalSocketAddress(rpcSocket,android.net.LocalSocketAddress.Namespace.FILESYSTEM))
                 // The two copy loops do not parse or modify the llama.cpp RPC
                 // protocol. The TLS session is pinned to the previously paired Host.
                 val sender = thread(name = "nodexlm-rpc-stream-up", isDaemon = true) {
@@ -379,7 +385,7 @@ class RpcGuestService : Service() {
                     sender.join(1000)
                 }
             } finally {
-                sockets.remove(local)
+                localSockets.remove(local)
                 try { local.close() } catch (_: Exception) {}
             }
         } finally {
@@ -391,6 +397,7 @@ class RpcGuestService : Service() {
     private fun shutdown() {
         if (!stopping.compareAndSet(false, true)) return
         running.set(false)
+        synchronized(localSockets){localSockets.forEach {try{it.close()}catch(_:Exception){}};localSockets.clear()}
         synchronized(sockets) {
             sockets.forEach { try { it.close() } catch (_: Exception) {} }
             sockets.clear()

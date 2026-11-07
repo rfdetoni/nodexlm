@@ -32,10 +32,15 @@ const llama_vocab* vocab = nullptr;
 
 std::string utf(JNIEnv* env,jstring str) {
     if (!str) return {};
-    const char* c=env->GetStringUTFChars(str,nullptr);
-    if(!c) return {};
-    std::string result(c);
-    env->ReleaseStringUTFChars(str,c);
+    // Use Java's standard UTF-8 encoder, not JNI modified UTF-8 (emoji).
+    jclass stringClass=env->GetObjectClass(str);
+    jmethodID getBytes=env->GetMethodID(stringClass,"getBytes","(Ljava/lang/String;)[B");
+    jstring charset=env->NewStringUTF("UTF-8");
+    auto array=(jbyteArray)env->CallObjectMethod(str,getBytes,charset);
+    std::string result;
+    if(array&&!env->ExceptionCheck()) { result.resize(env->GetArrayLength(array));env->GetByteArrayRegion(array,0,(jsize)result.size(),reinterpret_cast<jbyte*>(result.data())); }
+    if(array)env->DeleteLocalRef(array);
+    env->DeleteLocalRef(charset);env->DeleteLocalRef(stringClass);
     return result;
 }
 void release() {
@@ -73,7 +78,7 @@ Java_dev_nodexlm_app_NativeEntry_load(JNIEnv* env,jobject,jstring path,jint cont
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_dev_nodexlm_app_NativeEntry_generate(JNIEnv* env,jobject,jobjectArray javaRoles,jobjectArray javaContents,jint tokenLimit) {
+Java_dev_nodexlm_app_NativeEntry_generate(JNIEnv* env,jobject,jobjectArray javaRoles,jobjectArray javaContents,jint tokenLimit,jfloat temperature,jfloat topP,jobjectArray javaStops,jobject sink) {
     std::lock_guard<std::mutex> lock(guard);
     if(!ctx||!model)return bytes(env,"NODEXLM_ERROR: no loaded model");
     if(!javaRoles || !javaContents)return bytes(env,"NODEXLM_ERROR: missing messages");
@@ -81,6 +86,10 @@ Java_dev_nodexlm_app_NativeEntry_generate(JNIEnv* env,jobject,jobjectArray javaR
     cancelled.store(false);
     const jsize count=env->GetArrayLength(javaRoles);
     if(count<=0||count>64||env->GetArrayLength(javaContents)!=count)return bytes(env,"NODEXLM_ERROR: invalid messages");
+    std::vector<std::string> stops;
+    if(javaStops){const jsize stopCount=env->GetArrayLength(javaStops);if(stopCount>4)return bytes(env,"NODEXLM_ERROR: too many stops");for(jsize i=0;i<stopCount;i++){auto stop=(jstring)env->GetObjectArrayElement(javaStops,i);stops.push_back(utf(env,stop));env->DeleteLocalRef(stop);}}
+    jmethodID tokenCallback=nullptr;
+    if(sink){jclass type=env->GetObjectClass(sink);tokenCallback=env->GetMethodID(type,"onToken","([B)V");env->DeleteLocalRef(type);if(!tokenCallback)return nullptr;}
     std::vector<std::string> roles;roles.reserve(count);
     std::vector<std::string> contents;contents.reserve(count);
     for(jsize i=0;i<count;i++){
@@ -116,18 +125,30 @@ Java_dev_nodexlm_app_NativeEntry_generate(JNIEnv* env,jobject,jobjectArray javaR
         if(llama_decode(ctx,batch)!=0)return bytes(env,"NODEXLM_ERROR: prompt decode failed");
     }
     auto sampler=llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(sampler,llama_sampler_init_temp(0.7f));
+    llama_sampler_chain_add(sampler,llama_sampler_init_top_p(std::clamp<float>(topP,0.0f,1.0f),1));
+    llama_sampler_chain_add(sampler,llama_sampler_init_temp(std::clamp<float>(temperature,0.0f,2.0f)));
     llama_sampler_chain_add(sampler,llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     std::string output;
+    size_t emitted=0;
+    bool stopped=false;
     for (int i=0;i<maxOut && n+i<contextSize && !cancelled.load();i++) {
         llama_token next=llama_sampler_sample(sampler,ctx,-1);
         if(llama_vocab_is_eog(vocab,next))break;
         char piece[2048];
         int length=llama_token_to_piece(vocab,next,piece,sizeof(piece),0,false);
         if(length>0)output.append(piece,(size_t)length);
+        size_t boundary=output.size();
+        for(const auto& stop:stops){if(stop.empty())continue;auto found=output.find(stop);if(found!=std::string::npos){boundary=std::min(boundary,found);stopped=true;}}
+        // Hold a possible stop-sequence prefix so it never leaks into SSE.
+        size_t safe=boundary;
+        if(!stopped)for(const auto& stop:stops){for(size_t n=1;n<stop.size()&&n<=output.size();n++){if(output.compare(output.size()-n,n,stop,0,n)==0)safe=std::min(safe,output.size()-n);}}
+        if(sink&&safe>emitted){auto chunk=bytes(env,output.substr(emitted,safe-emitted));env->CallVoidMethod(sink,tokenCallback,chunk);env->DeleteLocalRef(chunk);emitted=safe;if(env->ExceptionCheck()){llama_sampler_free(sampler);return nullptr;}}
+        if(stopped){output.resize(boundary);break;}
         if(llama_decode(ctx,llama_batch_get_one(&next,1))!=0)break;
     }
+    if(sink&&!cancelled.load()&&output.size()>emitted){auto chunk=bytes(env,output.substr(emitted));env->CallVoidMethod(sink,tokenCallback,chunk);env->DeleteLocalRef(chunk);}
     llama_sampler_free(sampler);
+    if(env->ExceptionCheck())return nullptr;
     return bytes(env,output);
 }
 
@@ -190,8 +211,9 @@ Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
 // Mode: auto = GPU + CPU when available else CPU; cpu = CPU only;
 // gpu = Vulkan only; hybrid = Vulkan + CPU (requires Vulkan).
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jint port) {
-    if(port < 1024 || port > 65535) return env->NewStringUTF("Invalid RPC port");
+Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jstring socketValue) {
+    const std::string socketPath=utf(env,socketValue);
+    if(socketPath.empty() || socketPath[0]!='/' || socketPath.size()>100) return env->NewStringUTF("Invalid private RPC socket path");
     if(threads < 1 || threads > 8)
         return env->NewStringUTF("RPC CPU threads must be between 1 and 8");
     const std::string mode = utf(env, modeValue);
@@ -224,9 +246,9 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
         devices.size(),gpu?"yes":"no",cpu?"yes":"no");
     try {
-        std::thread([threads, devices, port] {
+        std::thread([threads, devices, socketPath] {
             try {
-                const std::string address = "127.0.0.1:" + std::to_string(port);
+                const std::string address = "unix:" + socketPath;
                 ggml_backend_rpc_start_server(address.c_str(), nullptr,
                     static_cast<size_t>(threads), devices.size(),
                     const_cast<ggml_backend_dev_t*>(devices.data()));

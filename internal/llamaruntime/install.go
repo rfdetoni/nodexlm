@@ -337,7 +337,7 @@ func SupportsRPC(ctx context.Context, server string) bool {
 func distributedDir(home, backend string) string {
 	dir := installDir(home, backend) + "-rpc"
 	if publishedRPCSupported(backend) {
-		return dir + "-r2"
+		return dir + "-" + revision.RPCRelease
 	}
 	return dir
 }
@@ -414,6 +414,9 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	raw, err := rev.Output()
 	if err != nil || strings.TrimSpace(string(raw)) != SourceCommit {
 		return "", "", errors.New("pinned llama.cpp source commit mismatch")
+	}
+	if err := applyRPCPatch(ctx, src); err != nil {
+		return "", "", err
 	}
 	build := filepath.Join(stage, "build")
 	flags := []string{"-S", src, "-B", build, "-DGGML_RPC=ON", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=ON", "-DLLAMA_BUILD_SERVER=ON", "-DCMAKE_BUILD_TYPE=Release"}

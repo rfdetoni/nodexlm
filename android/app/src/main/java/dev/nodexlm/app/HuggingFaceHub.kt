@@ -98,8 +98,16 @@ internal class HuggingFaceHub(private val context: Context) {
                     val file = tree.optJSONObject(j) ?: continue
                     if (file.optString("type") != "file") continue
                     val filename = file.optString("path")
-                    val size = file.optLong("size", 0L)
-                    if (!filename.endsWith(".gguf", ignoreCase = true) || size <= 0 || filename.contains("-of-", true) || filename.contains("mmproj",true)) continue
+                    var size = file.optLong("size", 0L)
+                    if (!filename.endsWith(".gguf", ignoreCase = true) || size <= 0 || filename.contains("mmproj",true)) continue
+                    val shardNames=try { ModelFiles.shards(filename.substringAfterLast('/')) } catch (_:Exception) { continue }
+                    if(shardNames.size>1){
+                        val prefix=filename.substringBeforeLast('/',"")
+                        val sizes=(0 until tree.length()).mapNotNull {tree.optJSONObject(it)}.associate {it.optString("path") to it.optLong("size",0)}
+                        val complete=shardNames.map { if(prefix.isEmpty())it else "$prefix/$it" }
+                        if(complete.any {(sizes[it]?:0)<=0})continue
+                        size=complete.sumOf {sizes.getValue(it)}
+                    }
                     val segments = filename.split('/')
                     if (segments.size > 20 || segments.any { !safeSegment(it) }) continue
                     val url = "https://huggingface.co/${Uri.encode(parts[0])}/${Uri.encode(parts[1])}/resolve/main/" +

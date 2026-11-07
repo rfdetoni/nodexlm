@@ -48,3 +48,5 @@ dialog{max-width:min(480px,calc(100vw - 28px));color:#e1e6ed;background:#191f27;
 #chatOutput{max-height:480px;overflow-y:auto;scrollbar-gutter:stable}#chatMetrics{min-height:1.6em}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media(forced-colors:active){*{scrollbar-color:auto}button:focus-visible{outline-color:Highlight}}
+
+.latency-chart{display:block;width:100%;max-width:600px;min-height:100px;color:#8bc8ff}.buttons{flex-wrap:wrap}#residentModels{margin-top:12px}

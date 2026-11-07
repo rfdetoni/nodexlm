@@ -10,7 +10,7 @@ package dev.nodexlm.app
 internal object NativeRpc {
     val VERSION = BuildConfig.LLAMA_VERSION
     init { System.loadLibrary("nodexlm") }
-    external fun start(threads: Int, mode: String, port: Int): String
+    external fun start(threads: Int, mode: String, socketPath: String): String
     /** Reports whether the native GGML RPC server thread is still running. */
     external fun isRunning(): Boolean
     /** JSON object with hardware-backed Vulkan GPU metrics (can be empty). */

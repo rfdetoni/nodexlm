@@ -56,8 +56,8 @@ class MainActivity : Activity() {
             setBackgroundColor(0xff101720.toInt())
             setPadding(dp(18),dp(18),dp(18),dp(8))
         }
-        base.addView(label("NodexLM",29,true))
-        base.addView(label("Uma rede. Uma inteligência.",14,false))
+        base.addView(label(getString(R.string.ui_8792d2ba201f),29,true))
+        base.addView(label(getString(R.string.ui_37db6b658719),14,false))
         space(base,14)
         navigation=LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         base.addView(navigation)
@@ -65,7 +65,7 @@ class MainActivity : Activity() {
         content=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL}
         base.addView(content)
         space(base,12)
-        toastStatus=label("Pronto para configurar o cluster",12,false)
+        toastStatus=label(getString(R.string.ui_5c8c7f7835eb),12,false)
         base.addView(toastStatus)
         val scroll=ScrollView(this).apply {isFillViewport=true;isVerticalScrollBarEnabled=false;addView(base,
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))}
@@ -73,11 +73,11 @@ class MainActivity : Activity() {
         library=ModelLibraryView(this,
             importPicker={
                 val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    type="*/*";addCategory(Intent.CATEGORY_OPENABLE)
+                    type="*/*";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true)
                 }
                 startActivityForResult(intent,pickModel)
             },
-            onSelected={ file -> setStatus("Modelo selecionado: ${file.name}") }
+            onSelected={ file -> setStatus(getString(R.string.model_selected,file.name)) }
         )
         showTab(0)
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
@@ -86,7 +86,7 @@ class MainActivity : Activity() {
     private fun showTab(index:Int) {
         tab=index
         navigation.removeAllViews()
-        listOf("Cluster","Modelos","Ajustes").forEachIndexed {i,title ->
+        listOf("Cluster",getString(R.string.models),getString(R.string.settings)).forEachIndexed {i,title ->
             val button=Button(this).apply {
                 text=title;isAllCaps=false;textSize=13f
                 setTextColor(if(i==index)0xfff8fbff.toInt() else 0xffa9b7cb.toInt())
@@ -105,31 +105,31 @@ class MainActivity : Activity() {
 
     private fun clusterScreen() {
         val overview=card()
-        overview.addView(label("Visão geral do dispositivo",18,true))
+        overview.addView(label(getString(R.string.ui_7681d877e8b1),18,true))
         val selected=ModelFiles.selected(this)
-        overview.addView(label("Guest RPC: o GGUF fica no Host; este celular recebe apenas tensores e operações de camadas designadas.",14,false))
-        overview.addView(label("Modelo local opcional: ${selected?.name ?: "Nenhum"}",12,false))
-        overview.addView(label("Sistema: Android ${Build.VERSION.RELEASE} · ${Build.SUPPORTED_ABIS.firstOrNull() ?: "?"}",12,false))
-        overview.addView(label("Memória estimada para pesos: ${"%.2f".format(java.util.Locale.US,HuggingFaceHub(this).localBudgetBytes().toDouble()/(1L shl 30))} GiB",12,false))
-        overview.addView(action("Explorar modelos GGUF") {showTab(1)})
+        overview.addView(label(getString(R.string.ui_6fc9111417fd),14,false))
+        overview.addView(label(getString(R.string.model_optional,selected?.name ?: getString(R.string.none)),12,false))
+        overview.addView(label(getString(R.string.system,Build.VERSION.RELEASE,Build.SUPPORTED_ABIS.firstOrNull() ?: "?"),12,false))
+        overview.addView(label(getString(R.string.memory_budget,"%.2f".format(java.util.Locale.US,HuggingFaceHub(this).localBudgetBytes().toDouble()/(1L shl 30))),12,false))
+        overview.addView(action(getString(R.string.ui_87125eeb01cb)) {showTab(1)})
         content.addView(overview)
         val pairing=card()
-        pairing.addView(label("Conectar ao Host",18,true))
-        pairing.addView(label("Emparelhe com o código de 8 caracteres mostrado no Host.",13,false))
-        coordinator=field(pairing,"HTTPS do Host (opcional)",prefs.getString("coordinator","") ?: "")
-        pairCode=field(pairing,"Código de emparelhamento","")
-        deviceName=field(pairing,"Nome do dispositivo",prefs.getString("name",Build.MODEL) ?: Build.MODEL)
-        pairing.addView(action("Conectar com segurança") {joinCluster()})
-        pairing.addView(action("Importar certificado do Host") {
+        pairing.addView(label(getString(R.string.ui_9220df143b25),18,true))
+        pairing.addView(label(getString(R.string.ui_9ee19c2db1d5),13,false))
+        coordinator=field(pairing,getString(R.string.host_url),prefs.getString("coordinator","") ?: "")
+        pairCode=field(pairing,getString(R.string.pairing_code),"")
+        deviceName=field(pairing,getString(R.string.device_name),prefs.getString("name",Build.MODEL) ?: Build.MODEL)
+        pairing.addView(action(getString(R.string.ui_c06cce69d22b)) {joinCluster()})
+        pairing.addView(action(getString(R.string.ui_5701de13e132)) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type="*/*";addCategory(Intent.CATEGORY_OPENABLE)
             },pickCertificate)
         })
         content.addView(pairing)
         val worker=card()
-        worker.addView(label("Processamento",18,true))
-        worker.addView(label("Guest RPC distribuído · CPU e GPU Vulkan podem processar partes do mesmo GGUF do Host. Em GPUs integradas, RAM e VRAM podem ser compartilhadas. Requer llama.cpp ${NativeRpc.VERSION}.",13,false))
-        val modes = listOf("Automático (GPU + CPU, com fallback CPU)", "Somente CPU", "Somente GPU Vulkan", "GPU Vulkan + CPU")
+        worker.addView(label(getString(R.string.ui_5ac59a6efd23),18,true))
+        worker.addView(label(getString(R.string.backend_help,NativeRpc.VERSION),13,false))
+        val modes = listOf(getString(R.string.backend_auto), getString(R.string.backend_cpu), getString(R.string.backend_gpu), getString(R.string.backend_hybrid))
         val identifiers = listOf("auto", "cpu", "gpu", "hybrid")
         val selector = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, modes)
@@ -141,10 +141,10 @@ class MainActivity : Activity() {
                 }
             }
         }
-        worker.addView(label("Backend de processamento",13,false))
+        worker.addView(label(getString(R.string.ui_e4c3a22567db),13,false))
         worker.addView(selector)
-        worker.addView(action("Ativar Guest RPC (sem GGUF local)") {startRpcGuest()})
-        val gpuStatus = label("Verificando GPU Vulkan...",12,false)
+        worker.addView(action(getString(R.string.ui_2940dc16b87e)) {startRpcGuest()})
+        val gpuStatus = label(getString(R.string.ui_54c9d56ac072),12,false)
         worker.addView(gpuStatus)
         thread(name="nodexlm-vulkan-probe") {
             val report = try {
@@ -160,79 +160,79 @@ class MainActivity : Activity() {
             } catch(e: Throwable) { "Não foi possível consultar a GPU; CPU permanece disponível" }
             runOnUiThread {gpuStatus.text = report}
         }
-        worker.addView(action("Parar Guest RPC") {
+        worker.addView(action(getString(R.string.ui_586f2f6fc723)) {
             startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
-            setStatus("Desativando Guest RPC")
+            setStatus(getString(R.string.ui_f54a84193c11))
         })
-        worker.addView(label("Opcional: modo independente com um GGUF instalado no Android (não soma memória ao modelo distribuído).",12,false))
-        worker.addView(action("Iniciar inferência independente") {startWorker()})
-        worker.addView(action("Parar inferência independente") {
+        worker.addView(label(getString(R.string.ui_4c9eb65e0bab),12,false))
+        worker.addView(action(getString(R.string.ui_5949a199212d)) {startWorker()})
+        worker.addView(action(getString(R.string.ui_942f9c4afc38)) {
             startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))
-            setStatus("Parando inferência independente")
+            setStatus(getString(R.string.ui_4630ba48f510))
         })
         content.addView(worker)
     }
 
     private fun settingsScreen() {
         val settings=card()
-        settings.addView(label("Ajustes e manutenção",18,true))
-        settings.addView(label("Modelos são armazenados no espaço privado do aplicativo. Downloads e importações não exigem Play Store.",13,false))
-        settings.addView(label("Para manter o cluster conectado com a tela apagada, permita o funcionamento em segundo plano nas configurações de bateria. O worker ativo usa mais bateria.",13,false))
-        settings.addView(action("Configurar restrições de bateria") {
+        settings.addView(label(getString(R.string.ui_14e59fc95d44),18,true))
+        settings.addView(label(getString(R.string.ui_18ade3f42460),13,false))
+        settings.addView(label(getString(R.string.ui_28c01454db70),13,false))
+        settings.addView(action(getString(R.string.ui_474c3f7911a8)) {
             try {
                 val manager = getSystemService(POWER_SERVICE) as PowerManager
                 if (manager.isIgnoringBatteryOptimizations(packageName)) {
-                    setStatus("O NodexLM já está sem as restrições de bateria do Android")
+                    setStatus(getString(R.string.ui_1abbe7528f2e))
                 } else {
                     startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                 }
-            } catch (e: Exception) { setStatus("Abra as configurações do sistema para permitir atividade em segundo plano") }
+            } catch (e: Exception) { setStatus(getString(R.string.ui_e7caf6ffa12d)) }
         })
-        val onlyCharging = CheckBox(this).apply { text = "Guest RPC somente enquanto carrega"; isChecked = prefs.getBoolean("rpc_only_charging", false) }
+        val onlyCharging = CheckBox(this).apply { text = getString(R.string.charging_only); isChecked = prefs.getBoolean("rpc_only_charging", false) }
         settings.addView(onlyCharging)
-        val minimum = field(settings,"Bateria mínima (%)",prefs.getInt("rpc_min_battery",15).toString())
-        val startHour = field(settings,"Hora inicial (0–23)",prefs.getInt("rpc_start_hour",0).toString())
-        val endHour = field(settings,"Hora final (0–23; igual à inicial = dia inteiro)",prefs.getInt("rpc_end_hour",0).toString())
+        val minimum = field(settings,getString(R.string.minimum_battery),prefs.getInt("rpc_min_battery",15).toString())
+        val startHour = field(settings,getString(R.string.start_hour),prefs.getInt("rpc_start_hour",0).toString())
+        val endHour = field(settings,getString(R.string.end_hour),prefs.getInt("rpc_end_hour",0).toString())
         listOf(minimum,startHour,endHour).forEach { it.inputType = android.text.InputType.TYPE_CLASS_NUMBER }
-        settings.addView(action("Salvar perfil de energia") {
+        settings.addView(action(getString(R.string.ui_94c7583562e2)) {
             val min = minimum.text.toString().toIntOrNull()
             val from = startHour.text.toString().toIntOrNull()
             val until = endHour.text.toString().toIntOrNull()
             if (min == null || min !in 5..95 || from == null || from !in 0..23 || until == null || until !in 0..23) {
-                setStatus("Informe bateria entre 5 e 95% e horas entre 0 e 23")
+                setStatus(getString(R.string.ui_5f20f24e5efa))
             } else {
                 prefs.edit().putBoolean("rpc_only_charging",onlyCharging.isChecked).putInt("rpc_min_battery",min)
                     .putInt("rpc_start_hour",from).putInt("rpc_end_hour",until).apply()
-                setStatus("Perfil salvo. Reinicie o Guest RPC para aplicar.")
+                setStatus(getString(R.string.ui_a0f818d41fea))
             }
         })
-        settings.addView(action("Verificar atualizações") {updateManager.check(manual=true)})
-        settings.addView(action("Licenças de terceiros") {
+        settings.addView(action(getString(R.string.ui_fd732a2b0a67)) {updateManager.check(manual=true)})
+        settings.addView(action(getString(R.string.ui_ff4f0c35cea3)) {
             try {
                 val notice = assets.open("THIRD_PARTY_NOTICES.txt").bufferedReader().use { it.readText() }
-                AlertDialog.Builder(this).setTitle("Licenças de terceiros")
-                    .setMessage(notice).setPositiveButton("Fechar", null).show()
-            } catch (e: Exception) { setStatus("Não foi possível abrir as licenças") }
+                AlertDialog.Builder(this).setTitle(getString(R.string.ui_ff4f0c35cea3))
+                    .setMessage(notice).setPositiveButton(getString(R.string.ui_0f2bd88ef0ac), null).show()
+            } catch (e: Exception) { setStatus(getString(R.string.ui_6a31ec3b8a4d)) }
         })
-        settings.addView(label("Versão: ${packageManager.getPackageInfo(packageName,0).versionName}",12,false))
+        settings.addView(label(getString(R.string.version,packageManager.getPackageInfo(packageName,0).versionName),12,false))
         content.addView(settings)
     }
 
     private fun joinCluster() {
         val code=pairCode.text.toString().trim()
-        if(code.isBlank()) {setStatus("Informe o código gerado no Host");return}
+        if(code.isBlank()) {setStatus(getString(R.string.ui_becba7ac9722));return}
         val endpoint=coordinator.text.toString().trim()
         val name=deviceName.text.toString().trim()
         val model=ModelFiles.selected(this)?.name ?: ""
-        setStatus("Procurando o Host na rede local…")
+        setStatus(getString(R.string.ui_e794f9249e8b))
         thread(name="nodexlm-pairing") {
             try {
                 val paired=PairingClient(this).join(code,endpoint,name,model)
                 runOnUiThread {
-                    setStatus("Conectado com segurança a $paired")
+                    setStatus(getString(R.string.connected,paired))
                     if(tab==0) showTab(0)
                 }
-            }catch(e:Exception) {runOnUiThread {setStatus("Falha no emparelhamento: ${e.message}")}}
+            }catch(e:Exception) {runOnUiThread {setStatus(getString(R.string.pair_failed,e.message))}}
         }
     }
 
@@ -241,7 +241,7 @@ class MainActivity : Activity() {
         val id = prefs.getString("node_id","").orEmpty()
         val endpoint = prefs.getString("coordinator","").orEmpty()
         if (token.isBlank() || id.isBlank() || !endpoint.startsWith("https://")) {
-            setStatus("Emparelhe este celular com o Host antes de ativar o Guest RPC")
+            setStatus(getString(R.string.ui_2e207ce96075))
             return
         }
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -258,42 +258,43 @@ class MainActivity : Activity() {
                 .putExtra(RpcGuestService.EXTRA_NAME,prefs.getString("name",Build.MODEL) ?: Build.MODEL)
                 .putExtra(RpcGuestService.EXTRA_MODE,prefs.getString("rpc_mode", "auto") ?: "auto")
             startForegroundService(intent)
-            setStatus("Iniciando Guest RPC · acompanhe a notificação e o painel do Host")
-        } catch(e:Exception) {setStatus("Falha ao iniciar Guest RPC: ${e.message}")}
+            setStatus(getString(R.string.ui_69873d9d8387))
+        } catch(e:Exception) {setStatus(getString(R.string.rpc_failed,e.message))}
     }
 
     private fun startWorker() {
         val file=ModelFiles.selected(this)
         val token=runCatching { NodeSecrets.read(this) }.getOrDefault("")
         if(file==null || token.isNullOrBlank()) {
-            setStatus("Conecte ao Host e selecione um modelo GGUF na aba Modelos")
+            setStatus(getString(R.string.ui_ce1d54cb7b7a))
             return
         }
         val endpoint=prefs.getString("coordinator","") ?: ""
-        if(!endpoint.startsWith("https://")) {setStatus("O Host precisa usar HTTPS");return}
+        if(!endpoint.startsWith("https://")) {setStatus(getString(R.string.ui_07a3785ba068));return}
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),100)
         try {
             startForegroundService(Intent(this,ComputeService::class.java).setAction(ComputeService.START))
-            setStatus("Processamento iniciado: ${file.name}")
-        }catch(e:Exception){setStatus("Falha ao iniciar: ${e.message}")}
+            setStatus(getString(R.string.processing_started,file.name))
+        }catch(e:Exception){setStatus(getString(R.string.start_failed,e.message))}
     }
 
     @Deprecated("Android file picker callback")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
         if(resultCode!=RESULT_OK)return
-        val uri=data?.data?:return
+        val uris=data?.clipData?.let {clip -> (0 until clip.itemCount).map {clip.getItemAt(it).uri}} ?: listOfNotNull(data?.data)
+        val uri=uris.firstOrNull()?:return
         when(requestCode) {
-            pickModel -> {showTab(1);library.importFromUri(uri)}
+            pickModel -> {showTab(1);library.importFromUris(uris)}
             pickCertificate -> thread(name="nodexlm-cert-import") {
                 try {
                     val bytes=contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Certificate unreadable")
                     require(bytes.size<65_536)
                     java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(bytes.inputStream())
                     File(filesDir,"coordinator.crt").writeBytes(bytes)
-                    runOnUiThread {setStatus("Certificado importado")}
-                }catch(e:Exception){runOnUiThread {setStatus("Certificado rejeitado: ${e.message}")}}
+                    runOnUiThread {setStatus(getString(R.string.ui_d98465fd9e86))}
+                }catch(e:Exception){runOnUiThread {setStatus(getString(R.string.cert_rejected,e.message))}}
             }
         }
     }

@@ -37,6 +37,7 @@ internal class ModelLibraryView(
     private val downloadProgress = TextView(activity)
     private lateinit var cancel: Button
     private var finding = false
+    private var verifying = false
     private val tick = object : Runnable {
         override fun run() {
             refreshProgress()
@@ -47,8 +48,8 @@ internal class ModelLibraryView(
     init {
         orientation = VERTICAL
         setPadding(0,12,0,28)
-        label("Explore modelos",26,true)
-        label("Hugging Face · GGUF · download e importação local",13,false)
+        label(activity.getString(R.string.ui_fe41cc165939),26,true)
+        label(activity.getString(R.string.ui_96e8d213ee6c),13,false)
         space(14)
         val searchCard = card()
         query.setSingleLine(true)
@@ -57,11 +58,11 @@ internal class ModelLibraryView(
         query.setHintTextColor(0xff8f9bab.toInt())
         query.hint = "Buscar modelo ou organização"
         searchCard.addView(query)
-        searchCard.addView(action("Pesquisar no Hugging Face") { search() })
+        searchCard.addView(action(activity.getString(R.string.ui_76a328da1ce2)) { search() })
         addView(searchCard)
         space(12)
         val progressCard = card()
-        status.text = "Selecione um GGUF compatível com os recursos disponíveis."
+        status.text = activity.getString(R.string.ui_17b418d5924d)
         status.setTextColor(0xffbccadd.toInt())
         progressCard.addView(status)
         bar.max = 1000
@@ -69,17 +70,17 @@ internal class ModelLibraryView(
         progressCard.addView(bar,LayoutParams(LayoutParams.MATCH_PARENT,10).apply {topMargin=10})
         downloadProgress.setTextColor(0xff82b9ff.toInt())
         progressCard.addView(downloadProgress)
-        cancel = action("Cancelar download") { cancelDownload() }
+        cancel = action(activity.getString(R.string.ui_cdd64d8d4333)) { cancelDownload() }
         cancel.visibility = GONE
         progressCard.addView(cancel)
         addView(progressCard)
         space(14)
-        label("Modelos disponíveis",19,true)
+        label(activity.getString(R.string.ui_608b33b7803e),19,true)
         results.orientation = VERTICAL
         addView(results)
         space(20)
-        label("Minha biblioteca",19,true)
-        val importButton = action("Importar GGUF do dispositivo") { importPicker() }
+        label(activity.getString(R.string.ui_308b5f1f24ae),19,true)
+        val importButton = action(activity.getString(R.string.ui_18911140a84b)) { importPicker() }
         addView(importButton)
         library.orientation = VERTICAL
         addView(library)
@@ -89,18 +90,19 @@ internal class ModelLibraryView(
     override fun onAttachedToWindow() { super.onAttachedToWindow(); main.removeCallbacks(tick);main.post(tick) }
     override fun onDetachedFromWindow() { main.removeCallbacks(tick);super.onDetachedFromWindow() }
 
-    fun importFromUri(uri: Uri) {
-        status.text = "Importando arquivo sem carregar tudo na memória…"
+    fun importFromUri(uri: Uri) = importFromUris(listOf(uri))
+    fun importFromUris(uris: List<Uri>) {
+        status.text = activity.getString(R.string.ui_a8843f6c285c)
         thread(name="nodexlm-import") {
             try {
-                val file = ModelFiles.import(activity,uri)
+                val file = ModelFiles.importSet(activity,uris)
                 activity.runOnUiThread {
                     status.text = "Modelo importado: ${file.name}"
                     refreshLibrary()
                     onSelected(file)
                 }
             } catch (e:Exception) {
-                activity.runOnUiThread {status.text="Falha ao importar: ${e.message}"}
+                activity.runOnUiThread {status.text=activity.getString(R.string.import_failed,e.message)}
             }
         }
     }
@@ -108,7 +110,7 @@ internal class ModelLibraryView(
     private fun search() {
         if (finding) return
         finding = true
-        status.text="Consultando catálogo oficial do Hugging Face…"
+        status.text=activity.getString(R.string.ui_5a0c39e51aa3)
         results.removeAllViews()
         val requested = query.text.toString()
         thread(name="nodexlm-hf-search") {
@@ -143,15 +145,15 @@ internal class ModelLibraryView(
     }
 
     private fun confirmDownload(model: HuggingFaceHub.Model) {
-        if(prefs.getLong("id",0L)>0L) {status.text="Já existe um download ativo";return}
+        if(prefs.getLong("id",0L)>0L) {status.text=activity.getString(R.string.ui_c1234618156b);return}
         if(!model.url.startsWith("https://huggingface.co/") || !model.url.contains("/resolve/main/")) {
-            status.text="URL de modelo não autorizada";return
+            status.text=activity.getString(R.string.ui_e226da7e5057);return
         }
         AlertDialog.Builder(activity)
-            .setTitle("Baixar ${model.filename.substringAfterLast('/')}?")
-            .setMessage("Tamanho: ${gib(model.sizeBytes)}. Verifique o armazenamento livre. A compatibilidade é estimada e modelos grandes podem não caber na RAM.\n\nO download também poderá usar dados móveis.")
-            .setPositiveButton("Baixar") { _,_ -> download(model) }
-            .setNegativeButton("Cancelar",null)
+            .setTitle(activity.getString(R.string.download_confirm,model.filename.substringAfterLast('/')))
+            .setMessage(activity.getString(R.string.download_explanation,gib(model.sizeBytes)))
+            .setPositiveButton(activity.getString(R.string.ui_b45ae836a031)) { _,_ -> download(model) }
+            .setNegativeButton(activity.getString(R.string.ui_bb9dbb406dcb),null)
             .show()
     }
 
@@ -161,21 +163,31 @@ internal class ModelLibraryView(
             val root=ModelFiles.directory(activity)
             val target=File(root,fileName)
             require(!target.exists()) { "Este modelo já está na biblioteca" }
-            val staging=File(root,".${fileName}.download")
+            require(root.usableSpace >= model.sizeBytes) { "Insufficient free storage" }
+            val parts=ModelFiles.shards(fileName)
+            prefs.edit().putString("parts",org.json.JSONArray(parts).toString()).putInt("part_index",0)
+                .putString("source",model.url).putString("first",fileName).putLong("size",model.sizeBytes).commit()
+            enqueuePart(model.url,parts.first(),model.repository)
+            return
+        } catch(e:Exception) {status.text=activity.getString(R.string.download_failed,e.message)}
+    }
+    private fun enqueuePart(source: String,fileName: String,repository: String) {
+        val root=ModelFiles.directory(activity)
+        val target=File(root,fileName)
+        val staging=File(root,".${fileName}.download")
             require(!staging.exists()) { "Este modelo já está sendo baixado" }
-            val request=DownloadManager.Request(Uri.parse(model.url))
+            val request=DownloadManager.Request(Uri.parse(source))
                 .setTitle("NodexLM: $fileName")
-                .setDescription("Modelo GGUF de ${model.repository}")
+                .setDescription("Modelo GGUF de $repository")
                 .setMimeType("application/octet-stream")
                 .setDestinationUri(Uri.fromFile(staging))
                 .setAllowedOverRoaming(false)
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             val id=downloads.enqueue(request)
             prefs.edit().putLong("id",id).putString("staging",staging.absolutePath)
-                .putString("target",target.absolutePath).putLong("size",model.sizeBytes).apply()
-            status.text="Download iniciado: $fileName"
+                .putString("target",target.absolutePath).putString("current_source",source).apply()
+            status.text=activity.getString(R.string.download_started,fileName)
             refreshProgress()
-        } catch(e:Exception) {status.text="Não foi possível baixar: ${e.message}"}
     }
 
     private fun refreshProgress() {
@@ -195,39 +207,77 @@ internal class ModelLibraryView(
                 downloadProgress.text="${gib(bytes)} / ${if(total>0)gib(total) else "?"}"
                 when(state) {
                     DownloadManager.STATUS_SUCCESSFUL -> completeDownload()
-                    DownloadManager.STATUS_FAILED -> {status.text="Download falhou; tente novamente";clearDownload()}
-                    DownloadManager.STATUS_PAUSED -> status.text="Download pausado, aguardando rede…"
+                    DownloadManager.STATUS_FAILED -> {status.text=activity.getString(R.string.ui_24184bb0704d);clearDownload()}
+                    DownloadManager.STATUS_PAUSED -> status.text=activity.getString(R.string.ui_0168ed1ca821)
                 }
             }
-        }catch(e:Exception){status.text="Falha ao consultar download: ${e.message}"}
+        }catch(e:Exception){status.text=activity.getString(R.string.download_status_failed,e.message)}
     }
 
     private fun completeDownload() {
+        if(verifying)return
+        verifying=true
+        val file=File(prefs.getString("staging","")?:"")
+        val source=prefs.getString("current_source","")?:""
+        thread(name="nodexlm-verify-shard") {
+            try {
+                require(ModelFiles.validGGUF(file)) { "Invalid GGUF shard" }
+                val connection=java.net.URL(source).openConnection() as javax.net.ssl.HttpsURLConnection
+                connection.requestMethod="HEAD";connection.instanceFollowRedirects=false
+                connection.connectTimeout=8000;connection.readTimeout=15000
+                val expected=try {connection.connect();connection.getHeaderField("X-Linked-Etag")?.trim('"')} finally {connection.disconnect()}
+                if(expected!=null&&expected.matches(Regex("[0-9a-fA-F]{64}"))){
+                    val digest=java.security.MessageDigest.getInstance("SHA-256")
+                    file.inputStream().use {input -> val buffer=ByteArray(256*1024);while(true){val n=input.read(buffer);if(n<0)break;digest.update(buffer,0,n)}}
+                    val actual=digest.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
+                    require(actual.equals(expected,true)) { "GGUF SHA-256 mismatch" }
+                }
+                activity.runOnUiThread {verifying=false;finishDownload()}
+            }catch(e:Exception){activity.runOnUiThread {verifying=false;clearDownload();status.text=activity.getString(R.string.download_rejected,e.message)}}
+        }
+    }
+    private fun finishDownload() {
         val staging=File(prefs.getString("staging","") ?: "")
         val target=File(prefs.getString("target","") ?: "")
         val root=ModelFiles.directory(activity).canonicalFile
         try {
             require(staging.canonicalFile.parentFile==root && target.canonicalFile.parentFile==root)
             require(!target.exists() && ModelFiles.validGGUF(staging)) { "Arquivo GGUF inválido ou já existente" }
+            val parts=org.json.JSONArray(prefs.getString("parts","[]"))
+            val index=prefs.getInt("part_index",0)
+            val ready=File(root,".${target.name}.ready")
+            require(!ready.exists()&&staging.renameTo(ready)) { "Falha ao preparar shard" }
+            if(index+1<parts.length()){
+                prefs.edit().putInt("part_index",index+1).commit()
+                val source=Uri.parse(prefs.getString("source","")).buildUpon().path(Uri.parse(prefs.getString("source","")).path!!.substringBeforeLast('/')+"/"+parts.getString(index+1)).build().toString()
+                enqueuePart(source,parts.getString(index+1),"GGUF shards")
+                return
+            }
+            val total=(0 until parts.length()).sumOf {File(root,".${parts.getString(it)}.ready").length()}
             val expected=prefs.getLong("size",0L)
-            require(expected<=0L || staging.length()==expected) { "Download incompleto" }
-            require(staging.renameTo(target)) { "Falha ao salvar modelo" }
-            ModelFiles.select(activity,target)
-            status.text="Modelo pronto: ${target.name}"
-            refreshLibrary()
-            onSelected(target)
-        }catch(e:Exception){staging.delete();status.text="Download rejeitado: ${e.message}"}
-        finally {clearDownload()}
+            require(expected<=0L||expected==total) { "Download incompleto" }
+            val created=mutableListOf<File>()
+            try{
+                for(i in parts.length()-1 downTo 0){val dst=File(root,parts.getString(i));require(!dst.exists()&&File(root,".${dst.name}.ready").renameTo(dst));created.add(dst)}
+                val first=File(root,prefs.getString("first",target.name)!!)
+                ModelFiles.select(activity,first);status.text=activity.getString(R.string.model_ready,first.name);refreshLibrary();onSelected(first)
+            }catch(e:Exception){created.forEach {it.delete()};throw e}
+            clearDownload()
+        }catch(e:Exception){staging.delete();clearDownload();status.text=activity.getString(R.string.download_rejected,e.message)}
+        finally {if(prefs.getLong("id",0L)==0L)clearDownload()}
     }
 
     private fun cancelDownload() {
         val id=prefs.getLong("id",0L)
         if (id>0L) downloads.remove(id)
         File(prefs.getString("staging","") ?: "").takeIf { it.isFile }?.delete()
-        status.text="Download cancelado"
+        status.text=activity.getString(R.string.ui_c48e80c1186c)
         clearDownload()
     }
     private fun clearDownload() {
+        val root=ModelFiles.directory(activity).canonicalFile
+        val parts=runCatching {org.json.JSONArray(prefs.getString("parts","[]"))}.getOrDefault(org.json.JSONArray())
+        for(i in 0 until parts.length()){for(suffix in listOf("ready","download")){val file=File(root,".${parts.optString(i)}.$suffix");if(file.canonicalFile.parentFile==root)file.delete()}}
         prefs.edit().clear().apply()
         bar.visibility=GONE
         cancel.visibility=GONE
@@ -239,16 +289,16 @@ internal class ModelLibraryView(
         for (file in ModelFiles.list(activity)) {
             val row=card()
             row.addView(text(file.name+(if(file.canonicalPath==current)"  •  selecionado" else ""),14,true))
-            row.addView(text(gib(file.length()),12,false))
-            row.addView(action("Usar este modelo") {
+            row.addView(text(gib(ModelFiles.modelBytes(file)),12,false))
+            row.addView(action(activity.getString(R.string.ui_60b42e0b4454)) {
                 ModelFiles.select(activity,file)
-                status.text="Selecionado: ${file.name}"
+                status.text=activity.getString(R.string.selected,file.name)
                 onSelected(file)
                 refreshLibrary()
             })
             library.addView(row)
         }
-        if(library.childCount==0) library.addView(text("Nenhum GGUF salvo neste aparelho.",13,false))
+        if(library.childCount==0) library.addView(text(activity.getString(R.string.ui_59cf2783d683),13,false))
     }
 
     private fun gib(bytes: Long) = "%.2f GiB".format(java.util.Locale.US, bytes.toDouble()/(1024*1024*1024))

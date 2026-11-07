@@ -18,14 +18,16 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 type Client struct {
-	Base   string
-	Token  string
-	NodeID string
-	HTTP   *http.Client
+	ReconnectFailures atomic.Uint64
+	Base              string
+	Token             string
+	NodeID            string
+	HTTP              *http.Client
 }
 
 func New(base, token, nodeID string) (*Client, error) {

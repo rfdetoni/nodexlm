@@ -41,7 +41,47 @@ func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dash
 }
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w) }))
+	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
+	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model string `json:"model"`
+			Node  string `json:"node_id"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancel()
+		sample, err := d.Manager.BenchmarkInference(ctx, input.Model, input.Node)
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, sample)
+	}))
+	mux.HandleFunc("GET /api/observability", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, map[string]any{"inference": d.Manager.InferenceSamples(), "nodes": d.Cluster.Observations()})
+	}))
+	mux.HandleFunc("GET /api/resident-models", d.api(func(w http.ResponseWriter, r *http.Request) { reply(w, 200, d.Manager.LoadedModels()) }))
+	mux.HandleFunc("POST /api/resident-models", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model string `json:"model"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		if err := d.Manager.LoadModel(ctx, input.Model); err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 201, d.Manager.LoadedModels())
+	}))
+	mux.HandleFunc("DELETE /api/resident-models/{model}", d.api(func(w http.ResponseWriter, r *http.Request) {
+		d.Manager.UnloadModel(r.PathValue("model"))
+		reply(w, 200, d.Manager.LoadedModels())
+	}))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -160,9 +200,10 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", d.inference(d.chat))
 	mux.HandleFunc("GET /v1/models", d.inference(func(w http.ResponseWriter, r *http.Request) {
 		models := []any{}
-		if name, ok := d.Manager.State()["model"].(string); ok && name != "" {
+		for _, name := range d.Manager.LoadedModels() {
 			models = append(models, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "nodexlm"})
 		}
+
 		reply(w, 200, map[string]any{"object": "list", "data": models})
 	}))
 

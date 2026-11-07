@@ -165,7 +165,8 @@ function renderCatalog() {
  }
 }
 async function refresh(){
- const [status,models,nodes,cluster]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster')]);
+ const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
+ renderResidentModels(resident);
  latestStatus=status;localModels=models;
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
@@ -185,7 +186,7 @@ async function refresh(){
  const gpus=Array.isArray(n.gpus)?n.gpus:[];
  const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
  const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
- const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');const btn=document.createElement('button');btn.className='secondary';btn.textContent='Revogar';btn.addEventListener('click',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;try{await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh();}catch(e){notice(e.message)}});td.append(btn);tr.append(td);tbody.append(tr)}
+ const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');const btn=document.createElement('button');btn.className='secondary';btn.textContent='Revogar';btn.addEventListener('click',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;try{await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh();}catch(e){notice(e.message)}});td.append(btn);if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));tr.append(td);tbody.append(tr)}
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -210,12 +211,12 @@ function confirmAction(text,label){
 async function sendChat(){
  if(chatController)return;
  const prompt=$('prompt').value.trim();if(!prompt)return;
- const model=latestStatus?.runtime?.model;if(!model)throw Error('Carregue um modelo antes de conversar.');
+ const model=$('chatModel').value||latestStatus?.runtime?.model;if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
  const start=performance.now();let first=null;let answer='';let usage=null;let done=false;let reader;
  renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');output.append(reply);
  try{
-  const response=await fetch('/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({model,messages:[...chatHistory.slice(-62),{role:'user',content:prompt}],temperature:+$('chatTemperature').value,max_tokens:+$('chatTokens').value,stream:true})});
+  const response=await fetch('/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({model,messages:[...chatHistory.slice(-62),{role:'user',content:prompt}],temperature:+$('chatTemperature').value,max_tokens:+$('chatTokens').value,cache_prompt:true,stream_options:{include_usage:true},stream:true})});
   if(!response.ok){const text=await response.text();let message=text;try{message=JSON.parse(text).error||text}catch{}throw Error(message)}
   reader=response.body.getReader();const decoder=new TextDecoder();let pending='';
   while(!done){
@@ -256,7 +257,9 @@ $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload'
 $('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pairing/start','POST',{});$('pairCode').hidden=false;$('pairCode').textContent=p.code+' · válido por '+p.expires_in;notice('Código renovado')}));
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas'));
- for(const node of plan.nodes)area.append(el('p','',node.endpoint+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));
+ for(const node of plan.nodes)area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));
+ area.append(el('p','', 'KV F16 estimado: '+fmt(plan.estimated_kv_bytes)+' · '+(plan.tokens_per_second?plan.tokens_per_second.toFixed(1)+' tokens/s medidos':'Tokens/s ainda não medido')+' · '+plan.bottleneck));
+ for(const node of plan.nodes){if(node.network)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.network.round_trip_ms.toFixed(2)+' ms RTT · '+node.network.mib_per_second.toFixed(1)+' MiB/s de eco'));}
  area.append(el('p','muted',plan.notice));
 }));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
@@ -266,7 +269,7 @@ $('clearChat').addEventListener('click',()=>guard(async()=>{
  chatController?.abort();chatHistory=[];saveChat();renderChat();$('chatMetrics').textContent='Histórico apagado.';
 }));
 
-setupAuth();if(token)guard(refresh);
+
 setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)},10000);
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
@@ -291,3 +294,35 @@ $('catalogForm').addEventListener('submit',e=>{e.preventDefault();if(catalogSear
   catalogSearched=true;renderCatalog();
  } finally {catalogSearching=false;btn.disabled=false;}
 })});
+
+function renderResidentModels(models){
+ const list=$('residentModels');list.replaceChildren();const selector=$('chatModel');const prior=selector.value;selector.replaceChildren();
+ for(const model of models){const option=el('option','',model);option.value=model;selector.append(option);const row=el('div','model-item');row.append(el('strong','',model),action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));list.append(row)}
+ selector.value=models.includes(prior)?prior:(models[0]||'');
+}
+$('loadAdditional').addEventListener('click',()=>guard(async()=>{
+ const button=$('loadAdditional');button.disabled=true;
+ try{await api('/api/resident-models','POST',{model:$('modelSelect').value});await refresh();notice('Modelo adicional carregado')}finally{button.disabled=false}
+}));
+$('inferenceBench').addEventListener('click',()=>guard(async()=>{
+ const button=$('inferenceBench');button.disabled=true;
+ try{const sample=await api('/api/bench/inference','POST',{model:$('modelSelect').value});notice(sample.tokens_per_second.toFixed(1)+' tokens/s medidos');await refreshObservations()}finally{button.disabled=false}
+}));
+$('refreshObservations').addEventListener('click',()=>guard(refreshObservations));
+async function refreshObservations(){
+ const data=await api('/api/observability');const area=$('observations');area.replaceChildren();
+ for(const sample of data.inference)area.append(el('p','',sample.model+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+sample.cached_tokens+' tokens de prompt reutilizados'));
+ for(const node of data.nodes){
+  const row=el('article','catalog-item');const info=el('div','model-info');info.append(el('strong','',node.node_id.slice(0,12)+'…'),el('p','muted',node.tunnels.connected+' túneis · '+node.reconnect_failures+' falhas de reconexão'));
+  const history=node.latency||[];
+  if(history.length){
+   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 600 140');svg.setAttribute('role','img');svg.setAttribute('aria-label','Histórico de latência RTT do Guest em milissegundos');svg.setAttribute('class','latency-chart');
+   const peak=Math.max(1,...history.map(p=>p.round_trip_ms));const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('points',history.map((p,i)=>(20+i*560/Math.max(1,history.length-1))+','+(120-100*p.round_trip_ms/peak)).join(' '));line.setAttribute('fill','none');line.setAttribute('stroke','currentColor');line.setAttribute('stroke-width','3');svg.append(line);info.append(svg);
+   const last=history[history.length-1];info.append(el('p','',last.round_trip_ms.toFixed(2)+' ms RTT · '+last.mib_per_second.toFixed(1)+' MiB/s de eco'));
+  }
+  row.append(info);area.append(row);
+ }
+ if(!data.inference.length&&!data.nodes.length)area.append(el('p','muted','Nenhuma medição disponível.'));
+}
+
+setupAuth();if(token)guard(refresh);

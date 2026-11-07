@@ -51,6 +51,7 @@ def main():
         models = host_dir/'models'
         models.mkdir()
         shutil.copyfile(model, models/model.name)
+        shutil.copyfile(model, models/"second.gguf")
         env = {**os.environ, 'LD_LIBRARY_PATH':str(runtime/'bin'),
                'NODEXLM_API_KEY':'inference-'+'c'*48}
         # Prevent shell-local credentials overriding the generated Host identity.
@@ -64,7 +65,7 @@ def main():
         try:
             host = subprocess.Popen([str(CLI),'host','--dir',str(host_dir),
                 '--addr',f'127.0.0.1:{lan_port}','--web-addr',f'127.0.0.1:{web_port}',
-                '--discovery-port',str(discovery_port),'--llama-bin',str(runtime/'bin/llama-server')],
+                '--discovery-port',str(discovery_port),'--rpc-transport',os.environ.get('NODEXLM_TEST_RPC_TRANSPORT','auto'),'--llama-bin',str(runtime/'bin/llama-server')],
                 env=env,stdout=log,stderr=log)
             processes.append(host)
             code = wait_for(lambda: re.search(r'PAIRING CODE: ([A-Z0-9]{8})',log_path.read_text()))[1]
@@ -76,10 +77,14 @@ def main():
                 data = None if body is None else json.dumps(body).encode()
                 request = urllib.request.Request(base+path,method=method,data=data,
                     headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'})
-                return urllib.request.urlopen(request,timeout=120)
+                try:
+                    return urllib.request.urlopen(request,timeout=120)
+                except urllib.error.HTTPError as exc:
+                    if exc.code==401:raise
+                    raise AssertionError(f"{method} {path}: HTTP {exc.code}: {exc.read().decode()}") from exc
 
             rpc = next(p for p in [runtime/'bin/ggml-rpc-server',runtime/'bin/rpc-server'] if p.exists())
-            guest = subprocess.Popen([str(CLI),'rpc-node','--dir',str(guest_dir),'--rpc-bin',str(rpc)],
+            guest = subprocess.Popen([str(CLI),'rpc-node','--dir',str(guest_dir),'--rpc-bin',str(rpc),'--rpc-addr',('127.0.0.1:0' if os.environ.get('NODEXLM_TEST_RPC_TRANSPORT')=='tcp' else 'auto')],
                 env=env,stdout=guest_log,stderr=guest_log)
             processes.append(guest)
             nodes = wait_for(lambda: [n for n in json.load(api('/v1/nodes')) if n['runtime']['rpc_ready']])
@@ -113,6 +118,16 @@ def main():
                         assert 'error' not in data, data
                         chunks.append(data)
             assert done and chunks, 'Missing token stream or DONE'
+            # Separate native processes keep model KV state isolated.
+            residents=json.load(api('/api/resident-models','POST',{'model':'second.gguf'}))
+            assert set(residents)=={model.name,'second.gguf'},residents
+            reply=json.load(api('/v1/chat/completions','POST',{'model':'second.gguf','messages':[{'role':'user','content':'Once upon a time'}],'max_tokens':4,'cache_prompt':True},key=env['NODEXLM_API_KEY']))
+            assert reply['model']=='second.gguf' and reply['choices']
+            api('/api/resident-models/second.gguf','DELETE').close()
+            # Benchmark a genuine Guest inference workload after unloading.
+            api('/api/unload','POST',{}).close()
+            measured=json.load(api('/api/bench/inference','POST',{'model':model.name,'node_id':nodes[0]['id']}))
+            assert measured['tokens_per_second']>0 and measured['tokens']>0,measured
             # An inference key must not access administrative resources.
             try:
                 api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])
@@ -120,8 +135,10 @@ def main():
             except urllib.error.HTTPError as exc:
                 assert exc.code == 401
             if os.environ.get('NODEXLM_UI_CHECK'):
+                api('/api/load','POST',{}).close()
+                wait_for(loaded,120)
                 subprocess.run(['node',os.environ['NODEXLM_UI_CHECK'],base,token],check=True,timeout=90)
-            print('PASS: real pairing, TLS benchmark, native RPC placement, tiny GGUF, OpenAI SSE and restricted API key')
+            print('PASS: pairing, TLS benchmark, native RPC, resident model pool, inference benchmark, SSE and restricted API key')
         finally:
             for process in reversed(processes):
                 process.terminate()

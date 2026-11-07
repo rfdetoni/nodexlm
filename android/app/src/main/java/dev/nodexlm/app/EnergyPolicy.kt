@@ -8,13 +8,13 @@ internal data class EnergyPolicy(
     val endHour: Int
 ) {
     fun pauseReason(percent: Int, charging: Boolean, hour: Int): String? {
-        if (onlyCharging && !charging) return "Conecte o carregador para ativar o Guest RPC"
+        if (onlyCharging && !charging) return "charging"
         if (!charging && (percent !in 0..100 || percent <= minimumBattery.coerceIn(5,95)))
-            return "Bateria abaixo do mínimo; recarregue antes de ativar o Guest RPC"
+            return "battery"
         val from = startHour.coerceIn(0,23)
         val end = endHour.coerceIn(0,23)
         val allowed = from == end || if (from < end) hour in from until end else hour >= from || hour < end
-        if (!allowed) return "Fora do horário permitido para o Guest RPC"
+        if (!allowed) return "schedule"
         return null
     }
 }

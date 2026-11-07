@@ -13,7 +13,7 @@ internal object ModelFiles {
     fun directory(context: Context): File = File(context.getExternalFilesDir(null) ?: context.filesDir,"models").apply { mkdirs() }
 
     fun list(context: Context): List<File> = directory(context).listFiles()
-        ?.filter { it.isFile && it.name.endsWith(".gguf",true) && validGGUF(it) }
+        ?.filter { it.isFile && it.name.endsWith(".gguf",true) && validModel(it) }
         ?.sortedBy { it.name.lowercase() } ?: emptyList()
 
     fun selected(context: Context): File? {
@@ -25,15 +25,25 @@ internal object ModelFiles {
         val legacy = File(context.filesDir,"models/active.gguf").canonicalFile
         val canonical = file.canonicalFile
         if (canonical != legacy && canonical.parentFile != root) return null
-        return file.takeIf { validGGUF(it) }
+        return file.takeIf { validModel(it) }
     }
 
     fun select(context: Context, file: File) {
-        require(validGGUF(file))
+        require(validModel(file))
         require(file.canonicalFile.parentFile == directory(context).canonicalFile)
         context.getSharedPreferences("nodexlm",Context.MODE_PRIVATE).edit()
             .putString("model_path",file.absolutePath).putString("model",file.name).apply()
     }
+
+    fun shards(name: String): List<String> {
+        val match = Regex("^(.*)-(\\d{5})-of-(\\d{5})(\\.gguf)$",RegexOption.IGNORE_CASE).matchEntire(name) ?: return listOf(name)
+        val first = match.groupValues[2].toInt()
+        val count = match.groupValues[3].toInt()
+        require(first == 1 && count in 2..128) { "Select the first shard and the complete set (2–128 parts)" }
+        return (1..count).map { match.groupValues[1]+"-%05d-of-%05d".format(java.util.Locale.US,it,count)+match.groupValues[4] }
+    }
+    fun validModel(file: File): Boolean = try { shards(file.name).all { validGGUF(File(file.parentFile,it)) } } catch (_:Exception) { false }
+    fun modelBytes(file: File): Long = shards(file.name).sumOf { File(file.parentFile,it).length() }
 
     fun validGGUF(file: File): Boolean {
         if (!file.isFile || file.length() < 8) return false
@@ -53,24 +63,31 @@ internal object ModelFiles {
         return clean
     }
 
-    fun import(context: Context, uri: Uri): File {
-        val resolver = context.contentResolver
-        val display = resolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),null,null,null)?.use { cursor ->
-            if (cursor.moveToFirst()) cursor.getString(0) else null
-        } ?: "model.gguf"
-        val name = safeFilename(display)
-        val dir = directory(context)
-        val target = File(dir,name)
-        require(!target.exists()) { "Model $name already exists" }
-        val staging = File.createTempFile(".import-",".part",dir)
+    fun import(context: Context, uri: Uri): File = importSet(context,listOf(uri))
+    @Synchronized fun importSet(context: Context, uris: List<Uri>): File {
+        require(uris.size in 1..128) { "Select up to 128 GGUF files" }
+        val resolver=context.contentResolver
+        val sources=uris.associateBy { uri ->
+            val display=resolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),null,null,null)?.use { cursor -> if(cursor.moveToFirst())cursor.getString(0) else null } ?: "model.gguf"
+            safeFilename(display)
+        }
+        require(sources.size==uris.size) { "Duplicate filenames" }
+        val first=sources.keys.sorted().first()
+        val expected=shards(first)
+        require(expected.toSet()==sources.keys) { "Select every shard of one model" }
+        val dir=directory(context)
+        require(expected.none { File(dir,it).exists() }) { "Model or shard already exists" }
+        val stage=File.createTempFile(".import-","",dir);check(stage.delete()&&stage.mkdir())
+        val created=mutableListOf<File>()
         try {
-            resolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(staging).use { out ->input.copyTo(out, 256*1024);out.fd.sync() }
-            } ?: error("Cannot read selected file")
-            require(validGGUF(staging)) { "Not a valid GGUF header" }
-            require(staging.renameTo(target)) { "Could not save imported model" }
-            select(context,target)
-            return target
-        } finally { staging.delete() }
+            for(name in expected){
+                val part=File(stage,name)
+                resolver.openInputStream(sources.getValue(name))?.use { input -> FileOutputStream(part).use { out -> input.copyTo(out,256*1024);out.fd.sync() } } ?: error("Cannot read selected file")
+                require(validGGUF(part)) { "Invalid GGUF shard: $name" }
+            }
+            for(name in expected.asReversed()) { val target=File(dir,name);require(!target.exists()&&File(stage,name).renameTo(target));created.add(target) }
+            val result=File(dir,first);select(context,result);return result
+        } catch(e:Exception){created.forEach {it.delete()};throw e}
+        finally {stage.deleteRecursively()}
     }
 }

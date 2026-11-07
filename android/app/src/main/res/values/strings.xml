@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_0168ed1ca821" formatted="false">Download paused, waiting for a network…</string>
+    <string name="ui_07a3785ba068" formatted="false">The Host must use HTTPS</string>
+    <string name="ui_0f2bd88ef0ac" formatted="false">Close</string>
+    <string name="ui_14e59fc95d44" formatted="false">Settings and maintenance</string>
+    <string name="ui_17b418d5924d" formatted="false">Select a GGUF compatible with available resources.</string>
+    <string name="ui_18911140a84b" formatted="false">Import GGUF from device</string>
+    <string name="ui_18ade3f42460" formatted="false">Models are stored in private app storage. Downloads and imports do not require Play Store.</string>
+    <string name="ui_1abbe7528f2e" formatted="false">NodexLM is already exempt from Android battery restrictions</string>
+    <string name="ui_24184bb0704d" formatted="false">Download failed; try again</string>
+    <string name="ui_28c01454db70" formatted="false">Allow background activity in battery settings to keep the cluster connected while the screen is off. An active worker uses more battery.</string>
+    <string name="ui_2940dc16b87e" formatted="false">Start RPC Guest (no local GGUF)</string>
+    <string name="ui_2e207ce96075" formatted="false">Pair this phone with a Host before starting the RPC Guest</string>
+    <string name="ui_308b5f1f24ae" formatted="false">My library</string>
+    <string name="ui_343d89ad1a83" formatted="false">Sharing CPU/RAM with the Host · uses battery</string>
+    <string name="ui_37db6b658719" formatted="false">Many nodes. One mind.</string>
+    <string name="ui_4630ba48f510" formatted="false">Stopping standalone inference</string>
+    <string name="ui_474c3f7911a8" formatted="false">Configure battery restrictions</string>
+    <string name="ui_4c9eb65e0bab" formatted="false">Optional: standalone mode with a GGUF installed on Android (does not add memory to the distributed model).</string>
+    <string name="ui_4dc25299c9e2" formatted="false">Open settings</string>
+    <string name="ui_54c9d56ac072" formatted="false">Checking Vulkan GPU…</string>
+    <string name="ui_5701de13e132" formatted="false">Import Host certificate</string>
+    <string name="ui_586f2f6fc723" formatted="false">Stop RPC Guest</string>
+    <string name="ui_5949a199212d" formatted="false">Start standalone inference</string>
+    <string name="ui_59cf2783d683" formatted="false">No GGUF saved on this device.</string>
+    <string name="ui_5a0c39e51aa3" formatted="false">Searching the official Hugging Face catalog…</string>
+    <string name="ui_5ac59a6efd23" formatted="false">Processing</string>
+    <string name="ui_5c8c7f7835eb" formatted="false">Ready to configure the cluster</string>
+    <string name="ui_5f20f24e5efa" formatted="false">Enter a battery threshold from 5 to 95% and hours from 0 to 23</string>
+    <string name="ui_608b33b7803e" formatted="false">Available models</string>
+    <string name="ui_60b42e0b4454" formatted="false">Use this model</string>
+    <string name="ui_69873d9d8387" formatted="false">Starting RPC Guest · check the notification and Host console</string>
+    <string name="ui_6a31ec3b8a4d" formatted="false">Could not open licenses</string>
+    <string name="ui_6fc9111417fd" formatted="false">RPC Guest: the GGUF stays on the Host; this phone receives tensors and operations for assigned layers.</string>
+    <string name="ui_7235bff56ab7" formatted="false">NodexLM worker active</string>
+    <string name="ui_7681d877e8b1" formatted="false">Device overview</string>
+    <string name="ui_76a328da1ce2" formatted="false">Search Hugging Face</string>
+    <string name="ui_83c6621ca708" formatted="false">Android requires permission to install a signed update.</string>
+    <string name="ui_87125eeb01cb" formatted="false">Browse GGUF models</string>
+    <string name="ui_8792d2ba201f" formatted="false">NodexLM</string>
+    <string name="ui_8ea70b71b55f" formatted="false">NodexLM · RPC Guest stopped</string>
+    <string name="ui_9220df143b25" formatted="false">Connect to Host</string>
+    <string name="ui_942f9c4afc38" formatted="false">Stop standalone inference</string>
+    <string name="ui_94c7583562e2" formatted="false">Save energy profile</string>
+    <string name="ui_96e8d213ee6c" formatted="false">Hugging Face · GGUF · downloads and local imports</string>
+    <string name="ui_99e7969791c0" formatted="false">Cluster active with the screen locked · uses battery</string>
+    <string name="ui_9ee19c2db1d5" formatted="false">Pair using the eight-character code shown by the Host.</string>
+    <string name="ui_a0f818d41fea" formatted="false">Profile saved. Restart the RPC Guest to apply it.</string>
+    <string name="ui_a2334f70f759" formatted="false">Allow NodexLM updates</string>
+    <string name="ui_a8843f6c285c" formatted="false">Importing without loading the entire file into memory…</string>
+    <string name="ui_b45ae836a031" formatted="false">Download</string>
+    <string name="ui_b8db71c3cce7" formatted="false">Later</string>
+    <string name="ui_bb9dbb406dcb" formatted="false">Cancel</string>
+    <string name="ui_becba7ac9722" formatted="false">Enter the code generated by the Host</string>
+    <string name="ui_c06cce69d22b" formatted="false">Connect securely</string>
+    <string name="ui_c1234618156b" formatted="false">A download is already active</string>
+    <string name="ui_c48e80c1186c" formatted="false">Download cancelled</string>
+    <string name="ui_cdd64d8d4333" formatted="false">Cancel download</string>
+    <string name="ui_ce1d54cb7b7a" formatted="false">Connect to a Host and select a GGUF in Models</string>
+    <string name="ui_d98465fd9e86" formatted="false">Certificate imported</string>
+    <string name="ui_e226da7e5057" formatted="false">Model URL is not allowed</string>
+    <string name="ui_e4c3a22567db" formatted="false">Compute backend</string>
+    <string name="ui_e794f9249e8b" formatted="false">Looking for a Host on the local network…</string>
+    <string name="ui_e7caf6ffa12d" formatted="false">Open system settings to allow background activity</string>
+    <string name="ui_f54a84193c11" formatted="false">Stopping RPC Guest</string>
+    <string name="ui_fc46b31da822" formatted="false">NodexLM · RPC Guest active</string>
+    <string name="ui_fd732a2b0a67" formatted="false">Check for updates</string>
+    <string name="ui_fe41cc165939" formatted="false">Explore models</string>
+    <string name="ui_ff4f0c35cea3" formatted="false">Third-party licenses</string>
+    <string name="none">None</string>
+    <string name="models">Models</string>
+    <string name="settings">Settings</string>
+    <string name="host_url">Host HTTPS URL (optional)</string>
+    <string name="pairing_code">Pairing code</string>
+    <string name="device_name">Device name</string>
+    <string name="charging_only">RPC Guest only while charging</string>
+    <string name="minimum_battery">Minimum battery (%)</string>
+    <string name="start_hour">Start hour (0–23)</string>
+    <string name="end_hour">End hour (0–23; same as start = all day)</string>
+    <string name="backend_auto">Automatic (GPU + CPU, CPU fallback)</string>
+    <string name="backend_cpu">CPU only</string>
+    <string name="backend_gpu">Vulkan GPU only</string>
+    <string name="backend_hybrid">Vulkan GPU + CPU</string>
+    <string name="model_selected">Model selected: %1$s</string>
+    <string name="model_optional">Optional local model: %1$s</string>
+    <string name="system">System: Android %1$s · %2$s</string>
+    <string name="memory_budget">Estimated weight memory: %1$s GiB</string>
+    <string name="backend_help">Distributed RPC Guest · CPU and Vulkan GPU process layers of the Host GGUF. RAM and VRAM may be shared. Requires llama.cpp %1$s.</string>
+    <string name="version">Version: %1$s</string>
+    <string name="connected">Securely connected to %1$s</string>
+    <string name="pair_failed">Pairing failed: %1$s</string>
+    <string name="rpc_failed">RPC Guest failed: %1$s</string>
+    <string name="processing_started">Processing started: %1$s</string>
+    <string name="start_failed">Could not start: %1$s</string>
+    <string name="cert_rejected">Certificate rejected: %1$s</string>
+    <string name="import_failed">Import failed: %1$s</string>
+    <string name="download_confirm">Download %1$s?</string>
+    <string name="download_explanation">Size: %1$s. Check available storage. Compatibility is estimated and large models may not fit in RAM.\n\nThe download may use mobile data.</string>
+    <string name="download_failed">Could not download: %1$s</string>
+    <string name="download_started">Download started: %1$s</string>
+    <string name="download_status_failed">Could not query download: %1$s</string>
+    <string name="download_rejected">Download rejected: %1$s</string>
+    <string name="model_ready">Model ready: %1$s</string>
+    <string name="selected">Selected: %1$s</string>
+    <string name="energy_charging">Connect a charger to start the RPC Guest</string>
+    <string name="energy_battery">Battery below minimum; recharge before starting the RPC Guest</string>
+    <string name="energy_schedule">Outside the allowed RPC Guest schedule</string>
+    <string name="energy_thermal">Device too hot; RPC Guest stopped</string>
+</resources>

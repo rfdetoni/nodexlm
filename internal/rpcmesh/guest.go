@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/netclient"
@@ -110,7 +111,12 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	if marker != 1 {
 		return errors.New("invalid RPC relay handshake")
 	}
-	native, err := net.DialTimeout("tcp", rpcAddress, 3*time.Second)
+	network, address := "tcp", rpcAddress
+	if strings.HasPrefix(address, "unix:") {
+		network = "unix"
+		address = strings.TrimPrefix(address, "unix:")
+	}
+	native, err := net.DialTimeout(network, address, 3*time.Second)
 	if err != nil {
 		return fmt.Errorf("local rpc-server: %w", err)
 	}

@@ -39,25 +39,26 @@ type nodeState struct {
 }
 
 type Server struct {
-	mu         sync.Mutex
-	admin      [32]byte
-	enrollment [32]byte
-	nodes      map[string]*nodeState
-	jobs       map[string]*protocol.Job
-	queue      []string
-	events     map[string]*jobEvents
-	logger     *slog.Logger
-	storePath  string
-	pair       *pairing.Session
-	certDER    []byte
-	rpcHub     *rpcmesh.Hub
+	mu           sync.Mutex
+	admin        [32]byte
+	enrollment   [32]byte
+	nodes        map[string]*nodeState
+	jobs         map[string]*protocol.Job
+	queue        []string
+	events       map[string]*jobEvents
+	measurements map[string][]rpcmesh.Measurement
+	logger       *slog.Logger
+	storePath    string
+	pair         *pairing.Session
+	certDER      []byte
+	rpcHub       *rpcmesh.Hub
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
 	if len(adminToken) < 32 || len(enrollmentToken) < 32 || adminToken == enrollmentToken {
 		return nil, errors.New("admin and enrollment tokens must be distinct, at least 32 characters each")
 	}
-	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
+	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.
@@ -620,3 +621,5 @@ func (s *Server) DevicesSnapshot() []protocol.Device {
 	}
 	return out
 }
+
+func (s *Server) UseUnixRPC() error { return s.rpcHub.UseUnix() }

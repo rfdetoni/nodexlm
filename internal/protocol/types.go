@@ -12,15 +12,17 @@ type Message struct {
 }
 
 type ChatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Temperature float64   `json:"temperature"`
-	TopP        *float64  `json:"top_p,omitempty"`
-	Stop        Stop      `json:"stop,omitempty"`
-	Priority    int       `json:"priority,omitempty"`
-	Stream      bool      `json:"stream,omitempty"`
-	TargetNode  string    `json:"target_node,omitempty"`
+	CachePrompt   *bool          `json:"cache_prompt,omitempty"`
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+	Model         string         `json:"model"`
+	Messages      []Message      `json:"messages"`
+	MaxTokens     int            `json:"max_tokens,omitempty"`
+	Temperature   float64        `json:"temperature"`
+	TopP          *float64       `json:"top_p,omitempty"`
+	Stop          Stop           `json:"stop,omitempty"`
+	Priority      int            `json:"priority,omitempty"`
+	Stream        bool           `json:"stream,omitempty"`
+	TargetNode    string         `json:"target_node,omitempty"`
 }
 
 type GPUDevice struct {
@@ -31,11 +33,12 @@ type GPUDevice struct {
 }
 
 type RuntimeCapability struct {
-	Benchmark bool   `json:"benchmark,omitempty"`
-	Engine    string `json:"engine,omitempty"`
-	Version   string `json:"version,omitempty"`
-	Installed bool   `json:"installed"`
-	RPCReady  bool   `json:"rpc_ready"`
+	ReconnectFailures uint64 `json:"reconnect_failures,omitempty"`
+	Benchmark         bool   `json:"benchmark,omitempty"`
+	Engine            string `json:"engine,omitempty"`
+	Version           string `json:"version,omitempty"`
+	Installed         bool   `json:"installed"`
+	RPCReady          bool   `json:"rpc_ready"`
 }
 
 type Device struct {
@@ -87,4 +90,8 @@ type ModelRecord struct {
 	MoE           bool   `json:"moe"`
 	ExpertCount   uint32 `json:"expert_count,omitempty"`
 	ActiveExperts uint32 `json:"active_experts,omitempty"`
+}
+
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }

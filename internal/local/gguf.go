@@ -14,11 +14,14 @@ import (
 // GGUFInfo describes model architecture without mapping or reading its weights.
 // Metadata is read sequentially, with bounded allocations even for tokenizer arrays.
 type GGUFInfo struct {
-	Architecture  string `json:"architecture,omitempty"`
-	BlockCount    uint32 `json:"block_count,omitempty"`
-	ExpertCount   uint32 `json:"expert_count,omitempty"`
-	ActiveExperts uint32 `json:"active_experts,omitempty"`
-	IsMoE         bool   `json:"moe"`
+	Architecture    string `json:"architecture,omitempty"`
+	EmbeddingLength uint32 `json:"embedding_length,omitempty"`
+	HeadCount       uint32 `json:"head_count,omitempty"`
+	KVHeadCount     uint32 `json:"kv_head_count,omitempty"`
+	BlockCount      uint32 `json:"block_count,omitempty"`
+	ExpertCount     uint32 `json:"expert_count,omitempty"`
+	ActiveExperts   uint32 `json:"active_experts,omitempty"`
+	IsMoE           bool   `json:"moe"`
 }
 
 const (
@@ -195,6 +198,7 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 	var result GGUFInfo
 	var experts, active, blocks uint32
 	var expertKey, activeKey, blockKey string
+	values := map[string]uint32{}
 	for i := uint64(0); i < count; i++ {
 		key, err := g.str(4096)
 		if err != nil {
@@ -204,10 +208,13 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 		if err != nil {
 			return GGUFInfo{}, err
 		}
-		capture := key == "general.architecture" || strings.HasSuffix(key, ".expert_count") || strings.HasSuffix(key, ".expert_used_count") || strings.HasSuffix(key, ".block_count")
+		capture := key == "general.architecture" || strings.HasSuffix(key, ".expert_count") || strings.HasSuffix(key, ".expert_used_count") || strings.HasSuffix(key, ".block_count") || strings.HasSuffix(key, ".embedding_length") || strings.HasSuffix(key, ".attention.head_count") || strings.HasSuffix(key, ".attention.head_count_kv")
 		value, text, err := g.value(kind, capture)
 		if err != nil {
 			return GGUFInfo{}, fmt.Errorf("GGUF metadata %s: %w", key, err)
+		}
+		if capture {
+			values[key] = value
 		}
 		switch {
 		case key == "general.architecture":
@@ -230,5 +237,8 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 		}
 		result.IsMoE = result.ExpertCount > 1
 	}
+	result.EmbeddingLength = values[result.Architecture+".embedding_length"]
+	result.HeadCount = values[result.Architecture+".attention.head_count"]
+	result.KVHeadCount = values[result.Architecture+".attention.head_count_kv"]
 	return result, nil
 }

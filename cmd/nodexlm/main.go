@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
+	"github.com/rfdetoni/nodexlm/internal/mdns"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
@@ -173,6 +175,7 @@ func serve(args []string) error {
 	discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "UDP discovery port")
 	webAddr := f.String("web-addr", "127.0.0.1:8787", "loopback HTTP web management listener; off to disable")
 	modelDir := f.String("model-dir", "", "directory containing managed GGUF models")
+	rpcTransport := f.String("rpc-transport", "auto", "local RPC transport: auto, unix, tcp")
 	llamaBin := f.String("llama-bin", "llama-server", "llama-server executable used by Web UI")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -199,6 +202,18 @@ func serve(args []string) error {
 		return err
 	}
 	defer s.CloseRPC()
+	if *rpcTransport != "auto" && *rpcTransport != "unix" && *rpcTransport != "tcp" {
+		return errors.New("invalid rpc-transport")
+	}
+	if *rpcTransport == "unix" && runtime.GOOS == "windows" {
+		return errors.New("Unix RPC transport requires Linux or macOS")
+	}
+	unixRPC := *rpcTransport == "unix" || *rpcTransport == "auto" && runtime.GOOS != "windows" && (llamaruntime.UnixRPCBundles() || *llamaBin != "llama-server" && llamaruntime.SupportsUnixRPC(context.Background(), *llamaBin))
+	if unixRPC {
+		if err := s.UseUnixRPC(); err != nil {
+			return err
+		}
+	}
 	if err := s.SetStore(filepath.Join(*dir, "registry.json")); err != nil {
 		return err
 	}
@@ -264,7 +279,7 @@ func serve(args []string) error {
 				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
 					continue
 				}
-				out = append(out, dashboard.RPCGuest{Endpoint: endpoint, CapacityBytes: clusterplan.Budget(profile)})
+				out = append(out, dashboard.RPCGuest{ID: profile.ID, Name: profile.Name, Endpoint: endpoint, CapacityBytes: clusterplan.Budget(profile)})
 			}
 			return out
 		})
@@ -295,6 +310,15 @@ func serve(args []string) error {
 	c, cancel := ctx()
 	defer cancel()
 	go s.Cleanup(c)
+	if _, portText, e := net.SplitHostPort(*addr); e == nil {
+		if port, e := strconv.Atoi(portText); e == nil && port > 0 && port < 65536 {
+			go func() {
+				if e := mdns.Serve(c, uint16(port)); e != nil && c.Err() == nil {
+					slog.Warn("mDNS unavailable; UDP discovery remains enabled", "error", e)
+				}
+			}()
+		}
+	}
 	endpoints := pairing.LocalEndpoints(*addr)
 	if len(endpoints) > 0 {
 		fmt.Println("  Endereços HTTPS do Host para os Guests:")
@@ -400,7 +424,7 @@ func join(args []string) error {
 		} else {
 			offers, discoverErr := pairing.Discover(c, *discoveryPort, 3*time.Second)
 			if discoverErr != nil {
-				return fmt.Errorf("LAN discovery failed: %w", discoverErr)
+				candidateEndpoints, _ = mdns.Discover(c)
 			}
 			for _, offer := range offers {
 				candidateEndpoints = append(candidateEndpoints, offer.Endpoint)
@@ -484,7 +508,7 @@ func guest(args []string) error {
 	dir := f.String("dir", config.DefaultDir(), "Guest configuration directory")
 	backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
 	bin := f.String("rpc-bin", "", "matching rpc-server executable")
-	address := f.String("rpc-addr", "127.0.0.1:0", "loopback RPC address (random port by default)")
+	address := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	tunnels := f.Int("tunnels", 8, "concurrent secured tunnels (1-8)")
 	discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "LAN UDP discovery port")
 	if err := f.Parse(args); err != nil {
@@ -801,7 +825,7 @@ func rpcNode(args []string) error {
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
-	addr := f.String("rpc-addr", "127.0.0.1:0", "native RPC loopback address (random port by default)")
+	addr := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	slots := f.Int("tunnels", 8, "simultaneous secured RPC tunnels (1-8)")
 	ca := f.String("ca", "", "Host certificate for legacy enrollment")
 	if err := f.Parse(args); err != nil {
@@ -810,8 +834,10 @@ func rpcNode(args []string) error {
 	if *slots < 1 || *slots > 8 {
 		return errors.New("--tunnels must be between 1 and 8")
 	}
-	if err := rpcmesh.ValidateRPCAddress(*addr); err != nil {
-		return err
+	if *addr != "auto" {
+		if err := rpcmesh.ValidateRPCAddress(*addr); err != nil {
+			return err
+		}
 	}
 	agent, err := config.ReadAgent(*dir)
 	if err != nil {
@@ -849,6 +875,7 @@ func rpcNode(args []string) error {
 		profile := hardware.Collect(name, nil)
 		profile.Runtime.Installed = true
 		profile.Runtime.Benchmark = true
+		profile.Runtime.ReconnectFailures = cli.ReconnectFailures.Load()
 		profile.Runtime.Version = llamaruntime.Version
 		beatCtx, stop := context.WithTimeout(c, 8*time.Second)
 		defer stop()

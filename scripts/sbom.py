@@ -13,7 +13,7 @@ parser.add_argument('--version',required=True)
 parser.add_argument('--commit',required=True)
 parser.add_argument('--go-version',required=True)
 args=parser.parse_args()
-archives=sorted([*args.directory.glob('nodexlm_*.tar.gz'),*args.directory.glob('nodexlm_*.zip')])
+archives=sorted([*args.directory.glob('nodexlm_*.tar.gz'),*args.directory.glob('nodexlm_*.zip'),*args.directory.glob('nodexlm*.deb'),*args.directory.glob('nodexlm*.rpm')])
 if not archives:
     parser.error('no release archives found')
 components=[{'type':'platform','bom-ref':'go-stdlib','name':'Go standard library','version':args.go_version,

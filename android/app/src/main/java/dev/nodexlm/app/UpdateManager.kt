@@ -201,13 +201,13 @@ class UpdateManager(private val activity: Activity) {
                     if (!activity.packageManager.canRequestPackageInstalls()) {
                         verified.delete()
                         AlertDialog.Builder(activity)
-                            .setTitle("Permitir atualização do NodexLM")
-                            .setMessage("O Android exige autorização para instalar uma atualização assinada.")
-                            .setPositiveButton("Abrir configurações") { _, _ ->
+                            .setTitle(activity.getString(R.string.ui_a2334f70f759))
+                            .setMessage(activity.getString(R.string.ui_83c6621ca708))
+                            .setPositiveButton(activity.getString(R.string.ui_4dc25299c9e2)) { _, _ ->
                                 activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:${activity.packageName}")))
                             }
-                            .setNegativeButton("Depois", null)
+                            .setNegativeButton(activity.getString(R.string.ui_b8db71c3cce7), null)
                             .show()
                     } else {
                         thread(name = "nodexlm-update-install") {

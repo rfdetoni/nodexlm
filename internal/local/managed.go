@@ -21,6 +21,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/process"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
 
 // Managed is a lazy local llama-server owner. It keeps GGUF tensors out of
@@ -93,9 +94,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 			return errors.New("invalid local-layer placement for distributed GGUF")
 		}
 		for _, addr := range m.RPCServers {
-			host, _, err := net.SplitHostPort(addr)
-			ip := net.ParseIP(host)
-			if err != nil || ip == nil || !ip.IsLoopback() {
+			if err := rpcmesh.ValidateRPCAddress(addr); err != nil {
 				return errors.New("RPC endpoints must be loopback-only authenticated relays")
 			}
 		}
@@ -217,9 +216,7 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 		// Only use authenticated loopback relay endpoints in the native process.
 		// ensure() returns a hard error if one is invalid, too.
 		for _, addr := range m.RPCServers {
-			host, _, err := net.SplitHostPort(addr)
-			ip := net.ParseIP(host)
-			if err != nil || ip == nil || !ip.IsLoopback() {
+			if err := rpcmesh.ValidateRPCAddress(addr); err != nil {
 				return args
 			}
 		}

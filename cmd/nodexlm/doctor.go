@@ -143,21 +143,30 @@ func doctor(args []string) error {
 func bench(args []string) error {
 	f := fs("bench")
 	id := f.String("node", "", "paired Guest node ID")
+	model := f.String("model", "", "benchmark a GGUF workload (resident models must be unloaded)")
 	server := f.String("server", "http://127.0.0.1:8787", "loopback management URL")
 	dir := f.String("dir", config.DefaultDir(), "configuration directory")
 	jsonOut := f.Bool("json", false, "JSON output")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	if len(*id) != 64 || strings.ContainsAny(*id, "/\\") {
+	if *model == "" && (len(*id) != 64 || strings.ContainsAny(*id, "/\\")) {
 		return errors.New("--node requires a paired node ID")
 	}
 	client, err := netclient.New(*server, config.AdminSecret(*dir), "")
 	if err != nil {
 		return err
 	}
-	c, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	if *model != "" {
+		var sample json.RawMessage
+		if _, err := client.Request(c, http.MethodPost, "/api/bench/inference", map[string]string{"model": *model, "node_id": *id}, &sample); err != nil {
+			return err
+		}
+		fmt.Println(string(sample))
+		return nil
+	}
 	var result rpcmesh.Measurement
 	if _, err := client.Request(c, http.MethodPost, "/v1/bench/"+*id, map[string]any{}, &result); err != nil {
 		return err

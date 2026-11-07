@@ -28,6 +28,7 @@ const fetch=async (url,options)=>{
   calls.push({url,method,body});
   if(url==='/api/status')return response({settings:{...settings},runtime:{loaded},download});
   if(url==='/api/models')return response(locals);
+  if(url==='/api/resident-models')return response(loaded?[settings.model]:[]);
   if(url==='/v1/nodes')return response([]);
   if(url==='/api/cluster')return response({resources:{online:1,aggregate_budget_bytes:8*1073741824},rpc_guests:{}});
   if(url==='/api/download' && method==='POST') {download={name:body.name,status:'downloading',received:0,total:2*1073741824};return response({status:'downloading'});}

@@ -54,8 +54,8 @@ class ComputeService : Service() {
         val stop=PendingIntent.getService(this,11,Intent(this,ComputeService::class.java).setAction(STOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification=Notification.Builder(this,CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("NodexLM worker active")
-            .setContentText("Cluster ativo mesmo com a tela bloqueada · consome bateria")
+            .setContentTitle(getString(R.string.ui_7235bff56ab7))
+            .setContentText(getString(R.string.ui_99e7969791c0))
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null,"Stop",stop).build())
             .build()
@@ -129,7 +129,45 @@ class ComputeService : Service() {
                         val messages=input.getJSONArray("messages")
                         val roles=Array(messages.length()) { idx -> messages.getJSONObject(idx).getString("role") }
                         val contents=Array(messages.length()) { idx -> messages.getJSONObject(idx).getString("content") }
-                        answer=String(NativeEntry.generate(roles,contents,(input.optInt("max_tokens",256)).coerceIn(1,1024)),Charsets.UTF_8)
+                        val monitorDone=java.util.concurrent.atomic.AtomicBoolean(false)
+                        val monitor=thread(name="nodexlm-generation-lease",isDaemon=true){
+                            val deadline=android.os.SystemClock.elapsedRealtime()+180_000L
+                            while(!monitorDone.get()&&running.get()){
+                                try{
+                                    val state=request(coordinator+"/v1/nodes/jobs/$jid",token,id,null,"GET")
+                                    if(state.optString("status")!="running"||android.os.SystemClock.elapsedRealtime()>deadline){NativeEntry.cancel();break}
+                                }catch(_:Exception){NativeEntry.cancel();break}
+                                try{Thread.sleep(1000)}catch(_:InterruptedException){break}
+                            }
+                        }
+                        val pending=java.io.ByteArrayOutputStream()
+                        val decoder=Charsets.UTF_8.newDecoder()
+                        var undecoded=ByteArray(0)
+                        var lastChunk=0L
+                        val streaming=input.optBoolean("stream",false)
+                        fun flushChunk(force:Boolean=false){
+                            if(pending.size()==0)return
+                            val now=android.os.SystemClock.elapsedRealtime()
+                            if(!force&&now-lastChunk<50)return
+                            val bytes=java.nio.ByteBuffer.wrap(undecoded+pending.toByteArray());pending.reset()
+                            val chars=java.nio.CharBuffer.allocate(bytes.remaining()*2+2)
+                            val decoded=decoder.decode(bytes,chars,false)
+                            if(decoded.isError)decoded.throwException()
+                            undecoded=ByteArray(bytes.remaining());bytes.get(undecoded);chars.flip()
+                            val text=chars.toString()
+                            if(text.isNotEmpty()){
+                                val data=JSONObject().put("id",jid).put("object","chat.completion.chunk").put("model",input.getString("model"))
+                                    .put("choices",JSONArray().put(JSONObject().put("index",0).put("delta",JSONObject().put("content",text))))
+                                request(coordinator+"/v1/nodes/chunks/$jid",token,id,JSONObject().put("data",data));lastChunk=now
+                            }
+                        }
+                        val stopValue=input.opt("stop")
+                        val stops=when(stopValue){is String->arrayOf(stopValue);is JSONArray->Array(stopValue.length()){stopValue.getString(it)};else->emptyArray()}
+                        try{
+                            val sink=if(streaming)NativeEntry.TokenSink {piece -> pending.write(piece);flushChunk()} else null
+                            answer=String(NativeEntry.generate(roles,contents,(input.optInt("max_tokens",256)).coerceIn(1,1024),input.optDouble("temperature",0.7).toFloat(),input.optDouble("top_p",1.0).toFloat(),stops,sink),Charsets.UTF_8)
+                            if(streaming){flushChunk(true);require(undecoded.isEmpty()){ "Incomplete UTF-8 output" }}
+                        }finally{monitorDone.set(true);monitor.interrupt();monitor.join(1000)}
                         if(answer.startsWith("NODEXLM_ERROR:")){failure=answer;answer=""}
                     }catch(e:Exception){failure=e.message?:"inference error"}
                     finally {if(wake.isHeld)wake.release()}
@@ -151,20 +189,20 @@ class ComputeService : Service() {
         }
     }
 
-    private fun request(url:String,token:String,node:String,body:JSONObject):JSONObject {
+    private fun request(url:String,token:String,node:String,body:JSONObject?,method:String="POST"):JSONObject {
         val c=(URL(url).openConnection() as HttpURLConnection)
         if(c is HttpsURLConnection) {
             PinnedHostTls.configure(c, this)
         }
-        c.requestMethod="POST"
+        c.requestMethod=method
         c.connectTimeout=7_000
         c.readTimeout=35_000
-        c.doOutput=true
+        c.doOutput=body!=null
         c.setRequestProperty("Content-Type","application/json")
         c.setRequestProperty("Authorization","Bearer $token")
         if(node.isNotEmpty())c.setRequestProperty("X-Nodex-Node",node)
         return try {
-            c.outputStream.use {out ->out.write(body.toString().toByteArray(Charsets.UTF_8))}
+            if(body!=null)c.outputStream.use {out ->out.write(body.toString().toByteArray(Charsets.UTF_8))}
             if(c.responseCode==204) JSONObject()
             else if(c.responseCode in 200..299) c.inputStream.bufferedReader(Charsets.UTF_8).use {reader->JSONObject(reader.readText())}
             else throw IllegalStateException("coordinator HTTP ${c.responseCode}")

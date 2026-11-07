@@ -13,9 +13,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/process"
 )
@@ -23,6 +25,20 @@ import (
 // RunNativeGuest supervises one RPC compute server and its TLS reverse tunnels.
 // The model file is not required on this node: tensors are placed by the Host.
 func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, listen string, slots int) error {
+	if listen == "auto" {
+		listen = "127.0.0.1:0"
+		if runtime.GOOS != "windows" && llamaruntime.SupportsUnixRPC(ctx, executable) {
+			dir, err := os.MkdirTemp("", "nodexlm-guest-")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(dir)
+			listen = "unix:" + filepath.Join(dir, "rpc.sock")
+		}
+	}
+	if strings.HasPrefix(listen, "unix:") {
+		return runUnixGuest(ctx, client, executable, listen, slots)
+	}
 	if err := ValidateRPCAddress(listen); err != nil {
 		return err
 	}
@@ -107,6 +123,7 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 					// A completed RPC session must not inherit a previous failure backoff.
 					delay = time.Second
 				} else if runCtx.Err() == nil {
+					client.ReconnectFailures.Add(1)
 					// Keep unexpected EOF visible: it may indicate a broken relay
 					// or an incompatible native RPC session on the Host.
 					slog.Warn("RPC tunnel disconnected", "slot", slot, "error", err)

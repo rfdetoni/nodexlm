@@ -1,0 +1,134 @@
+diff --git a/common/arg.cpp b/common/arg.cpp
+index 67b492e..2877d24 100644
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -2629,7 +2629,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+     ).set_examples(mmproj_examples).set_env("LLAMA_ARG_VIDEO_FFMPEG_DIR"));
+     add_opt(common_arg(
+         {"--rpc"}, "SERVERS",
+-        "comma-separated list of RPC servers (host:port)",
++        "comma-separated list of RPC servers (host:port or unix:/private/socket)",
+         [](common_params & params, const std::string & value) {
+             if (!llama_supports_rpc()) {
+                 throw std::invalid_argument("RPC not supported in this build");
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index d346bb1..5e1b120 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -359,6 +359,7 @@ static bool recv_msg(socket_ptr sock, std::vector<uint8_t> & input) {
+ }
+ 
+ static bool parse_endpoint(const std::string & endpoint, std::string & host, int & port) {
++    if (endpoint.rfind("unix:/", 0) == 0) { host = endpoint.substr(5); port = -1; return true; }
+     size_t pos = endpoint.find(':');
+     if (pos == std::string::npos) {
+         return false;
+diff --git a/ggml/src/ggml-rpc/transport.cpp b/ggml/src/ggml-rpc/transport.cpp
+index d5670f3..488df5a 100644
+--- a/ggml/src/ggml-rpc/transport.cpp
++++ b/ggml/src/ggml-rpc/transport.cpp
+@@ -11,6 +11,8 @@
+ #else
+ #  include <arpa/inet.h>
+ #  include <sys/socket.h>
++#  include <sys/un.h>
++#  include <sys/stat.h>
+ #  include <sys/types.h>
+ #  include <netinet/in.h>
+ #  include <netinet/tcp.h>
+@@ -718,7 +720,13 @@ socket_ptr socket_t::accept() {
+     if (!is_valid_fd(client_socket_fd)) {
+         return nullptr;
+     }
+-    if (!set_no_delay(client_socket_fd)) {
++    bool local=false;
++#ifndef _WIN32
++    sockaddr_storage address{};
++    socklen_t address_size=sizeof(address);
++    local=getsockname(client_socket_fd,reinterpret_cast<sockaddr*>(&address),&address_size)==0 && address.ss_family==AF_UNIX;
++#endif
++    if (!local && !set_no_delay(client_socket_fd)) {
+         LOG_ERROR("Failed to set TCP_NODELAY\n");
+         return nullptr;
+     }
+@@ -727,6 +735,21 @@ socket_ptr socket_t::accept() {
+ }
+ 
+ socket_ptr socket_t::create_server(const char * host, int port) {
++#ifndef _WIN32
++    if (port == -1) {
++        sockaddr_un addr{}; addr.sun_family=AF_UNIX;
++        if (!host || host[0]!='/' || strlen(host)>=sizeof(addr.sun_path)) return nullptr;
++        strncpy(addr.sun_path,host,sizeof(addr.sun_path)-1);
++        auto fd=socket(AF_UNIX,SOCK_STREAM,0);
++        if (fd<0) return nullptr;
++        auto owner=std::make_unique<impl>(fd);
++        // Never unlink an existing path: the caller owns a fresh private directory.
++        if (::bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))!=0) return nullptr;
++        if (::chmod(host,0600)!=0 || ::listen(fd,16)!=0) { ::unlink(host); return nullptr; }
++        return socket_ptr(new socket_t(std::move(owner)));
++    }
++#endif
++
+     auto sockfd = socket(AF_INET, SOCK_STREAM, 0);
+     if (!is_valid_fd(sockfd)) {
+         return nullptr;
+@@ -755,6 +778,19 @@ socket_ptr socket_t::create_server(const char * host, int port) {
+ }
+ 
+ socket_ptr socket_t::connect(const char * host, int port) {
++#ifndef _WIN32
++    if (port == -1) {
++        sockaddr_un addr{}; addr.sun_family=AF_UNIX;
++        if (!host || host[0]!='/' || strlen(host)>=sizeof(addr.sun_path)) return nullptr;
++        strncpy(addr.sun_path,host,sizeof(addr.sun_path)-1);
++        auto fd=socket(AF_UNIX,SOCK_STREAM,0);
++        if (fd<0) return nullptr;
++        auto owner=std::make_unique<impl>(fd);
++        if (::connect(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))!=0) return nullptr;
++        return socket_ptr(new socket_t(std::move(owner)));
++    }
++#endif
++
+     auto sockfd = socket(AF_INET, SOCK_STREAM, 0);
+     if (!is_valid_fd(sockfd)) {
+         return nullptr;
+diff --git a/tools/rpc/rpc-server.cpp b/tools/rpc/rpc-server.cpp
+index 8aeb15d..71c2633 100644
+--- a/tools/rpc/rpc-server.cpp
++++ b/tools/rpc/rpc-server.cpp
+@@ -76,6 +76,7 @@ static bool common_create_directories(const std::filesystem::path & path, std::e
+ }
+ 
+ struct rpc_server_params {
++    std::string              unix_path;
+     std::string              host        = "127.0.0.1";
+     int                      port        = 50052;
+     bool                     use_cache   = false;
+@@ -91,6 +92,7 @@ static void print_usage(int /*argc*/, char ** argv, rpc_server_params params) {
+     fprintf(stderr, "  -d, --device <dev1,dev2,...>     comma-separated list of devices\n");
+     fprintf(stderr, "  -H, --host HOST                  host to bind to (default: %s)\n", params.host.c_str());
+     fprintf(stderr, "  -p, --port PORT                  port to bind to (default: %d)\n", params.port);
++    fprintf(stderr, "      --socket PATH                private Unix-domain RPC socket (POSIX)\n");
+     fprintf(stderr, "  -c, --cache                      enable local file cache\n");
+     fprintf(stderr, "\n");
+ }
+@@ -137,6 +139,9 @@ static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params &
+             if (params.port <= 0 || params.port > 65535) {
+                 return false;
+             }
++        } else if (arg == "--socket") {
++            if (++i>=argc) return false;
++            params.unix_path=argv[i];
+         } else if (arg == "-c" || arg == "--cache") {
+             params.use_cache = true;
+         } else if (arg == "-h" || arg == "--help") {
+@@ -220,7 +225,7 @@ int main(int argc, char * argv[]) {
+         fprintf(stderr, "No devices found\n");
+         return 1;
+     }
+-    std::string endpoint = params.host + ":" + std::to_string(params.port);
++    std::string endpoint = params.unix_path.empty() ? params.host + ":" + std::to_string(params.port) : "unix:"+params.unix_path;
+     const char * cache_dir = nullptr;
+     std::string cache_dir_str;
+     if (params.use_cache) {

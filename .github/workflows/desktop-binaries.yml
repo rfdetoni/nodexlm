@@ -16,6 +16,7 @@ on:
       - 'scripts/test-dashboard-models.cjs'
       - 'scripts/test-install.sh'
       - 'scripts/sbom.py'
+      - 'scripts/package-*.py'
       - 'install.sh'
     tags:
       - 'v*'
@@ -71,6 +72,8 @@ jobs:
             echo "::error::Published RPC bundle has missing ELF shared libraries"
             exit 1
           fi
+      - name: Native packaging tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
       - name: Cross compile and package
         shell: bash
         run: |
@@ -98,7 +101,18 @@ jobs:
               (cd stage && tar -czf "../dist/nodexlm_${target}.tar.gz" "$exe" LICENSE)
             fi
           done
-          (cd dist && sha256sum nodexlm_* > SHA256SUMS.txt)
+          for target in linux_amd64 linux_arm64 linux_armv7; do
+            arch="${target#linux_}"; if [[ "$arch" == armv7 ]]; then arch=armhf; fi
+            mkdir -p "packages/$target"
+            tar -xzf "dist/nodexlm_${target}.tar.gz" -C "packages/$target"
+            python3 scripts/package-native.py --binary "packages/$target/nodexlm" --version "$version" --arch "$arch" --format deb --output dist
+            python3 scripts/package-native.py --binary "packages/$target/nodexlm" --version "$version" --arch "$arch" --format rpm --output dist
+          done
+          (cd dist && sha256sum nodexlm_* nodexlm-*.rpm > SHA256SUMS.txt)
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$version" != *-* ]]; then
+            python3 scripts/package-manifests.py --version "$version" --checksums dist/SHA256SUMS.txt --output manifests
+            tar -czf dist/nodexlm-registry-manifests.tar.gz -C manifests .
+          fi
           test "$(find dist -name 'nodexlm_*.tar.gz' -o -name 'nodexlm_*.zip' | wc -l)" -eq 7
           cat dist/SHA256SUMS.txt
           python3 scripts/sbom.py --directory dist --version "$version" --commit "$GITHUB_SHA" --go-version "$(go env GOVERSION)"

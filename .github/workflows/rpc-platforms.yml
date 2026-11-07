@@ -1,0 +1,107 @@
+name: Portable RPC bundles
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/rpc-platforms.yml'
+      - 'internal/llamaruntime/patches/**'
+permissions:
+  contents: read
+concurrency:
+  group: nodexlm-rpc-platforms-r3
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-22.04, os: linux, arch: amd64, backend: cpu}
+          - {runner: ubuntu-24.04-arm, os: linux, arch: arm64, backend: cpu}
+          - {runner: ubuntu-22.04, os: linux, arch: amd64, backend: vulkan}
+          - {runner: macos-14, os: darwin, arch: arm64, backend: metal}
+          - {runner: windows-latest, os: windows, arch: amd64, backend: cpu}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 80
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Vulkan tools
+        if: matrix.backend == 'vulkan'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan-dev glslc
+      - name: Build pinned pair
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')
+          commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
+          git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
+          test "$(git -C upstream rev-parse HEAD)" = "$commit"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+          options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release)
+          if [[ "$BACKEND" == vulkan ]]; then options+=(-DGGML_VULKAN=ON); fi
+          if [[ "$TARGET_OS" == darwin ]]; then options+=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON); fi
+          cmake -S upstream -B native "${options[@]}"
+          cmake --build native --config Release --parallel 3 --target llama-server ggml-rpc-server
+          mkdir -p stage/bin dist
+          python3 - <<'PY'
+          import pathlib,shutil
+          for p in pathlib.Path('native').rglob('*'):
+              if not p.is_file():continue
+              name=p.name
+              if name in ('llama-server','ggml-rpc-server','rpc-server','llama-server.exe','ggml-rpc-server.exe','rpc-server.exe') or name.endswith(('.dll','.dylib','.so','.metallib')) or '.so.' in name:
+                  shutil.copyfile(p,pathlib.Path('stage/bin')/name)
+          shutil.copyfile('upstream/LICENSE','stage/LICENSE.llama.cpp')
+          PY
+          chmod -R u+rx stage/bin
+          archive="nodexlm-rpc_${version}_${TARGET_OS}_${TARGET_ARCH}_${BACKEND}.tar.gz"
+          tar -czf "dist/$archive" -C stage bin LICENSE.llama.cpp
+          python3 - <<'PY'
+          import hashlib,pathlib
+          for p in pathlib.Path('dist').glob('*.tar.gz'):
+              with p.open('rb') as source:digest=hashlib.file_digest(source,'sha256').hexdigest()
+              (p.parent/(p.name+'.sha256')).write_text(digest+'  '+p.name+'\n')
+          PY
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        if: matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu'
+        with: {go-version-file: go.mod, cache: false}
+      - name: Native Unix RPC end-to-end
+        if: matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu'
+        run: |
+          curl -fsSL --retry 3 https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -o tiny.gguf
+          echo '270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d  tiny.gguf' | sha256sum -c -
+          go build -o nodexlm ./cmd/nodexlm
+          NODEXLM_RPC_DIR="$PWD/native" NODEXLM_TEST_MODEL="$PWD/tiny.gguf" python3 scripts/e2e-rpc.py
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with: {subject-path: 'dist/*.tar.gz'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rpc-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.backend }}
+          path: dist/*
+          retention-days: 14
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: {contents: write}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: {path: dist, merge-multiple: true}
+      - name: Publish immutable matching bundles
+        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
+        run: |
+          set -euo pipefail
+          cat dist/*.sha256 > dist/SHA256SUMS.txt
+          if gh release view nodexlm-rpc-b12143-r3 >/dev/null 2>&1; then
+            echo 'Immutable release already exists; do not overwrite reviewed binaries.'
+            exit 0
+          fi
+          gh release create nodexlm-rpc-b12143-r3 dist/*.tar.gz dist/SHA256SUMS.txt --target "$GITHUB_SHA" --title 'Pinned RPC b12143 with private Unix sockets' --notes 'Matched native RPC pairs; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads.' --prerelease --latest=false

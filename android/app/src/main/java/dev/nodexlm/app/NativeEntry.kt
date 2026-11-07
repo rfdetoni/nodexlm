@@ -6,7 +6,8 @@ package dev.nodexlm.app
 object NativeEntry {
     init { System.loadLibrary("nodexlm") }
     external fun load(modelPath: String, contextTokens: Int, threads: Int): String
-    external fun generate(roles: Array<String>, contents: Array<String>, maxTokens: Int): ByteArray
+    fun interface TokenSink { fun onToken(piece: ByteArray) }
+    external fun generate(roles: Array<String>, contents: Array<String>, maxTokens: Int, temperature: Float, topP: Float, stop: Array<String>, sink: TokenSink?): ByteArray
     external fun cancel()
     external fun unload()
 }

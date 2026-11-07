@@ -17,9 +17,11 @@ func (s *Server) Metrics(w http.ResponseWriter, r *http.Request) {
 	s.WriteMetrics(w)
 }
 func (s *Server) WriteMetrics(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	nodes := s.DevicesSnapshot()
 	online := 0
 	for _, n := range nodes {
+		fmt.Fprintf(w, "nodexlm_guest_reconnect_failures_total{node_id=%q} %d\n", n.ID, n.Runtime.ReconnectFailures)
 		if n.Status == "online" {
 			online++
 		}
@@ -35,9 +37,23 @@ func (s *Server) WriteMetrics(w http.ResponseWriter) {
 	for _, state := range []string{"queued", "running", "completed", "failed", "cancelled"} {
 		fmt.Fprintf(w, "nodexlm_jobs{status=%q} %d\n", state, counts[state])
 	}
+	for id, stats := range s.rpcHub.Stats() {
+		fmt.Fprintf(w, "nodexlm_rpc_tunnels{node_id=%q} %d\nnodexlm_rpc_tunnels_accepted_total{node_id=%q} %d\nnodexlm_rpc_capacity_rejected_total{node_id=%q} %d\nnodexlm_rpc_wait_timeouts_total{node_id=%q} %d\n", id, stats.Connected, id, stats.Accepted, id, stats.CapacityRejected, id, stats.WaitTimeouts)
+	}
+	for _, node := range s.Observations() {
+		if len(node.Latency) > 0 {
+			last := node.Latency[len(node.Latency)-1]
+			fmt.Fprintf(w, "nodexlm_rpc_rtt_milliseconds{node_id=%q} %g\nnodexlm_rpc_echo_mib_per_second{node_id=%q} %g\n", node.NodeID, last.RoundTripMS, node.NodeID, last.MiBPerSecond)
+		}
+	}
+
 }
 func (s *Server) Benchmark(ctx context.Context, id string) (rpcmesh.Measurement, error) {
-	return s.rpcHub.Benchmark(ctx, id)
+	out, err := s.rpcHub.Benchmark(ctx, id)
+	if err == nil {
+		err = s.saveMeasurement(out)
+	}
+	return out, err
 }
 func (s *Server) bench(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(w, r) {

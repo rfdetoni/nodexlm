@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,21 @@ func (m *Manager) acquire(ctx context.Context) error {
 }
 
 func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, generate func(context.Context, *local.Managed, protocol.ChatRequest) error) error {
+	m.mu.Lock()
+	child := m.residents[req.Model]
+	m.mu.Unlock()
+	if child != nil {
+		start := time.Now()
+		err := child.withGeneration(ctx, req, generate)
+		m.mu.Lock()
+		m.generationCount++
+		m.generationSeconds += time.Since(start).Seconds()
+		if err != nil {
+			m.generationErrors++
+		}
+		m.mu.Unlock()
+		return err
+	}
 	if err := m.acquire(ctx); err != nil {
 		return err
 	}
@@ -41,18 +57,43 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	req.Model = m.current
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.generationCancel = nil; m.mu.Unlock(); cancel() }()
-	return generate(generationCtx, engine, req)
+	start := time.Now()
+	err := generate(generationCtx, engine, req)
+	m.mu.Lock()
+	m.generationCount++
+	m.generationSeconds += time.Since(start).Seconds()
+	if err != nil {
+		m.generationErrors++
+	}
+	m.mu.Unlock()
+	return err
 }
 func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, emit func([]byte) error) error {
 	return m.withGeneration(ctx, req, func(ctx context.Context, engine *local.Managed, req protocol.ChatRequest) error {
-		return engine.GenerateStream(ctx, req, emit)
+		start := time.Now()
+		var usage []byte
+		err := engine.GenerateStream(ctx, req, func(frame []byte) error {
+			payload := bytes.TrimSpace(bytes.TrimPrefix(frame, []byte("data: ")))
+			if bytes.Contains(payload, []byte(`"usage"`)) {
+				usage = append([]byte(nil), payload...)
+			}
+			return emit(frame)
+		})
+		if err == nil {
+			m.recordInference(req.Model, usage, time.Since(start))
+		}
+		return err
 	})
 }
 func (m *Manager) Complete(ctx context.Context, req protocol.ChatRequest) (json.RawMessage, error) {
 	var raw json.RawMessage
 	err := m.withGeneration(ctx, req, func(ctx context.Context, engine *local.Managed, req protocol.ChatRequest) error {
 		var err error
+		start := time.Now()
 		raw, err = engine.Complete(ctx, req)
+		if err == nil {
+			m.recordInference(req.Model, raw, time.Since(start))
+		}
 		return err
 	})
 	return raw, err
@@ -75,11 +116,11 @@ func (d *Dashboard) chat(w http.ResponseWriter, r *http.Request) {
 		d.Cluster.QueueChat(w, r, req)
 		return
 	}
-	if current == "" {
+	if !d.Manager.HasModel(req.Model) && current == "" {
 		failure(w, 409, errors.New("load a model on the Host first"))
 		return
 	}
-	if req.Model != current {
+	if !d.Manager.HasModel(req.Model) {
 		failure(w, 404, errors.New("requested model is not loaded"))
 		return
 	}

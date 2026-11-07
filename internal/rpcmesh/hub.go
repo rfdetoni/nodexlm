@@ -11,7 +11,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,13 +35,18 @@ type relay struct {
 	closed    chan struct{}
 	mu        sync.Mutex
 	available int
+	accepted  uint64
+	rejected  uint64
+	timeouts  uint64
 	peers     map[net.Conn]struct{}
 }
 
 type Hub struct {
-	mu     sync.Mutex
-	nodes  map[string]*relay
-	closed bool
+	mu         sync.Mutex
+	nodes      map[string]*relay
+	closed     bool
+	unix       bool
+	socketDirs []string
 }
 
 func NewHub() *Hub { return &Hub{nodes: make(map[string]*relay)} }
@@ -62,7 +71,22 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 	}
 	item := h.nodes[nodeID]
 	if item == nil {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		var ln net.Listener
+		var err error
+		if h.unix {
+			var dir string
+			dir, err = os.MkdirTemp("", "nodexlm-relay-")
+			if err == nil {
+				ln, err = net.Listen("unix", filepath.Join(dir, "rpc.sock"))
+				if err == nil {
+					h.socketDirs = append(h.socketDirs, dir)
+				} else {
+					_ = os.RemoveAll(dir)
+				}
+			}
+		} else {
+			ln, err = net.Listen("tcp", "127.0.0.1:0")
+		}
 		if err != nil {
 			h.mu.Unlock()
 			http.Error(w, "local RPC relay unavailable", 503)
@@ -75,12 +99,14 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 	h.mu.Unlock()
 	item.mu.Lock()
 	if item.available >= 8 {
+		item.rejected++
 		item.mu.Unlock()
 		slog.Warn("RPC tunnel capacity reached", "node", nodeID, "capacity", 8)
 		http.Error(w, "RPC tunnel capacity reached", 503)
 		return
 	}
 	item.available++
+	item.accepted++
 	item.mu.Unlock()
 	conn, buf, err := hj.Hijack()
 	if err != nil {
@@ -248,8 +274,11 @@ func (r *relay) accept() {
 				select {
 				case <-r.ready:
 				case <-timeout.C:
+					r.mu.Lock()
+					r.timeouts++
+					r.mu.Unlock()
 					slog.Warn("RPC relay timed out waiting for an idle Guest tunnel",
-						"endpoint", r.listener.Addr().String(),
+						"endpoint", relayAddress(r.listener),
 						"connected_tunnels", r.count(), "idle_tunnels", r.idleCount())
 					_ = upstream.Close()
 					return
@@ -288,7 +317,7 @@ func (h *Hub) Endpoints() []string {
 	out := []string{}
 	for _, r := range h.nodes {
 		if r.count() > 0 {
-			out = append(out, r.listener.Addr().String())
+			out = append(out, relayAddress(r.listener))
 		}
 	}
 	sort.Strings(out)
@@ -300,7 +329,7 @@ func (h *Hub) ReadyNodes() map[string]string {
 	out := map[string]string{}
 	for id, r := range h.nodes {
 		if r.count() > 0 {
-			out[id] = r.listener.Addr().String()
+			out[id] = relayAddress(r.listener)
 		}
 	}
 	return out
@@ -331,6 +360,7 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
+	dirs := append([]string(nil), h.socketDirs...)
 	ids := make([]string, 0, len(h.nodes))
 	for id := range h.nodes {
 		ids = append(ids, id)
@@ -339,11 +369,28 @@ func (h *Hub) Close() {
 	for _, id := range ids {
 		h.Remove(id)
 	}
+	for _, dir := range dirs {
+		_ = os.RemoveAll(dir)
+	}
 }
 
 var ErrTunnelUnavailable = errors.New("RPC tunnel unavailable")
 
 func ValidateRPCAddress(addr string) error {
+	if strings.HasPrefix(addr, "unix:") {
+		path := strings.TrimPrefix(addr, "unix:")
+		if runtime.GOOS == "windows" || !filepath.IsAbs(path) || len(path) > 100 {
+			return errors.New("invalid private Unix RPC socket path")
+		}
+		info, err := os.Stat(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+			return errors.New("Unix RPC parent directory must be private (0700)")
+		}
+		return nil
+	}
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return err
@@ -353,4 +400,20 @@ func ValidateRPCAddress(addr string) error {
 		return fmt.Errorf("RPC native endpoint must bind to loopback: %s", addr)
 	}
 	return nil
+}
+
+func (h *Hub) UseUnix() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.nodes) != 0 {
+		return errors.New("RPC transport must be selected before Guests connect")
+	}
+	h.unix = true
+	return nil
+}
+func relayAddress(listener net.Listener) string {
+	if listener.Addr().Network() == "unix" {
+		return "unix:" + listener.Addr().String()
+	}
+	return listener.Addr().String()
 }

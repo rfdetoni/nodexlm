@@ -50,7 +50,15 @@ type Download struct {
 }
 
 type Manager struct {
+	poolCancel            context.CancelFunc
 	mu                    sync.Mutex
+	poolMu                sync.Mutex
+	residents             map[string]*Manager
+	closed                bool
+	samples               map[string]InferenceSample
+	generationCount       uint64
+	generationErrors      uint64
+	generationSeconds     float64
 	chatMu                sync.Mutex
 	admission             chan struct{}
 	dir, modelDir, binary string
@@ -78,7 +86,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err := os.MkdirAll(modelDir, 0700); err != nil {
 		return nil, err
 	}
-	m := &Manager{admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, runtime.NumCPU()-1)), ContextTokens: 2048, GPULayers: "auto"}}
+	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, runtime.NumCPU()-1)), ContextTokens: 2048, GPULayers: "auto"}}
 	b, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
 	if err == nil {
 		if err = json.Unmarshal(b, &m.settings); err != nil {
@@ -99,6 +107,8 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 // loopback-only relay. CapacityBytes is a conservative available weight budget.
 // No model bytes are copied to the Guest filesystem.
 type RPCGuest struct {
+	ID            string
+	Name          string
 	Endpoint      string
 	CapacityBytes uint64
 }
@@ -220,7 +230,7 @@ func (m *Manager) StartLoad() error {
 func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.loading || m.unloading || m.engine != nil {
+	if m.closed || m.residents[m.settings.Model] != nil || m.loading || m.unloading || m.engine != nil {
 		return errors.New("model already loaded or loading")
 	}
 	if m.settings.Model == "" {
@@ -248,6 +258,8 @@ func (m *Manager) Load(ctx context.Context) error {
 }
 
 func (m *Manager) runLoad(ctx context.Context) error {
+	m.poolMu.Lock()
+	defer m.poolMu.Unlock()
 	err := m.load(ctx)
 	m.mu.Lock()
 	m.loading = false
@@ -400,6 +412,10 @@ func (m *Manager) Generate(ctx context.Context, req protocol.ChatRequest) (strin
 }
 func (m *Manager) Close() {
 	m.mu.Lock()
+	m.closed = true
+	poolCancel := m.poolCancel
+	children := m.residents
+	m.residents = map[string]*Manager{}
 	done := m.downloadDone
 	if m.cancel != nil {
 		m.cancel()
@@ -408,7 +424,15 @@ func (m *Manager) Close() {
 	if done != nil {
 		<-done
 	}
+	if poolCancel != nil {
+		poolCancel()
+	}
+	for _, child := range children {
+		child.Close()
+	}
 	m.Unload()
+	m.poolMu.Lock()
+	m.poolMu.Unlock()
 }
 func (m *Manager) StartDownload(urlText, name string) error {
 	if name == "" {
