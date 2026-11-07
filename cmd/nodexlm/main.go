@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -224,7 +225,7 @@ func serve(args []string) error {
 		}
 		fmt.Printf("\nNODEXLM PAIRING CODE: %s\nAvailable for 10 minutes on the same local network.\n\n", code)
 	}
-	srv := &http.Server{Addr: *addr, Handler: s.LANHandler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	srv := &http.Server{Addr: *addr, Handler: s.LANHandler(), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	var webServer *http.Server
 	var manager *dashboard.Manager
 	var webListener net.Listener
