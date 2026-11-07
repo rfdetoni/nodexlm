@@ -155,12 +155,25 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	s.register(w, req.Device)
 }
 
+// Validates every externally supplied resource field before it is persisted
+// or included in memory planning. Server-owned identity/status are overwritten.
 func validDevice(d protocol.Device) bool {
-	if len(d.Name) == 0 || len(d.Name) > 100 || len(d.Platform) == 0 || len(d.Platform) > 30 || len(d.Models) > 128 {
+	if len(d.Name) == 0 || len(d.Name) > 100 ||
+		len(d.Platform) == 0 || len(d.Platform) > 30 ||
+		len(d.Architecture) > 100 || len(d.Models) > 128 ||
+		len(d.GPUs) > 16 || d.CPUCount < 1 || d.CPUCount > 4096 ||
+		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
+		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 {
 		return false
 	}
 	for _, m := range d.Models {
 		if len(m) < 1 || len(m) > 256 {
+			return false
+		}
+	}
+	for _, gpu := range d.GPUs {
+		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes {
 			return false
 		}
 	}
@@ -558,7 +571,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	if !parse(w, r, &profile) {
 		return
 	}
-	if !validDevice(profile) || len(profile.GPUs) > 16 || profile.CPUCount < 1 || profile.CPUCount > 4096 {
+	if !validDevice(profile) {
 		fail(w, 400, "invalid node profile")
 		return
 	}
