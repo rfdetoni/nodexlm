@@ -3,7 +3,6 @@
 package dashboard
 
 import (
-	"context"
 	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
@@ -102,4 +101,3 @@ func TestShardDownloadRejectsCustomName(t *testing.T) {
 	}
 }
 
-var _ = context.Background
