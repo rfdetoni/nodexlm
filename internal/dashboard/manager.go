@@ -52,6 +52,13 @@ type Manager struct {
 	settings              Settings
 	engine                *local.Managed
 	current               string
+	loading               bool
+	unloading             bool
+	loadPhase             string
+	loadError             string
+	loadCancel            context.CancelFunc
+	loadDone              chan struct{}
+	generationCancel      context.CancelFunc
 	download              *Download
 	cancel                context.CancelFunc
 	httpClient            *http.Client
@@ -105,7 +112,11 @@ func (m *Manager) Settings() Settings                      { m.mu.Lock(); defer 
 func (m *Manager) State() map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return map[string]any{"model": m.current, "loaded": m.engine != nil}
+	phase := m.loadPhase
+	if phase == "" {
+		phase = "idle"
+	}
+	return map[string]any{"model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
 }
 func (m *Manager) DownloadState() *Download {
 	m.mu.Lock()
@@ -139,7 +150,7 @@ func (m *Manager) Update(s Settings) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.engine != nil {
+	if m.engine != nil || m.loading || m.unloading {
 		return errors.New("unload model before changing runtime settings")
 	}
 	raw, err := json.MarshalIndent(s, "", "  ")
@@ -190,16 +201,80 @@ func modelPath(dir, name string) (string, error) {
 	}
 	return path, nil
 }
-func (m *Manager) Load(ctx context.Context) error {
+// StartLoad starts an expensive model preparation outside the HTTP request.
+// The dashboard polls /api/status for its phase and any failure.
+func (m *Manager) StartLoad() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	if err := m.beginLoad(cancel); err != nil {
+		cancel()
+		return err
+	}
+	go func() {
+		defer cancel()
+		m.runLoad(ctx)
+	}()
+	return nil
+}
+
+func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.engine != nil {
-		return errors.New("model already loaded")
+	if m.loading || m.unloading || m.engine != nil {
+		return errors.New("model already loaded or loading")
 	}
-	s := m.settings
-	if s.Model == "" {
+	if m.settings.Model == "" {
 		return errors.New("select a model first")
 	}
+	if path, err := modelPath(m.modelDir, m.settings.Model); err != nil {
+		return err
+	} else if _, err = os.Stat(path); err != nil {
+		return err
+	}
+	m.loading = true
+	m.loadPhase = "preparing_runtime"
+	m.loadError = ""
+	m.loadCancel = cancel
+	m.loadDone = make(chan struct{})
+	return nil
+}
+
+// Load preserves the synchronous API for callers outside the dashboard.
+func (m *Manager) Load(ctx context.Context) error {
+	if err := m.beginLoad(nil); err != nil {
+		return err
+	}
+	return m.runLoad(ctx)
+}
+
+func (m *Manager) runLoad(ctx context.Context) error {
+	err := m.load(ctx)
+	m.mu.Lock()
+	m.loading = false
+	m.loadCancel = nil
+	if err != nil {
+		m.loadPhase = "error"
+		m.loadError = err.Error()
+	} else {
+		m.loadPhase = "ready"
+		m.loadError = ""
+	}
+	close(m.loadDone)
+	m.loadDone = nil
+	m.mu.Unlock()
+	return err
+}
+
+func (m *Manager) setPhase(phase string) {
+	m.mu.Lock()
+	m.loadPhase = phase
+	m.mu.Unlock()
+}
+
+func (m *Manager) load(ctx context.Context) error {
+	m.mu.Lock()
+	s := m.settings
+	provider := m.rpcEndpoints
+	m.mu.Unlock()
 	path, err := modelPath(m.modelDir, s.Model)
 	if err != nil {
 		return err
@@ -210,10 +285,10 @@ func (m *Manager) Load(ctx context.Context) error {
 	rpcEndpoints := []string(nil)
 	localLayers := 0
 	if s.Distributed {
-		if m.rpcEndpoints == nil {
+		if provider == nil {
 			return errors.New("distributed inference needs a Host coordinator")
 		}
-		guests := m.rpcEndpoints()
+		guests := provider()
 		if len(guests) == 0 {
 			return errors.New("nenhum Guest RPC autenticado está conectado. Pareamento/heartbeat não habilitam inferência distribuída: execute 'nodexlm guest --backend cpu' em cada Linux; confirme 'NodexLM RPC worker ready' e 'RPC conectado' no painel antes de aplicar o modelo")
 		}
@@ -255,6 +330,7 @@ func (m *Manager) Load(ctx context.Context) error {
 	if s.Distributed && !llamaruntime.SupportsRPC(ctx, resolved) {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
 	}
+	m.setPhase("loading_model")
 	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, KeepLoaded: true}
 	if s.Distributed {
 		engine.RPCServers = rpcEndpoints
@@ -267,19 +343,48 @@ func (m *Manager) Load(ctx context.Context) error {
 		engine.Close()
 		return err
 	}
+	m.mu.Lock()
+	if ctx.Err() != nil || m.unloading {
+		m.mu.Unlock()
+		engine.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("model load cancelled")
+	}
 	m.engine = engine
 	m.current = s.Model
+	m.mu.Unlock()
 	return nil
 }
 func (m *Manager) Unload() {
+	m.mu.Lock()
+	m.unloading = true
+	cancelLoad := m.loadCancel
+	loadDone := m.loadDone
+	cancelGeneration := m.generationCancel
+	m.mu.Unlock()
+	if cancelLoad != nil {
+		cancelLoad()
+	}
+	if cancelGeneration != nil {
+		cancelGeneration()
+	}
+	if loadDone != nil {
+		<-loadDone
+	}
 	m.chatMu.Lock()
 	defer m.chatMu.Unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.engine != nil {
-		m.engine.Close()
-		m.engine = nil
-		m.current = ""
+	engine := m.engine
+	m.engine = nil
+	m.current = ""
+	m.loadPhase = "idle"
+	m.loadError = ""
+	m.unloading = false
+	m.mu.Unlock()
+	if engine != nil {
+		engine.Close()
 	}
 }
 func (m *Manager) Generate(ctx context.Context, req protocol.ChatRequest) (string, error) {
@@ -288,12 +393,21 @@ func (m *Manager) Generate(ctx context.Context, req protocol.ChatRequest) (strin
 	m.mu.Lock()
 	engine := m.engine
 	model := m.current
-	m.mu.Unlock()
 	if engine == nil {
+		m.mu.Unlock()
 		return "", errors.New("no model loaded")
 	}
+	generationCtx, cancel := context.WithCancel(ctx)
+	m.generationCancel = cancel
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.generationCancel = nil
+		m.mu.Unlock()
+		cancel()
+	}()
 	req.Model = model
-	return engine.Generate(ctx, req)
+	return engine.Generate(generationCtx, req)
 }
 func (m *Manager) Close() {
 	m.mu.Lock()
