@@ -39,3 +39,29 @@ func TestReadSecretsRejectsLooseUnixPermissions(t *testing.T) {
 		t.Fatal("accepted secrets readable by other local users")
 	}
 }
+
+func TestAgentCredentialsStayPrivate(t *testing.T) {
+	dir := t.TempDir()
+	first := Agent{Coordinator: "https://127.0.0.1:8443"}
+	first.Node.NodeID = "node"
+	first.Node.Token = "secret"
+	if err := SaveAgent(dir, first); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := ReadAgent(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Node.NodeID != first.Node.NodeID || restored.Node.Token != first.Node.Token {
+		t.Fatalf("agent credentials were not persisted correctly")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(dir, "agent.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0077 != 0 {
+			t.Fatal("agent credentials are accessible by other users")
+		}
+	}
+}

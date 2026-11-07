@@ -39,7 +39,14 @@ func DefaultDir() string {
 }
 func ReadAgent(dir string) (Agent, error) {
 	var a Agent
-	b, err := os.ReadFile(filepath.Join(dir, "agent.json"))
+	path := filepath.Join(dir, "agent.json")
+	if _, err := os.Stat(path); err != nil {
+		return a, err
+	}
+	if err := securePrivateFile(path); err != nil {
+		return a, err
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return a, err
 	}
@@ -48,6 +55,9 @@ func ReadAgent(dir string) (Agent, error) {
 }
 func SaveAgent(dir string, a Agent) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	if err := securePrivateDir(dir); err != nil {
 		return err
 	}
 	body, err := json.MarshalIndent(a, "", "  ")
@@ -60,12 +70,19 @@ func atomicWrite(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
+	if err := securePrivateDir(filepath.Dir(path)); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-nodexlm-")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
 	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
+	if err := securePrivateFile(f.Name()); err != nil {
 		f.Close()
 		return err
 	}
@@ -80,7 +97,10 @@ func atomicWrite(path string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	return securePrivateFile(path)
 }
 
 func CreateCertificate(certPath, keyPath string, hosts []string) error {
