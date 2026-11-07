@@ -21,8 +21,8 @@ func securePrivateFile(path string) error {
 	return nil
 }
 
-// MkdirAll does not fix permissions on pre-existing directories. Restrict an
-// existing NodexLM credentials directory before writing any secrets.
+// MkdirAll does not fix permissions on pre-existing directories. Refuse
+// insecure folders rather than chmod an arbitrary user-configured path.
 func securePrivateDir(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -32,7 +32,7 @@ func securePrivateDir(path string) error {
 		return errors.New("credential directory must be a real directory")
 	}
 	if info.Mode().Perm()&0077 != 0 {
-		return os.Chmod(path, 0700)
+		return errors.New("credential directory must be private (0700); fix permissions before starting NodexLM")
 	}
 	return nil
 }
