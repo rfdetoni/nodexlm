@@ -26,7 +26,7 @@ Os 19 itens estão mapeados abaixo. As funcionalidades foram implementadas e val
 
 ## Evidências reproduzíveis
 
-- [Validação final do runtime e navegador](https://github.com/rfdetoni/nodexlm/actions/runs/42370633600) aprovada após retirar a credencial dos argumentos nativos. [Build final desktop/CLI](https://github.com/rfdetoni/nodexlm/actions/runs/42370633605) executa a regressão da credencial, testes Go/vet, cross-compilação e pacotes.
+- [Validação final do runtime e navegador](https://github.com/rfdetoni/nodexlm/actions/runs/42370633600) aprovada após retirar a credencial dos argumentos nativos. [Build final desktop/CLI](https://github.com/rfdetoni/nodexlm/actions/runs/42370633605) aprovado com regressão da credencial, testes Go/vet, cross-compilação e pacotes.
 
 - Go: `go test -race ./... -timeout 90s`, `go vet ./...`, `govulncheck ./...` (nenhuma vulnerabilidade encontrada na execução), regressão DOM do catálogo e smoke do instalador.
 - A credencial da API nativa é transmitida por ambiente, sem aparecer nos argumentos do processo; regressão cobre sobrescrita de credencial herdada e ausência nos argumentos.
