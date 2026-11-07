@@ -289,7 +289,7 @@ class MainActivity : Activity() {
             pickModel -> {showTab(1);library.importFromUris(uris)}
             pickCertificate -> thread(name="nodexlm-cert-import") {
                 try {
-                    val bytes=contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Certificate unreadable")
+                    val bytes=contentResolver.openInputStream(uri)?.use { boundedPairingBytes(it, 65536) } ?: error("Certificate unreadable")
                     require(bytes.size<65_536)
                     java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(bytes.inputStream())
                     File(filesDir,"coordinator.crt").writeBytes(bytes)

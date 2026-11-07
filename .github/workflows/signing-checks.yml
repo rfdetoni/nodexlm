@@ -1,0 +1,71 @@
+name: Release signing regressions
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['scripts/sign-windows.ps1', 'scripts/finalize-release.py', 'scripts/android-signing.py', 'scripts/test_release_tools.py', '.github/workflows/signing-checks.yml']
+permissions: {contents: read}
+concurrency:
+  group: nodexlm-signing-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - run: python3 -m unittest discover -s scripts -p test_release_tools.py
+  authenticode:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod, cache: false}
+      - name: Build test PE archives
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item test-dist -ItemType Directory | Out-Null
+          New-Item test-stage -ItemType Directory | Out-Null
+          foreach ($architecture in @('amd64','arm64')) {
+            $env:GOARCH=$architecture
+            go build -o test-stage/nodexlm.exe ./cmd/nodexlm
+            if ($LASTEXITCODE -ne 0) { throw 'Fixture compilation failed' }
+            Compress-Archive test-stage/nodexlm.exe "test-dist/nodexlm_windows_$architecture.zip"
+          }
+          $names=@('nodexlm_windows_amd64.zip','nodexlm_windows_arm64.zip')
+          $names | ForEach-Object { "$((Get-FileHash "test-dist/$_" -Algorithm SHA256).Hash.ToLower())  $_" } | Set-Content test-dist/SHA256SUMS.txt -Encoding ascii
+          @{components=@($names | ForEach-Object { @{name=$_;hashes=@()} })} | ConvertTo-Json -Depth 5 | Set-Content test-dist/nodexlm.cdx.json
+      - name: Verify timestamping, signature integrity and metadata refresh
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $certificate=$null
+          try {
+            $certificate=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=NodexLM CI ONLY' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(1)
+            Export-Certificate -Cert $certificate -FilePath test-certificate.cer | Out-Null
+            Import-Certificate -FilePath test-certificate.cer -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+            ./scripts/sign-windows.ps1 -Directory test-dist -CertificateThumbprint $certificate.Thumbprint
+            python scripts/finalize-release.py --directory test-dist
+            if ($LASTEXITCODE -ne 0) { throw 'Final metadata update failed' }
+            Expand-Archive test-dist/nodexlm_windows_amd64.zip tamper-check
+            $exe='tamper-check/nodexlm.exe'
+            $bytes=[IO.File]::ReadAllBytes($exe)
+            $bytes[512]=$bytes[512] -bxor 1
+            [IO.File]::WriteAllBytes($exe,$bytes)
+            if ((Get-AuthenticodeSignature $exe).Status -eq 'Valid') { throw 'Tampered PE signature was accepted' }
+            Add-Content test-dist/nodexlm_windows_amd64.zip 'tampered'
+            $rejected=$false
+            try { ./scripts/sign-windows.ps1 -Directory test-dist -CertificateThumbprint $certificate.Thumbprint }
+            catch { if ("$_" -notmatch 'Checksum mismatch') { throw }; $rejected=$true }
+            if (-not $rejected) { throw 'Tampered input archive was accepted' }
+            Write-Host 'PASS: CI-only signer, RFC3161 timestamp, tamper rejection and post-signing metadata.'
+          } finally {
+            if ($certificate) {
+              Remove-Item "Cert:\CurrentUser\Root\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
+              Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
+            }
+          }

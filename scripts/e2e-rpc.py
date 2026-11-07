@@ -9,6 +9,8 @@ import pathlib
 import re
 import shutil
 import socket
+import ssl
+import hashlib
 import subprocess
 import tempfile
 import time
@@ -69,8 +71,13 @@ def main():
                 env=env,stdout=log,stderr=log)
             processes.append(host)
             code = wait_for(lambda: re.search(r'PAIRING CODE: ([A-Z0-9]{8})',log_path.read_text()))[1]
+            # A wrong full pin must fail before enrollment writes credentials.
+            rejected=subprocess.run([str(CLI),'join','--dir',str(guest_dir),'--name','e2e-guest',
+                '--server',f'https://127.0.0.1:{lan_port}','--code',code,'--fingerprint','0'*64],env=env,capture_output=True,timeout=20)
+            assert rejected.returncode!=0 and not (guest_dir/'agent.json').exists(),'Wrong Host identity was enrolled'
+            fingerprint=hashlib.sha256(ssl.PEM_cert_to_DER_cert((host_dir/'server.crt').read_text())).hexdigest()
             subprocess.run([str(CLI),'join','--dir',str(guest_dir),'--name','e2e-guest',
-                '--server',f'https://127.0.0.1:{lan_port}','--code',code],env=env,check=True,capture_output=True,timeout=20)
+                '--server',f'https://127.0.0.1:{lan_port}','--code',code,'--fingerprint',fingerprint],env=env,check=True,capture_output=True,timeout=20)
             token = json.loads((host_dir/'secrets.json').read_text())['admin']
 
             def api(path, method='GET', body=None, key=token):

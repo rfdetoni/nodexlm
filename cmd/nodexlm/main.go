@@ -375,6 +375,7 @@ func makeClient(server, secret, ca, nodeID string) (*netclient.Client, error) {
 }
 func join(args []string) error {
 	f := fs("join")
+	fingerprint := f.String("fingerprint", "", "optional full Host certificate SHA-256 obtained out of band")
 	server := f.String("server", "", "HTTPS coordinator; optional when using --code on LAN")
 	code := f.String("code", "", "8-character pairing code displayed by the host")
 	discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "UDP discovery port")
@@ -442,6 +443,9 @@ func join(args []string) error {
 			if fetchErr != nil {
 				continue
 			}
+			if *fingerprint != "" && pairing.VerifyFingerprint(der, *fingerprint) != nil {
+				continue
+			}
 			if verifyErr := pairing.VerifyOffer(validated, offer, der); verifyErr != nil {
 				continue
 			}
@@ -475,6 +479,9 @@ func join(args []string) error {
 		fmt.Println("Node paired securely:", nodeName, "ID", cred.NodeID)
 		return nil
 	}
+	if *fingerprint != "" {
+		return errors.New("--fingerprint requires pairing by code")
+	}
 	if *server == "" || *model == "" {
 		return errors.New("legacy join requires --server and --model, or use --code")
 	}
@@ -502,6 +509,7 @@ func join(args []string) error {
 // distributed RPC Guest. The code proves TLS identity; no admin token is used.
 func guest(args []string) error {
 	f := fs("guest")
+	fingerprint := f.String("fingerprint", "", "optional full Host certificate SHA-256 obtained out of band")
 	device := f.String("rpc-device", "", "optional native device name; CPU forces a portable fallback")
 	server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
 	name := f.String("name", "", "display name of this Guest")
@@ -550,6 +558,7 @@ func guest(args []string) error {
 		if *code != "" {
 			options = append(options, "--code", *code)
 		}
+		options = append(options, "--fingerprint", *fingerprint)
 		if err := join(options); err != nil {
 			return err
 		}

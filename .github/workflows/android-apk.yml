@@ -11,6 +11,7 @@ on:
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/**'
+      - 'scripts/android-signing.py'
       - 'internal/llamaruntime/revision.json'
     tags:
       - 'v*'
@@ -152,6 +153,21 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Validate minified release signing with an ephemeral test identity
+        if: steps.signing.outputs.configured != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="$RUNNER_TEMP/nodexlm-test-identity"
+          python3 scripts/android-signing.py generate --directory "$identity"
+          export NODEXLM_ANDROID_KEYSTORE_FILE="$identity/android-release.p12"
+          export NODEXLM_ANDROID_STORE_PASSWORD="$(cat "$identity/password.txt")"
+          export NODEXLM_ANDROID_KEY_PASSWORD="$NODEXLM_ANDROID_STORE_PASSWORD"
+          export NODEXLM_ANDROID_KEY_ALIAS=nodexlm-android-release
+          (cd android && gradle --no-daemon --max-workers=2 :app:assembleRelease)
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify android/app/build/outputs/apk/release/app-release.apk
+          echo 'Minified release validation passed. Test-signed APK is not published.'
+
       - name: Build signed release APK
         if: steps.signing.outputs.configured == 'true'
         working-directory: android
@@ -181,7 +197,7 @@ jobs:
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
           cp "$apk" dist/NodexLM-android-universal.apk
-          (cd dist && sha256sum NodexLM-android-universal.apk > SHA256SUMS.txt)
+          (cd dist && sha256sum NodexLM-android-universal.apk > SHA256SUMS-android.txt)
 
       - name: Build update manifest for direct Android updates
         if: steps.signing.outputs.configured == 'true' && startsWith(github.ref, 'refs/tags/v')
@@ -207,10 +223,16 @@ jobs:
           name: nodexlm-android-release
           path: |
             dist/NodexLM-android-universal.apk
-            dist/SHA256SUMS.txt
+            dist/SHA256SUMS-android.txt
             dist/update.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Remove temporary signing keys
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/nodexlm-release.jks"
+          rm -rf "$RUNNER_TEMP/nodexlm-test-identity"
 
   publish:
     name: Publish signed APK to GitHub Releases
@@ -234,7 +256,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(release/NodexLM-android-universal.apk release/SHA256SUMS.txt release/update.json)
+          files=(release/NodexLM-android-universal.apk release/SHA256SUMS-android.txt release/update.json)
           for file in "${files[@]}"; do test -s "$file"; done
           # Semver release tags such as v1.0.0 are stable and appear at
           # /releases/latest; v1.0.0-rc.1 remains a prerelease.

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -134,7 +135,10 @@ func TestDiscoveryLoopbackAndTLSPin(t *testing.T) {
 }
 
 func TestPBKDF2CrossPlatformVector(t *testing.T) {
-	key := pbkdf2SHA256("ABCD2345", []byte("1234567890123456"))
+	key, err := pbkdf2SHA256("ABCD2345", []byte("1234567890123456"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	want, _ := hex.DecodeString("50afef495a66abc32381ec8488d56a8787d5035336643c84fa015abcaacc2074")
 	if !bytes.Equal(key[:], want) {
 		t.Fatalf("PBKDF2 incompatible with standard library: %x", key)
@@ -153,5 +157,22 @@ func TestUntrustedPairingOfferIsBoundedAndCancellable(t *testing.T) {
 	cancel()
 	if _, _, err := FetchUntrustedOffer(ctx, server.URL); err == nil {
 		t.Fatal("cancelled pairing fetch did not stop")
+	}
+}
+
+func TestTrustedFingerprintRejectsSubstitution(t *testing.T) {
+	cert := []byte("trusted-host-certificate")
+	sum := sha256.Sum256(cert)
+	pin := hex.EncodeToString(sum[:])
+	if err := VerifyFingerprint(cert, pin); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", pin[:32], strings.Repeat("z", 64)} {
+		if VerifyFingerprint(cert, bad) == nil {
+			t.Fatal("malformed fingerprint accepted")
+		}
+	}
+	if VerifyFingerprint([]byte("substituted-certificate"), pin) == nil {
+		t.Fatal("substituted TLS identity accepted")
 	}
 }

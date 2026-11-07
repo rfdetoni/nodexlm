@@ -40,15 +40,25 @@ internal class PairingClient(private val context: Context) {
         require(code.length == 8 && code.all { ALPHABET.contains(it) }) { "Enter an 8-character alphanumeric host code" }
         val endpoints = if (inputEndpoint.isBlank()) discover() else listOf(inputEndpoint.trimEnd('/'))
         if (endpoints.isEmpty()) error("No host found; ensure both devices are on the same Wi-Fi or enter the host's HTTPS URL")
+        // An explicitly imported or previously enrolled certificate remains an
+        // additional trust constraint. A new Host requires a deliberate import.
+        val trustedFile = File(context.filesDir, "coordinator.crt")
+        val trusted = if (trustedFile.exists()) trustedFile.inputStream().use {
+            java.security.cert.CertificateFactory.getInstance("X.509")
+                .generateCertificate(boundedPairingBytes(it, 65536).inputStream()).encoded
+        } else null
         val matches = mutableListOf<Pair<String, ByteArray>>()
         for (endpoint in endpoints) {
             try {
                 val remote = URL(endpoint)
-                if (remote.protocol != "https") continue
+                if (remote.protocol != "https" || remote.userInfo != null || remote.query != null || remote.ref != null) continue
                 val certDER = fetchCertificate(remote)
+                if (trusted != null && !MessageDigest.isEqual(trusted, certDER)) continue
                 val offer = requestOffer(endpoint, certDER)
                 if (offer.getString("endpoint") != endpoint) continue
-                if (offer.getString("expires").let { java.time.Instant.parse(it).isBefore(java.time.Instant.now()) }) continue
+                val expires = java.time.Instant.parse(offer.getString("expires"))
+                val now = java.time.Instant.now()
+                if (expires.isBefore(now) || expires.isAfter(now.plusSeconds(31 * 60L))) continue
                 val salt = Base64.getUrlDecoder().decode(offer.getString("salt"))
                 val nonce = Base64.getUrlDecoder().decode(offer.getString("nonce"))
                 if (salt.size != 16 || nonce.size != 16) continue
@@ -89,7 +99,7 @@ internal class PairingClient(private val context: Context) {
             c.setRequestProperty("Content-Type", "application/json")
             c.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
             if (c.responseCode != 201) error("Host refused enrollment (HTTP ${c.responseCode})")
-            JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+            JSONObject(c.inputStream.use { boundedPairingBytes(it).toString(Charsets.UTF_8) })
         } finally { c.disconnect() }
         val nodeID = response.getString("node_id")
         val token = response.getString("token")
@@ -144,8 +154,10 @@ internal class PairingClient(private val context: Context) {
         }
         val tls = SSLContext.getInstance("TLS")
         tls.init(null, arrayOf<TrustManager>(untrusted), SecureRandom())
+        val address = InetAddress.getByName(url.host)
+        require(address.isSiteLocalAddress || address.isLoopbackAddress) { "Pairing requires a private LAN address" }
         val raw = java.net.Socket()
-        raw.connect(java.net.InetSocketAddress(url.host, if (url.port > 0) url.port else 443), 5000)
+        raw.connect(java.net.InetSocketAddress(address, if (url.port > 0) url.port else 443), 5000)
         val socket = try {
             tls.socketFactory.createSocket(raw, url.host, if (url.port > 0) url.port else 443, true) as SSLSocket
         } catch (e: Exception) {
@@ -170,7 +182,7 @@ internal class PairingClient(private val context: Context) {
             c.connectTimeout = 5000
             c.readTimeout = 5000
             if (c.responseCode != 200) error("Pairing session unavailable")
-            JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+            JSONObject(c.inputStream.use { boundedPairingBytes(it).toString(Charsets.UTF_8) })
         } finally { c.disconnect() }
     }
 

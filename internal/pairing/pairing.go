@@ -5,6 +5,7 @@ package pairing
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -81,37 +82,44 @@ func Normalize(code string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(code), "-", ""), " ", ""))
 }
 
-// pbkdf2SHA256 implements PBKDF2-HMAC-SHA256 for one 32-byte output block.
-// Kept self-contained for the zero-dependency Go runtime.
-func pbkdf2SHA256(password string, salt []byte) [32]byte {
-	var block [4]byte
-	block[3] = 1
-	h := hmac.New(sha256.New, []byte(password))
-	_, _ = h.Write(salt)
-	_, _ = h.Write(block[:])
-	u := h.Sum(nil)
-	var out [32]byte
-	copy(out[:], u)
-	for i := 1; i < kdfRounds; i++ {
-		h.Reset()
-		_, _ = h.Write(u)
-		u = h.Sum(u[:0])
-		for j := range out {
-			out[j] ^= u[j]
-		}
+// Use the standard-library KDF while preserving the Android wire vector.
+func pbkdf2SHA256(password string, salt []byte) ([32]byte, error) {
+	key, err := pbkdf2.Key(sha256.New, password, salt, kdfRounds, 32)
+	var result [32]byte
+	if err != nil {
+		return result, err
 	}
-	return out
+	copy(result[:], key)
+	clear(key)
+	return result, nil
 }
 
-func commitment(code string, salt, nonce []byte, fingerprint [32]byte) [32]byte {
-	key := pbkdf2SHA256(code, salt)
+// VerifyFingerprint checks a full certificate SHA-256 obtained out of band.
+func VerifyFingerprint(certDER []byte, expected string) error {
+	pin, err := hex.DecodeString(strings.ReplaceAll(strings.TrimSpace(expected), ":", ""))
+	if err != nil || len(pin) != sha256.Size {
+		return errors.New("fingerprint must contain a full SHA-256 certificate digest")
+	}
+	actual := sha256.Sum256(certDER)
+	if subtle.ConstantTimeCompare(pin, actual[:]) != 1 {
+		return errors.New("Host certificate does not match trusted fingerprint")
+	}
+	return nil
+}
+
+func commitment(code string, salt, nonce []byte, fingerprint [32]byte) ([32]byte, error) {
+	key, err := pbkdf2SHA256(code, salt)
+	if err != nil {
+		return [32]byte{}, err
+	}
 	h := hmac.New(sha256.New, key[:])
 	_, _ = h.Write([]byte("nodexlm-pairing-v1\x00"))
 	_, _ = h.Write(fingerprint[:])
 	_, _ = h.Write(nonce)
 	var result [32]byte
 	copy(result[:], h.Sum(nil))
-	return result
+	clear(key[:])
+	return result, nil
 }
 
 func NewSession(certDER []byte, ttl time.Duration) (*Session, string, error) {
@@ -129,7 +137,10 @@ func NewSession(certDER []byte, ttl time.Duration) (*Session, string, error) {
 	if _, err := rand.Read(p.nonce[:]); err != nil {
 		return nil, "", err
 	}
-	p.proof = commitment(code, p.salt[:], p.nonce[:], p.fingerprint)
+	p.proof, err = commitment(code, p.salt[:], p.nonce[:], p.fingerprint)
+	if err != nil {
+		return nil, "", err
+	}
 	return p, code, nil
 }
 func (p *Session) Active() bool {
@@ -180,7 +191,10 @@ func VerifyOffer(code string, offer Offer, certDER []byte) error {
 	if err != nil || len(proof) != 32 {
 		return errors.New("invalid pairing proof")
 	}
-	expected := commitment(code, salt, nonce, sha256.Sum256(certDER))
+	expected, err := commitment(code, salt, nonce, sha256.Sum256(certDER))
+	if err != nil {
+		return err
+	}
 	if subtle.ConstantTimeCompare(proof, expected[:]) != 1 {
 		return errors.New("pairing code does not match the coordinator TLS identity")
 	}

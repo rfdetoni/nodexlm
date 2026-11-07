@@ -17,6 +17,8 @@ on:
       - 'scripts/test-install.sh'
       - 'scripts/sbom.py'
       - 'scripts/package-*.py'
+      - 'scripts/sign-windows.ps1'
+      - 'scripts/finalize-release.py'
       - 'install.sh'
     tags:
       - 'v*'
@@ -34,6 +36,9 @@ jobs:
   build-release:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      windows-signing: ${{ steps.signing.outputs.configured }}
+      version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -42,6 +47,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Validate production signing configuration
+        id: signing
+        env:
+          PFX: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$PFX" && -n "$PASSWORD" ]]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          elif [[ -n "$PFX" || -n "$PASSWORD" || "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '::error::Production Windows releases require WINDOWS_PFX_BASE64 and WINDOWS_PFX_PASSWORD from a trusted Code Signing certificate.'
+            exit 1
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Determine release version
+        id: version
+        run: |
+          version="0.1.0-edge.${GITHUB_RUN_NUMBER}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then version="${GITHUB_REF_NAME#v}"; fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
       - name: Go tests and vet (Linux Guest metrics, CLI and Host)
         run: |
           go test ./...
@@ -78,10 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="0.1.0-edge.${GITHUB_RUN_NUMBER}"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          fi
+          version='${{ steps.version.outputs.value }}'
           mkdir -p dist stage
           for target in linux_amd64 linux_arm64 linux_armv7 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64; do
             os="${target%%_*}"
@@ -118,6 +141,7 @@ jobs:
           cat dist/SHA256SUMS.txt
           python3 scripts/sbom.py --directory dist --version "$version" --commit "$GITHUB_SHA" --go-version "$(go env GOVERSION)"
       - name: Attest release binaries (SLSA provenance)
+        if: steps.signing.outputs.configured != 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: 'dist/*'
@@ -128,6 +152,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish public release assets
+        if: steps.signing.outputs.configured != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -148,4 +173,63 @@ jobs:
               --target "$GITHUB_SHA" --title "NodexLM $tag" \
               --notes 'CLI and embedded headless Web console for Linux, macOS and Windows. Platform-native llama.cpp runtime is provisioned when needed. Checksums are in SHA256SUMS.txt. For permanent upgrades use the same release channel.' \
               "${flags[@]}"
+          fi
+
+  sign-windows:
+    name: Sign Windows executables before publication
+    needs: build-release
+    if: needs.build-release.outputs.windows-signing == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: nodexlm-desktop-binaries, path: dist}
+      - name: Import identity, sign and verify Windows binaries
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'nodexlm-signing.pfx'
+          $identities = @()
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
+            $password = ConvertTo-SecureString $env:WINDOWS_PFX_PASSWORD -AsPlainText -Force
+            $identities = @(Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password)
+            $signers = @($identities | Where-Object { $_.HasPrivateKey })
+            if ($signers.Count -ne 1) { throw 'Exactly one Code Signing private identity is required.' }
+            ./scripts/sign-windows.ps1 -Directory dist -CertificateThumbprint $signers[0].Thumbprint
+          } finally {
+            foreach ($certificate in $identities) { Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue }
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+      - name: Refresh checksums, SBOM and registry manifests
+        shell: bash
+        run: |
+          version='${{ needs.build-release.outputs.version }}'
+          args=(--directory dist)
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then args+=(--stable-version "$version"); fi
+          python scripts/finalize-release.py "${args[@]}"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with: {subject-path: 'dist/*'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: nodexlm-desktop-signed, path: 'dist/*', retention-days: 14}
+      - name: Publish signed release assets
+        shell: bash
+        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
+        run: |
+          set -euo pipefail
+          tag=nodexlm-edge
+          flags=(--prerelease --latest=false)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"; flags=(--latest)
+            if [[ "$tag" == *-* ]]; then flags=(--prerelease --latest=false); fi
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "NodexLM $tag" --notes 'Windows executables are Authenticode signed and timestamped. Final archives, packages, checksums and SBOM are attested after signing.' "${flags[@]}"
           fi
