@@ -39,36 +39,53 @@ jobs:
           $names=@('nodexlm_windows_amd64.zip','nodexlm_windows_arm64.zip')
           $names | ForEach-Object { "$((Get-FileHash "test-dist/$_" -Algorithm SHA256).Hash.ToLower())  $_" } | Set-Content test-dist/SHA256SUMS.txt -Encoding ascii
           @{components=@($names | ForEach-Object { @{name=$_;hashes=@()} })} | ConvertTo-Json -Depth 5 | Set-Content test-dist/nodexlm.cdx.json
+      - name: Prepare disposable PFX and noninteractive CI trust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $openssl="${env:ProgramFiles}\Git\usr\bin\openssl.exe"
+          Write-Host 'Creating disposable software-only key and Code Signing certificate'
+          & $openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes -keyout test-signing.key -out test-signing.pem -subj '/CN=NodexLM-CI-ONLY' -addext 'extendedKeyUsage=codeSigning' -addext 'keyUsage=digitalSignature' -addext 'basicConstraints=critical,CA:false'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot create CI test certificate' }
+          $env:NODEXLM_TEST_PFX_PASSWORD=[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+          & $openssl pkcs12 -export -out test-signing.pfx -inkey test-signing.key -in test-signing.pem -passout env:NODEXLM_TEST_PFX_PASSWORD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot create disposable PFX' }
+          $password=ConvertTo-SecureString $env:NODEXLM_TEST_PFX_PASSWORD -AsPlainText -Force
+          Write-Host 'Importing CI-only PFX into the current runner user'
+          $certificate=Import-PfxCertificate -FilePath test-signing.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "NODEXLM_TEST_CERT_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+          Export-Certificate -Cert $certificate -FilePath test-certificate.cer | Out-Null
+          Write-Host 'Adding the disposable public root to the ephemeral CI machine store'
+          certutil -f -addstore Root test-certificate.cer
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot initialize disposable CI trust' }
+          Remove-Item test-signing.key,test-signing.pem,test-signing.pfx -Force
       - name: Verify timestamping, signature integrity and metadata refresh
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $certificate=$null
-          try {
-            Write-Host 'Creating disposable software signing key'
-            $certificate=New-SelfSignedCertificate -Provider 'Microsoft Software Key Storage Provider' -KeyAlgorithm RSA -KeyLength 2048 -Type CodeSigningCert -Subject 'CN=NodexLM CI ONLY' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(1)
-            Export-Certificate -Cert $certificate -FilePath test-certificate.cer | Out-Null
-            Write-Host 'Trusting this disposable CI certificate only for the current runner user'
-            certutil -user -f -addstore Root test-certificate.cer
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot initialize CI-only trust store' }
-            ./scripts/sign-windows.ps1 -Directory test-dist -CertificateThumbprint $certificate.Thumbprint
-            python scripts/finalize-release.py --directory test-dist
-            if ($LASTEXITCODE -ne 0) { throw 'Final metadata update failed' }
-            Expand-Archive test-dist/nodexlm_windows_amd64.zip tamper-check
-            $exe='tamper-check/nodexlm.exe'
-            $bytes=[IO.File]::ReadAllBytes($exe)
-            $bytes[512]=$bytes[512] -bxor 1
-            [IO.File]::WriteAllBytes($exe,$bytes)
-            if ((Get-AuthenticodeSignature $exe).Status -eq 'Valid') { throw 'Tampered PE signature was accepted' }
-            Add-Content test-dist/nodexlm_windows_amd64.zip 'tampered'
-            $rejected=$false
-            try { ./scripts/sign-windows.ps1 -Directory test-dist -CertificateThumbprint $certificate.Thumbprint }
-            catch { if ("$_" -notmatch 'Checksum mismatch') { throw }; $rejected=$true }
-            if (-not $rejected) { throw 'Tampered input archive was accepted' }
-            Write-Host 'PASS: CI-only signer, RFC3161 timestamp, tamper rejection and post-signing metadata.'
-          } finally {
-            if ($certificate) {
-              Remove-Item "Cert:\CurrentUser\Root\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
-              Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
-            }
+          $thumbprint=$env:NODEXLM_TEST_CERT_THUMBPRINT
+          ./scripts/sign-windows.ps1 -Directory test-dist -CertificateThumbprint $thumbprint
+          python scripts/finalize-release.py --directory test-dist
+          if ($LASTEXITCODE -ne 0) { throw 'Final metadata update failed' }
+          Expand-Archive test-dist/nodexlm_windows_amd64.zip tamper-check
+          $exe='tamper-check/nodexlm.exe'
+          $bytes=[IO.File]::ReadAllBytes($exe)
+          $bytes[512]=$bytes[512] -bxor 1
+          [IO.File]::WriteAllBytes($exe,$bytes)
+          if ((Get-AuthenticodeSignature $exe).Status -eq 'Valid') { throw 'Tampered PE signature was accepted' }
+          Add-Content test-dist/nodexlm_windows_amd64.zip 'tampered'
+          $rejected=$false
+          try { ./scripts/sign-windows.ps1 -Directory test-dist -CertificateThumbprint $thumbprint }
+          catch { if ("$_" -notmatch 'Checksum mismatch') { throw }; $rejected=$true }
+          if (-not $rejected) { throw 'Tampered input archive was accepted' }
+          Write-Host 'PASS: CI-only PFX signer, RFC3161 timestamp, tamper rejection and post-signing metadata.'
+      - name: Remove disposable CI identities
+        if: always()
+        shell: pwsh
+        run: |
+          $thumbprint=$env:NODEXLM_TEST_CERT_THUMBPRINT
+          if ($thumbprint) {
+            Remove-Item "Cert:\LocalMachine\Root\$thumbprint" -ErrorAction SilentlyContinue
+            Remove-Item "Cert:\CurrentUser\My\$thumbprint" -DeleteKey -ErrorAction SilentlyContinue
           }
+          Remove-Item test-signing.key,test-signing.pem,test-signing.pfx,test-certificate.cer -Force -ErrorAction SilentlyContinue
