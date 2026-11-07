@@ -4,6 +4,8 @@ package local
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/config"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/processguard"
 )
 
 // Managed is a lazy local llama-server owner. It keeps GGUF tensors out of
@@ -41,6 +44,8 @@ type Managed struct {
 	RPCLocalLayers int
 	started        *exec.Cmd
 	endpoint       *Engine
+	apiKey         string
+	apiKeyFile     string
 	idleTimer      *time.Timer
 }
 
@@ -128,8 +133,34 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if gpu == "" {
 		gpu = "auto"
 	}
+	// Store a fresh per-process API secret in a private file, never in the
+	// command line or shared dashboard settings. Local clients must authorize.
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return err
+	}
+	key := hex.EncodeToString(secret)
+	keyFile, err := os.CreateTemp("", ".nodexlm-api-key-")
+	if err != nil {
+		return err
+	}
+	m.apiKeyFile = keyFile.Name()
+	defer func() {
+		if m.started == nil {
+			_ = os.Remove(m.apiKeyFile)
+			m.apiKeyFile = ""
+		}
+	}()
+	if _, err := fmt.Fprintln(keyFile, key); err != nil {
+		_ = keyFile.Close()
+		return err
+	}
+	if err := keyFile.Close(); err != nil {
+		return err
+	}
 	args := m.args(port, nctx, threads, gpu, meta.BlockCount)
 	cmd := exec.Command(m.Binary, args...)
+	processguard.Attach(cmd)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -141,16 +172,19 @@ func (m *Managed) ensure(ctx context.Context) error {
 		_ = cmd.Wait()
 		return err
 	}
+	endpoint.APIKey = key
 	startup, stop := context.WithTimeout(ctx, 90*time.Second)
 	defer stop()
 	for {
 		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+"/health", nil)
 		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+key)
 			res, err := endpoint.HTTP.Do(req)
 			if err == nil {
 				res.Body.Close()
 				if res.StatusCode == 200 {
 					m.started = cmd
+					m.apiKey = key
 					m.endpoint = endpoint
 					return nil
 				}
@@ -177,6 +211,11 @@ func (m *Managed) stopLocked() {
 		m.started = nil
 		m.endpoint = nil
 	}
+	if m.apiKeyFile != "" {
+		_ = os.Remove(m.apiKeyFile)
+		m.apiKeyFile = ""
+	}
+	m.apiKey = ""
 }
 func (m *Managed) Close() {
 	m.mu.Lock()
@@ -205,6 +244,9 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 
 func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []string {
 	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui"}
+	if m.apiKeyFile != "" {
+		args = append(args, "--api-key-file", m.apiKeyFile)
+	}
 	switch {
 	case m.MoECPU:
 		args = append(args, "--cpu-moe")
