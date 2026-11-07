@@ -46,7 +46,6 @@ class RpcGuestService : Service() {
         const val STOP = "dev.nodexlm.RPC_STOP"
         const val EXTRA_ENDPOINT = "endpoint"
         const val EXTRA_NODE = "node"
-        const val EXTRA_TOKEN = "token"
         const val EXTRA_NAME = "name"
         const val EXTRA_MODE = "mode"
         private const val CHANNEL = "nodexlm_rpc_guest"
@@ -75,7 +74,10 @@ class RpcGuestService : Service() {
         if (!running.compareAndSet(false, true)) return START_NOT_STICKY
         val endpoint = intent.getStringExtra(EXTRA_ENDPOINT) ?: ""
         val node = intent.getStringExtra(EXTRA_NODE) ?: ""
-        val token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
+        val token = try { NodeSecrets.read(this) } catch (e: Exception) {
+            Log.e(LOG, "Cannot read protected node token", e)
+            ""
+        }
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { Build.MODEL }
         val mode = intent.getStringExtra(EXTRA_MODE).orEmpty().ifBlank { "auto" }
         val parsed = try { URI(endpoint) } catch (_: Exception) { null }
