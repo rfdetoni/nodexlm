@@ -57,25 +57,36 @@ func New(adminToken, enrollmentToken string) (*Server, error) {
 	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
 }
 
-func (s *Server) Handler() http.Handler {
+// Handler includes administrative endpoints and must only be exposed on localhost.
+func (s *Server) Handler() http.Handler { return s.handler(true) }
+
+// LANHandler is limited to authenticated Guest and pairing traffic.
+// Administrative endpoints are only served by the loopback dashboard.
+func (s *Server) LANHandler() http.Handler { return s.handler(false) }
+
+func (s *Server) handler(administrative bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/nodes/enroll", s.enroll)
 	mux.HandleFunc("GET /v1/pairing/offer", s.pairingOffer)
-	mux.HandleFunc("POST /v1/pairing/start", s.pairingStart)
+	if administrative {
+		mux.HandleFunc("POST /v1/pairing/start", s.pairingStart)
+	}
 	mux.HandleFunc("POST /v1/pairing/enroll", s.pairingEnroll)
 	mux.HandleFunc("POST /v1/nodes/heartbeat", s.heartbeat)
 	mux.HandleFunc("GET /v1/nodes/catalog", s.modelCatalog)
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
 	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
 	mux.HandleFunc("POST /v1/nodes/result/{id}", s.result)
-	mux.HandleFunc("GET /v1/nodes", s.listNodes)
-	mux.HandleFunc("DELETE /v1/nodes/{id}", s.revokeNode)
-	mux.HandleFunc("POST /v1/jobs", s.submit)
-	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
-	mux.HandleFunc("POST /v1/chat/completions", s.chat)
+	if administrative {
+		mux.HandleFunc("GET /v1/nodes", s.listNodes)
+		mux.HandleFunc("DELETE /v1/nodes/{id}", s.revokeNode)
+		mux.HandleFunc("POST /v1/jobs", s.submit)
+		mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
+		mux.HandleFunc("POST /v1/chat/completions", s.chat)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
