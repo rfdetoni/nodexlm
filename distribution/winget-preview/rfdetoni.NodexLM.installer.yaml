@@ -1,0 +1,16 @@
+PackageIdentifier: rfdetoni.NodexLM
+PackageVersion: 0.1.0-edge.35
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: nodexlm.exe
+    PortableCommandAlias: nodexlm
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/rfdetoni/nodexlm/releases/download/nodexlm-preview-274ef979/nodexlm_windows_amd64.zip
+    InstallerSha256: 54EEE378FAA6A335005098FED45DF6F4A0F08943132F487D7232E30DD556A6F3
+  - Architecture: arm64
+    InstallerUrl: https://github.com/rfdetoni/nodexlm/releases/download/nodexlm-preview-274ef979/nodexlm_windows_arm64.zip
+    InstallerSha256: 054B35A83ED396A09CCEBBB63B9232F26C19C30DBB0C7A2979520D533FD6BF74
+ManifestType: installer
+ManifestVersion: 1.6.0

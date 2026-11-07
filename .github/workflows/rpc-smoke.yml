@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/rpc-smoke.yml', 'internal/llamaruntime/revision.json', 'internal/rpcmesh/run*.go', 'scripts/e2e-rpc.py']
+    paths: ['.github/workflows/rpc-smoke.yml', 'internal/llamaruntime/revision.json', 'internal/rpcmesh/run*.go', 'scripts/e2e-rpc.py', 'scripts/hardware-acceptance.py']
 permissions: {contents: read}
 concurrency:
   group: nodexlm-rpc-smoke-${{ github.ref }}

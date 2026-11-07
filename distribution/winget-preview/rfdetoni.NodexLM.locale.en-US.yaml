@@ -1,0 +1,9 @@
+PackageIdentifier: rfdetoni.NodexLM
+PackageVersion: 0.1.0-edge.35
+PackageLocale: en-US
+Publisher: Rodrigo de Toni
+PackageName: NodexLM
+License: AGPL-3.0-only
+ShortDescription: Local distributed GGUF inference
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

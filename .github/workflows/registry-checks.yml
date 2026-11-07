@@ -1,0 +1,19 @@
+name: Registry manifest validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['distribution/winget-preview/**', 'scripts/validate-manifests.py', 'scripts/package-manifests.py', 'scripts/test_release_tools.py', '.github/workflows/registry-checks.yml']
+permissions: {contents: read}
+jobs:
+  winget:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Validate official Microsoft schemas and published archive digests
+        run: |
+          python3 -m pip install --target "$RUNNER_TEMP/manifest-packages" 'jsonschema==4.25.1' 'PyYAML==6.0.3'
+          PYTHONPATH="$RUNNER_TEMP/manifest-packages" python3 scripts/validate-manifests.py --directory distribution/winget-preview --check-downloads
+          python3 -m unittest discover -s scripts -p test_release_tools.py

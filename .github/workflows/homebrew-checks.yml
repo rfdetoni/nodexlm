@@ -1,0 +1,26 @@
+name: Homebrew preview installation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['Formula/**', '.github/workflows/homebrew-checks.yml']
+permissions: {contents: read}
+concurrency:
+  group: nodexlm-homebrew-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  install:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_ANALYTICS: 1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Install the pinned preview from this tap
+        run: |
+          brew tap rfdetoni/nodexlm "$GITHUB_WORKSPACE"
+          brew install rfdetoni/nodexlm/nodexlm
+          brew test rfdetoni/nodexlm/nodexlm
+          nodexlm version
