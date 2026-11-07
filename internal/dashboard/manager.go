@@ -3,15 +3,13 @@
 package dashboard
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +26,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/safedownload"
 )
 
 // Settings are persisted independently of the UI. The model weights live only
@@ -91,12 +90,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err = m.validate(m.settings); err != nil {
 		return nil, fmt.Errorf("runtime settings: %w", err)
 	}
-	m.httpClient = &http.Client{Timeout: 0, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) > 8 {
-			return errors.New("too many redirects")
-		}
-		return validateURL(req.URL)
-	}, Transport: &http.Transport{Proxy: nil, DialContext: safeDial, MaxIdleConns: 2, MaxIdleConnsPerHost: 1, IdleConnTimeout: 10 * time.Second}}
+	m.httpClient = safedownload.Client()
 	return m, nil
 }
 
@@ -583,11 +577,9 @@ func (m *Manager) fetchModelPart(ctx context.Context, source, target string, off
 	if writer.n > limit-offset || resp.ContentLength >= 0 && writer.n != resp.ContentLength {
 		return 0, errors.New("incomplete or oversized GGUF part")
 	}
-	if expected := strings.Trim(resp.Header.Get("X-Linked-Etag"), "\""); len(expected) == 64 {
-		raw, err := hex.DecodeString(expected)
-		if err == nil && !bytes.Equal(raw, sum.Sum(nil)) {
-			return 0, errors.New("GGUF LFS SHA-256 mismatch")
-		}
+	if expected, ok := safedownload.ExpectedSHA256(resp.Header); ok &&
+		subtle.ConstantTimeCompare(sum.Sum(nil), expected) != 1 {
+		return 0, errors.New("GGUF LFS SHA-256 mismatch")
 	}
 	if err = file.Sync(); err != nil {
 		return 0, err
@@ -657,27 +649,3 @@ func (c *countWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// safeDial blocks IP ranges useful for SSRF even after DNS resolution. It does
-// not accept proxies; the download destination must be a public HTTPS host.
-func safeDial(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	dial := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	for _, item := range ips {
-		ip := item.IP
-		if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			continue
-		}
-		c, err := dial.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
-		if err == nil {
-			return c, nil
-		}
-	}
-	return nil, errors.New("public download destination unavailable")
-}
