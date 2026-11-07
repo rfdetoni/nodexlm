@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/netclient"
+	"github.com/rfdetoni/nodexlm/internal/processguard"
 )
 
 // RunNativeGuest supervises one RPC compute server and its TLS reverse tunnels.
@@ -44,6 +45,7 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	_ = probe.Close()
 	// The native GGML RPC server is always restricted to loopback.
 	cmd := exec.CommandContext(ctx, executable, "--host", host, "--port", port)
+	processguard.Attach(cmd)
 	cmd.Env = nativeRPCEnvironment(executable)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
