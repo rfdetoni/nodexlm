@@ -71,3 +71,26 @@ func TestRPCFirstLayersStayLocal(t *testing.T) {
 		t.Fatalf("expected 28 remote layers plus the locally overridden output tensor; got %s", args)
 	}
 }
+
+func TestEngineSendsManagedBearerCredential(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer per-process-secret" {
+			t.Errorf("missing managed inference authorization: %q", got)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{
+			map[string]any{"message": protocol.Message{Role: "assistant", Content: "ok"}},
+		}})
+	}))
+	defer server.Close()
+	engine, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.APIKey = "per-process-secret"
+	out, err := engine.Generate(context.Background(), protocol.ChatRequest{Messages: []protocol.Message{{Role: "user", Content: "hello"}}})
+	if err != nil || out != "ok" {
+		t.Fatalf("authenticated generation: output %q err %v", out, err)
+	}
+}
