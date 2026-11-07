@@ -97,7 +97,8 @@ internal class PairingClient(private val context: Context) {
         File(context.filesDir, "coordinator.crt").writeBytes(certificate)
         val saved = context.getSharedPreferences("nodexlm", Context.MODE_PRIVATE).edit()
             .putString("coordinator", endpoint).putString("node_id", nodeID)
-            .putString("node_token", token).putString("name", name).remove("join")
+            .putString("node_token_encrypted", NodeSecrets.encrypt(token)).remove("node_token")
+            .putString("name", name).remove("join")
             .commit()
         if (!saved) error("Could not persist pairing credentials")
         return endpoint

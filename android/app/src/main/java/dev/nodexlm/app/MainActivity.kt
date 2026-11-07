@@ -210,7 +210,7 @@ class MainActivity : Activity() {
     }
 
     private fun startRpcGuest() {
-        val token = prefs.getString("node_token","").orEmpty()
+        val token = runCatching { NodeSecrets.read(this) }.getOrDefault("")
         val id = prefs.getString("node_id","").orEmpty()
         val endpoint = prefs.getString("coordinator","").orEmpty()
         if (token.isBlank() || id.isBlank() || !endpoint.startsWith("https://")) {
@@ -228,7 +228,6 @@ class MainActivity : Activity() {
                 .setAction(RpcGuestService.START)
                 .putExtra(RpcGuestService.EXTRA_ENDPOINT,endpoint)
                 .putExtra(RpcGuestService.EXTRA_NODE,id)
-                .putExtra(RpcGuestService.EXTRA_TOKEN,token)
                 .putExtra(RpcGuestService.EXTRA_NAME,prefs.getString("name",Build.MODEL) ?: Build.MODEL)
                 .putExtra(RpcGuestService.EXTRA_MODE,prefs.getString("rpc_mode", "auto") ?: "auto")
             startForegroundService(intent)
@@ -238,7 +237,7 @@ class MainActivity : Activity() {
 
     private fun startWorker() {
         val file=ModelFiles.selected(this)
-        val token=prefs.getString("node_token","")
+        val token=runCatching { NodeSecrets.read(this) }.getOrDefault("")
         if(file==null || token.isNullOrBlank()) {
             setStatus("Conecte ao Host e selecione um modelo GGUF na aba Modelos")
             return

@@ -8,6 +8,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.os.BatteryManager
+import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
@@ -46,7 +48,6 @@ class RpcGuestService : Service() {
         const val STOP = "dev.nodexlm.RPC_STOP"
         const val EXTRA_ENDPOINT = "endpoint"
         const val EXTRA_NODE = "node"
-        const val EXTRA_TOKEN = "token"
         const val EXTRA_NAME = "name"
         const val EXTRA_MODE = "mode"
         private const val CHANNEL = "nodexlm_rpc_guest"
@@ -75,7 +76,10 @@ class RpcGuestService : Service() {
         if (!running.compareAndSet(false, true)) return START_NOT_STICKY
         val endpoint = intent.getStringExtra(EXTRA_ENDPOINT) ?: ""
         val node = intent.getStringExtra(EXTRA_NODE) ?: ""
-        val token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
+        val token = try { NodeSecrets.read(this) } catch (e: Exception) {
+            Log.e(LOG, "Cannot read protected node token", e)
+            ""
+        }
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { Build.MODEL }
         val mode = intent.getStringExtra(EXTRA_MODE).orEmpty().ifBlank { "auto" }
         val parsed = try { URI(endpoint) } catch (_: Exception) { null }
@@ -135,6 +139,7 @@ class RpcGuestService : Service() {
                 // Do not keep publishing heartbeat or reconnecting to a dead worker.
                 while (running.get()) {
                     check(NativeRpc.isRunning()) { "Native GGML RPC server exited unexpectedly" }
+                    checkThermalsAndBattery()
                     sleepWhileRunning(1_000L)
                 }
             } catch (e: Throwable) {
@@ -173,9 +178,25 @@ class RpcGuestService : Service() {
         try {
             val wifi = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
             @Suppress("DEPRECATION")
-            wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "NodexLM:rpc-wifi")
+            wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "NodexLM:rpc-wifi")
                 .apply { setReferenceCounted(false); acquire() }
         } catch (e: Exception) { Log.w(LOG, "Wi-Fi wake lock unavailable", e) }
+    }
+
+    private fun checkThermalsAndBattery() {
+        val power = getSystemService(POWER_SERVICE) as PowerManager
+        check(power.currentThermalStatus < PowerManager.THERMAL_STATUS_SEVERE) {
+            "Device too hot for safe RPC processing"
+        }
+        val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (percent in 1..15) {
+            val state = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val charging = state == BatteryManager.BATTERY_STATUS_CHARGING ||
+                state == BatteryManager.BATTERY_STATUS_FULL
+            check(charging) { "Battery low; stopping background RPC Guest" }
+        }
     }
 
     private fun sleepWhileRunning(duration: Long) {
