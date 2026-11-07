@@ -4,6 +4,8 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -486,7 +488,8 @@ func (m *Manager) downloadModel(ctx context.Context, source, path, name string) 
 		return
 	}
 	counter := &countWriter{w: f, update: func(n int64) { m.mu.Lock(); m.download.Received = n; m.mu.Unlock() }}
-	_, err = io.Copy(counter, io.LimitReader(resp.Body, maxSize+1))
+	digest := sha256.New()
+	_, err = io.Copy(io.MultiWriter(counter, digest), io.LimitReader(resp.Body, maxSize+1))
 	if err != nil {
 		errorText = err.Error()
 		return
@@ -497,6 +500,10 @@ func (m *Manager) downloadModel(ctx context.Context, source, path, name string) 
 	}
 	if resp.ContentLength >= 0 && counter.n != resp.ContentLength {
 		errorText = "incomplete model download"
+		return
+	}
+	if expected, ok := safedownload.ExpectedSHA256(resp.Header); ok && subtle.ConstantTimeCompare(digest.Sum(nil), expected) != 1 {
+		errorText = "download SHA-256 does not match repository metadata"
 		return
 	}
 	if err = f.Sync(); err != nil {
