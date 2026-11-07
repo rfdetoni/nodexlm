@@ -502,6 +502,7 @@ func join(args []string) error {
 // distributed RPC Guest. The code proves TLS identity; no admin token is used.
 func guest(args []string) error {
 	f := fs("guest")
+	device := f.String("rpc-device", "", "optional native device name; CPU forces a portable fallback")
 	server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
 	name := f.String("name", "", "display name of this Guest")
 	code := f.String("code", "", "8-character pairing code; prompted when absent")
@@ -556,7 +557,7 @@ func guest(args []string) error {
 		fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
 	}
 	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
-	options := []string{"--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels)}
+	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels)}
 	if *bin != "" {
 		options = append(options, "--rpc-bin", *bin)
 	}
@@ -822,6 +823,7 @@ func localChat(args []string) error {
 // It never exposes the unprotected rpc-server outside 127.0.0.1.
 func rpcNode(args []string) error {
 	f := fs("rpc-node")
+	device := f.String("rpc-device", "", "optional native device name; CPU forces a portable fallback")
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
@@ -867,12 +869,21 @@ func rpcNode(args []string) error {
 			return errors.New("llama.cpp runtime does not include an RPC worker; install or build matching ggml-rpc-server with GGML_RPC=ON")
 		}
 	}
+	if *device == "" {
+		selected, _ := llamaruntime.Backend(*backend)
+		if *backend == "cpu" || *bin == "" && selected == "cpu" {
+			*device = "CPU"
+		}
+	}
 	c, cancel := ctx()
 	defer cancel()
 	// A lightweight heartbeat informs the Host of real hardware availability.
 	name, _ := os.Hostname()
 	heartbeat := func() {
 		profile := hardware.Collect(name, nil)
+		if *device == "CPU" {
+			profile.GPUs = nil
+		}
 		profile.Runtime.Installed = true
 		profile.Runtime.Benchmark = true
 		profile.Runtime.ReconnectFailures = cli.ReconnectFailures.Load()
@@ -902,5 +913,5 @@ func rpcNode(args []string) error {
 			}
 		}
 	}()
-	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots)
+	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots, *device)
 }

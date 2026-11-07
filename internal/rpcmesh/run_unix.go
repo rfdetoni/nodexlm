@@ -14,11 +14,15 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/process"
 )
 
-func runUnixGuest(ctx context.Context, client *netclient.Client, executable, address string, slots int) error {
+func runUnixGuest(ctx context.Context, client *netclient.Client, executable, address string, slots int, device string) error {
 	if err := ValidateRPCAddress(address); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, executable, "--socket", strings.TrimPrefix(address, "unix:"))
+	args := []string{"--socket", strings.TrimPrefix(address, "unix:")}
+	if device != "" {
+		args = append(args, "--device", device)
+	}
+	cmd := exec.CommandContext(ctx, executable, args...)
 	process.KillWithParent(cmd)
 	cmd.Env = nativeRPCEnvironment(executable)
 	cmd.Stdout = os.Stderr

@@ -40,7 +40,7 @@ Os 19 itens estão mapeados abaixo. As funcionalidades foram implementadas e val
 
 1. Contratar/executar revisão criptográfica independente do pareamento ou aprovar uma migração PAKE interoperável auditada. Até lá, permanece o modelo de confiança LAN/VPN documentado.
 2. Fornecer certificados/chaves de assinatura de produção quando houver release estável. Atestação de procedência não é Authenticode nem certificado de auditoria.
-3. Validar Android/Metal/Vulkan em aparelhos e drivers reais, energia/térmico em ROMs relevantes no ambiente alvo. O container foi validado no CI Linux; Docker Desktop e redes diferentes ainda exigem teste no destino. O CI com GPU virtual/software não comprova desempenho físico.
+3. Validar Android/Metal/Vulkan em aparelhos e drivers reais, energia/térmico em ROMs relevantes no ambiente alvo. O container foi validado no CI Linux; Docker Desktop e redes diferentes ainda exigem teste no destino. O CI com GPU virtual/software não comprova desempenho físico. A GPU paravirtual macOS não suporta RMS_NORM; o bundle Metal é exercitado com fallback CPU explícito, enquanto a aceleração exige hardware Apple compatível.
 4. Criar uma tag estável quando o produto estiver pronto e submeter os manifests gerados a Homebrew/winget. A aceitação desses projetos depende de seus mantenedores.
 
 Os contratos de texto OpenAI, pool e RPC estão descritos nos guias. Nenhum checkbox altera os limites efetivos do GGML ou certifica uma avaliação externa que não ocorreu.

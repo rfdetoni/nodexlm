@@ -43,3 +43,9 @@ O NodexLM procura bibliotecas GGML ao lado do `ggml-rpc-server`, sem `sudo` nem 
 Mantenha a mesma revisão de protocolo `llama.cpp b12143` entre Host e Guests e prefira rede Ethernet para cargas maiores. A divisão de camadas por RPC depende da largura de banda e pode ser mais lenta que a execução em um único computador.
 
 Leia [Instalação](../INSTALL.md) e [diagnóstico](GUIA_DIAGNOSTICO.md).
+
+## Escolher o dispositivo nativo
+
+`nodexlm guest --rpc-device CPU` força execução CPU mesmo quando um bundle também inclui GPU. Isso é útil em VMs ou drivers que anunciam uma GPU sem suportar as operações do modelo. `--backend cpu` também seleciona CPU; em instalação automática Linux CPU, o heartbeat não oferece VRAM de uma GPU não utilizada como orçamento RPC.
+
+Em macOS, o bundle Metal inclui fallback CPU, mas a GPU paravirtual dos runners de CI não suporta todas as operações (como RMS_NORM). O teste automatizado desse bundle usa CPU e socket Unix; aceleração Metal exige hardware Apple/driver compatível.

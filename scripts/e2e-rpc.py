@@ -84,7 +84,7 @@ def main():
                     raise AssertionError(f"{method} {path}: HTTP {exc.code}: {exc.read().decode()}") from exc
 
             rpc = next(p for p in [runtime/'bin'/name for name in ('ggml-rpc-server','rpc-server','ggml-rpc-server.exe','rpc-server.exe')] if p.exists())
-            guest = subprocess.Popen([str(CLI),'rpc-node','--dir',str(guest_dir),'--rpc-bin',str(rpc),'--rpc-addr',('127.0.0.1:0' if os.environ.get('NODEXLM_TEST_RPC_TRANSPORT')=='tcp' else 'auto')],
+            guest = subprocess.Popen([str(CLI),'rpc-node','--rpc-device',os.environ.get('NODEXLM_TEST_RPC_DEVICE',''),'--dir',str(guest_dir),'--rpc-bin',str(rpc),'--rpc-addr',('127.0.0.1:0' if os.environ.get('NODEXLM_TEST_RPC_TRANSPORT')=='tcp' else 'auto')],
                 env=env,stdout=guest_log,stderr=guest_log)
             processes.append(guest)
             nodes = wait_for(lambda: [n for n in json.load(api('/v1/nodes')) if n['runtime']['rpc_ready']],120)
@@ -92,7 +92,7 @@ def main():
             measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
             assert measurement['mib_per_second'] > 0
             settings = json.load(api('/api/status'))['settings']
-            settings.update(model=model.name,distributed=True,context_tokens=256,threads=2)
+            settings.update(model=model.name,distributed=True,context_tokens=256,threads=2,gpu_layers=os.environ.get('NODEXLM_TEST_GPU_LAYERS','auto'))
             api('/api/settings','PUT',settings).close()
             api('/api/load','POST',{}).close()
             def loaded():
@@ -142,7 +142,12 @@ def main():
             print('PASS: pairing, TLS benchmark, native RPC, resident model pool, inference benchmark, SSE and restricted API key')
         finally:
             for process in reversed(processes):
-                process.terminate()
+                if os.name=='nt':
+                    # Windows terminate() skips the Go signal handler. Tear down
+                    # the test's native child tree before closing captured logs.
+                    subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                else:
+                    process.terminate()
                 try:
                     process.wait(timeout=15)
                 except subprocess.TimeoutExpired:

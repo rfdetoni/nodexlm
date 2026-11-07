@@ -24,7 +24,11 @@ import (
 
 // RunNativeGuest supervises one RPC compute server and its TLS reverse tunnels.
 // The model file is not required on this node: tensors are placed by the Host.
-func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, listen string, slots int) error {
+func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, listen string, slots int, devices ...string) error {
+	device := ""
+	if len(devices) > 0 {
+		device = devices[0]
+	}
 	if listen == "auto" {
 		listen = "127.0.0.1:0"
 		if runtime.GOOS != "windows" && llamaruntime.SupportsUnixRPC(ctx, executable) {
@@ -37,7 +41,7 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 		}
 	}
 	if strings.HasPrefix(listen, "unix:") {
-		return runUnixGuest(ctx, client, executable, listen, slots)
+		return runUnixGuest(ctx, client, executable, listen, slots, device)
 	}
 	if err := ValidateRPCAddress(listen); err != nil {
 		return err
@@ -62,7 +66,11 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	_, port, _ = net.SplitHostPort(listen)
 	_ = probe.Close()
 	// The native GGML RPC server is always restricted to loopback.
-	cmd := exec.CommandContext(ctx, executable, "--host", host, "--port", port)
+	args := []string{"--host", host, "--port", port}
+	if device != "" {
+		args = append(args, "--device", device)
+	}
+	cmd := exec.CommandContext(ctx, executable, args...)
 	process.KillWithParent(cmd)
 	cmd.Env = nativeRPCEnvironment(executable)
 	cmd.Stdout = os.Stderr

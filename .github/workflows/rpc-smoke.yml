@@ -51,9 +51,11 @@ jobs:
               # The archive has already matched the embedded reviewed digest.
               archive.extractall('native')
           PY
-      - name: Real native model inference
+      - name: Real native model inference (CPU fallback on paravirtual macOS)
         shell: bash
         env:
+          NODEXLM_TEST_RPC_DEVICE: ${{ matrix.os == 'darwin' && 'CPU' || '' }}
+          NODEXLM_TEST_GPU_LAYERS: ${{ matrix.os == 'darwin' && '0' || 'auto' }}
           NODEXLM_RPC_DIR: ${{ github.workspace }}/native
           NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
         run: |
