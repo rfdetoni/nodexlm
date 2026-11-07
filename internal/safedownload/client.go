@@ -54,6 +54,28 @@ func ValidateURL(u *url.URL) error {
 	return nil
 }
 
+// inactivityConn bounds each blocked transport I/O independently. This is
+// intentionally an idle timeout rather than a whole-response deadline: models
+// can take hours on slow links as long as data continues to arrive.
+type inactivityConn struct {
+	net.Conn
+	idle time.Duration
+}
+
+func (c *inactivityConn) Read(p []byte) (int, error) {
+	if err := c.Conn.SetReadDeadline(time.Now().Add(c.idle)); err != nil {
+		return 0, err
+	}
+	return c.Conn.Read(p)
+}
+
+func (c *inactivityConn) Write(p []byte) (int, error) {
+	if err := c.Conn.SetWriteDeadline(time.Now().Add(c.idle)); err != nil {
+		return 0, err
+	}
+	return c.Conn.Write(p)
+}
+
 // Dial resolves each destination and dials only validated public addresses,
 // preventing DNS rebinding between validation and connection establishment.
 func Dial(ctx context.Context, network, address string) (net.Conn, error) {
@@ -72,7 +94,7 @@ func Dial(ctx context.Context, network, address string) (net.Conn, error) {
 		}
 		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip.IP.String(), port))
 		if err == nil {
-			return conn, nil
+			return &inactivityConn{Conn: conn, idle: 90 * time.Second}, nil
 		}
 	}
 	return nil, errors.New("no public download destination is reachable")
