@@ -84,6 +84,7 @@ type ModelCandidate struct {
 	Filename   string `json:"filename"`
 	SizeBytes  uint64 `json:"size_bytes"`
 	URL        string `json:"url"`
+	ShardCount int `json:"shard_count,omitempty"`
 }
 type Recommendation struct {
 	ModelCandidate

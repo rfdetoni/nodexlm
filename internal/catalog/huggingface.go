@@ -89,20 +89,45 @@ func (h Hub) Search(ctx context.Context, query string) ([]clusterplan.ModelCandi
 		if err := h.get(ctx, path, &files); err != nil {
 			continue
 		}
+		// Check every shard before offering a multi-file model. A partially
+		// paginated Hugging Face tree must never look download-ready.
+		sizes := make(map[string]int64, len(files))
+		for _, entry := range files {
+			if entry.Type == "file" && entry.Size > 0 {
+				sizes[entry.Path] = entry.Size
+			}
+		}
 		count := 0
 		for _, f := range files {
 			if count == 3 || len(result) >= 20 {
 				break
 			}
 			lower := strings.ToLower(f.Path)
-			if f.Type != "file" || !strings.HasSuffix(lower, ".gguf") || f.Size <= 0 || strings.Contains(lower, "-of-") {
+			if f.Type != "file" || !strings.HasSuffix(lower, ".gguf") || f.Size <= 0 {
 				continue
 			}
 			if strings.Contains(f.Path, "..") || strings.ContainsAny(f.Path, "\\\x00") {
 				continue
 			}
+			shards, err := ShardNames(f.Path)
+			if err != nil {
+				continue // non-first shard, invalid shard count or filename
+			}
+			var combined uint64
+			complete := true
+			for _, name := range shards {
+				size := sizes[name]
+				if size <= 0 || uint64(size) > ^uint64(0)-combined {
+					complete = false
+					break
+				}
+				combined += uint64(size)
+			}
+			if !complete {
+				continue
+			}
 			location := "https://huggingface.co/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1]) + "/resolve/main/" + strings.ReplaceAll(url.PathEscape(f.Path), "%2F", "/")
-			result = append(result, clusterplan.ModelCandidate{Repository: model.ID, Filename: f.Path, SizeBytes: uint64(f.Size), URL: location})
+			result = append(result, clusterplan.ModelCandidate{Repository: model.ID, Filename: f.Path, SizeBytes: combined, URL: location, ShardCount: len(shards)})
 			count++
 		}
 	}

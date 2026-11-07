@@ -89,6 +89,9 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if !strings.EqualFold(filepath.Ext(m.ModelPath), ".gguf") {
 		return errors.New("only GGUF model files are supported")
 	}
+	if _, err := ModelSize(m.ModelPath); err != nil {
+		return fmt.Errorf("missing GGUF shards: %w", err)
+	}
 	meta, err := InspectGGUF(m.ModelPath)
 	if err != nil {
 		return fmt.Errorf("invalid GGUF model: %w", err)

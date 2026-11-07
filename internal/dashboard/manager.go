@@ -11,13 +11,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	urlpath "path"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/catalog"
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
@@ -296,7 +299,7 @@ func (m *Manager) load(ctx context.Context) error {
 		if model.BlockCount == 0 {
 			return errors.New("model lacks GGUF block_count needed for distributed placement")
 		}
-		info, err := os.Stat(path)
+		size, err := local.ModelSize(path)
 		if err != nil {
 			return err
 		}
@@ -310,7 +313,7 @@ func (m *Manager) load(ctx context.Context) error {
 			rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
 			remoteCapacities = append(remoteCapacities, guest.CapacityBytes)
 		}
-		localLayers, err = clusterplan.LocalLayerCount(model.BlockCount, uint64(info.Size()), hostCapacity, remoteCapacities)
+		localLayers, err = clusterplan.LocalLayerCount(model.BlockCount, uint64(size), hostCapacity, remoteCapacities)
 		if err != nil {
 			return err
 		}
@@ -432,6 +435,20 @@ func (m *Manager) StartDownload(urlText, name string) error {
 	if err != nil {
 		return err
 	}
+	parts, err := catalog.ShardNames(urlpath.Base(u.Path))
+	if err != nil {
+		return err
+	}
+	if len(parts) > 1 && parts[0] != name {
+		return errors.New("sharded GGUF destination must use the original first-shard filename")
+	}
+	for _, part := range parts {
+		if _, err := os.Lstat(filepath.Join(m.modelDir, part)); err == nil {
+			return fmt.Errorf("GGUF shard %s already exists", part)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.download != nil && m.download.Status == "downloading" {
@@ -443,7 +460,9 @@ func (m *Manager) StartDownload(urlText, name string) error {
 	go m.downloadModel(ctx, u.String(), path, name)
 	return nil
 }
-func (m *Manager) downloadModel(ctx context.Context, source, path, name string) {
+// downloadModel stages every shard before publishing anything to the models
+// directory. If a part fails, no incomplete model can become selectable.
+func (m *Manager) downloadModel(ctx context.Context, source, destination, name string) {
 	status := "failed"
 	errorText := ""
 	defer func() {
@@ -453,80 +472,164 @@ func (m *Manager) downloadModel(ctx context.Context, source, path, name string) 
 		m.cancel = nil
 		m.mu.Unlock()
 	}()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	sourceURL, err := url.Parse(source)
 	if err != nil {
 		errorText = err.Error()
 		return
 	}
-	resp, err := m.httpClient.Do(req)
+	shards, err := catalog.ShardNames(urlpath.Base(sourceURL.Path))
 	if err != nil {
 		errorText = err.Error()
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		errorText = fmt.Sprintf("download HTTP %d", resp.StatusCode)
-		return
-	}
-	const maxSize int64 = 150 << 30
-	if resp.ContentLength > maxSize {
-		errorText = "model exceeds 150 GiB limit"
-		return
-	}
-	m.mu.Lock()
-	m.download.Total = resp.ContentLength
-	m.mu.Unlock()
-	f, err := os.CreateTemp(m.modelDir, ".nodexlm-download-")
+	stage, err := os.MkdirTemp(m.modelDir, ".nodexlm-model-")
 	if err != nil {
 		errorText = err.Error()
 		return
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if err = f.Chmod(0600); err != nil {
-		errorText = err.Error()
-		return
+	defer os.RemoveAll(stage)
+	const limit int64 = 150 << 30
+	var received int64
+	for _, shard := range shards {
+		partURL := *sourceURL
+		if len(shards) > 1 {
+			partURL.Path = urlpath.Join(urlpath.Dir(sourceURL.Path), shard)
+			partURL.RawPath = ""
+		}
+		out := filepath.Join(stage, shard)
+		n, err := m.fetchModelPart(ctx, partURL.String(), out, received, limit)
+		if err != nil {
+			errorText = fmt.Sprintf("GGUF shard %s: %v", shard, err)
+			return
+		}
+		received += n
 	}
-	counter := &countWriter{w: f, update: func(n int64) { m.mu.Lock(); m.download.Received = n; m.mu.Unlock() }}
-	digest := sha256.New()
-	_, err = io.Copy(io.MultiWriter(counter, digest), io.LimitReader(resp.Body, maxSize+1))
-	if err != nil {
-		errorText = err.Error()
-		return
-	}
-	if counter.n > maxSize {
-		errorText = "model exceeds 150 GiB limit"
-		return
-	}
-	if resp.ContentLength >= 0 && counter.n != resp.ContentLength {
-		errorText = "incomplete model download"
-		return
-	}
-	if expected, ok := safedownload.ExpectedSHA256(resp.Header); ok && subtle.ConstantTimeCompare(digest.Sum(nil), expected) != 1 {
-		errorText = "download SHA-256 does not match repository metadata"
-		return
-	}
-	if err = f.Sync(); err != nil {
-		errorText = err.Error()
-		return
-	}
-	if err = f.Close(); err != nil {
-		errorText = err.Error()
-		return
-	}
-	if _, err = local.InspectGGUF(f.Name()); err != nil {
+	// The first shard holds the architecture metadata; the other parts must
+	// be valid GGUF containers but may not repeat all of that metadata.
+	if _, err = local.InspectGGUF(filepath.Join(stage, shards[0])); err != nil {
 		errorText = "invalid GGUF: " + err.Error()
 		return
 	}
-	// Hard-link prevents overwriting an existing model after a concurrent download.
-	if err = os.Link(f.Name(), path); err != nil {
-		errorText = err.Error()
-		return
+	created := make([]string, 0, len(shards))
+	defer func() {
+		if status != "completed" {
+			for _, item := range created {
+				_ = os.Remove(item)
+			}
+		}
+	}()
+	for _, shard := range shards {
+		target := filepath.Join(m.modelDir, shard)
+		if len(shards) == 1 {
+			target = destination
+		}
+		if err = publishModelPart(filepath.Join(stage, shard), target); err != nil {
+			errorText = fmt.Sprintf("publish GGUF shard %s: %v", shard, err)
+			return
+		}
+		created = append(created, target)
 	}
 	m.mu.Lock()
-	m.download.Received = counter.n
+	m.download.Received = received
+	m.download.Total = received
 	m.mu.Unlock()
 	status = "completed"
+}
+
+// fetchModelPart streams one bounded shard to a private staging file. A
+// Hugging Face LFS SHA-256 header is verified whenever it is provided.
+func (m *Manager) fetchModelPart(ctx context.Context, source, target string, offset, limit int64) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("download HTTP %d", resp.StatusCode)
+	}
+	if resp.ContentLength > limit-offset {
+		return 0, errors.New("model exceeds 150 GiB limit")
+	}
+	if offset == 0 && resp.ContentLength > 0 {
+		m.mu.Lock()
+		m.download.Total = resp.ContentLength
+		m.mu.Unlock()
+	}
+	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	sum := sha256.New()
+	writer := &countWriter{w: io.MultiWriter(file, sum), update: func(n int64) {
+		m.mu.Lock()
+		m.download.Received = offset + n
+		m.mu.Unlock()
+	}}
+	_, err = io.Copy(writer, io.LimitReader(resp.Body, limit-offset+1))
+	if err != nil {
+		return 0, err
+	}
+	if writer.n > limit-offset || resp.ContentLength >= 0 && writer.n != resp.ContentLength {
+		return 0, errors.New("incomplete or oversized GGUF part")
+	}
+	if expected, ok := safedownload.ExpectedSHA256(resp.Header); ok &&
+		subtle.ConstantTimeCompare(sum.Sum(nil), expected) != 1 {
+		return 0, errors.New("GGUF LFS SHA-256 mismatch")
+	}
+	if err = file.Sync(); err != nil {
+		return 0, err
+	}
+	var magic [4]byte
+	if err = file.Close(); err != nil {
+		return 0, err
+	}
+	opened, err := os.Open(target)
+	if err != nil {
+		return 0, err
+	}
+	_, err = io.ReadFull(opened, magic[:])
+	_ = opened.Close()
+	if err != nil || string(magic[:]) != "GGUF" {
+		return 0, errors.New("invalid GGUF shard header")
+	}
+	return writer.n, nil
+}
+
+// publishModelPart is exclusive even on filesystems that do not implement
+// hard links. O_EXCL prevents overwriting a concurrently created model.
+func publishModelPart(stage, target string) error {
+	if err := os.Link(stage, target); err == nil {
+		return nil
+	} else if errors.Is(err, os.ErrExist) {
+		return err
+	}
+	source, err := os.Open(stage)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	dest, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(dest, source)
+	if copyErr == nil {
+		copyErr = dest.Sync()
+	}
+	closeErr := dest.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = os.Remove(target)
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	}
+	return nil
 }
 
 type countWriter struct {
