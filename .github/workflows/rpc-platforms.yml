@@ -33,7 +33,7 @@ jobs:
         with: {persist-credentials: false}
       - name: Vulkan tools
         if: matrix.backend == 'vulkan'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan-dev glslc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan-dev glslc spirv-headers
       - name: Build pinned pair
         shell: bash
         env:
