@@ -82,7 +82,8 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	}()
 
 	ready := false
-	for i := 0; i < 40; i++ {
+	// Match Unix readiness: cold GPU shader initialization can be slow.
+	for i := 0; i < 360; i++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

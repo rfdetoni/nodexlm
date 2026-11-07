@@ -232,6 +232,9 @@ func (m *Manager) StartLoad() error {
 func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.residents) >= 4 {
+		return errors.New("at most four models may be resident")
+	}
 	if m.closed || m.residents[m.settings.Model] != nil || m.loading || m.unloading || m.engine != nil {
 		return errors.New("model already loaded or loading")
 	}
@@ -287,6 +290,12 @@ func (m *Manager) setPhase(phase string) {
 
 func (m *Manager) load(ctx context.Context) error {
 	m.mu.Lock()
+	// Recheck after admission: an additional load may have completed while
+	// this primary load was waiting for poolMu.
+	if len(m.residents) >= 4 {
+		m.mu.Unlock()
+		return errors.New("at most four models may be resident")
+	}
 	s := m.settings
 	provider := m.rpcEndpoints
 	m.mu.Unlock()

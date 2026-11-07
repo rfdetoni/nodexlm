@@ -179,7 +179,7 @@ func Ensure(ctx context.Context, home, backend string) (string, string, error) {
 }
 func securePath(root, name string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(name))
-	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || strings.Contains(name, "\\") {
+	if strings.HasPrefix(name, "/") || strings.Contains(name, ":") || clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || strings.Contains(name, "\\") {
 		return "", errors.New("unsafe runtime archive path")
 	}
 	dest := filepath.Join(root, clean)

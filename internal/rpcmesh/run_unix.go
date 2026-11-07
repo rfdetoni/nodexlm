@@ -26,17 +26,16 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	exited := make(chan struct{})
+	var processErr error
+	go func() { processErr = cmd.Wait(); close(exited) }()
 	defer func() {
 		_ = cmd.Process.Kill()
-		select {
-		case <-exited:
-		case <-time.After(3 * time.Second):
-		}
+		<-exited
 	}()
 	ready := false
-	for range 60 {
+	// A cold Metal shader library may take tens of seconds to compile.
+	for range 900 {
 		conn, err := net.DialTimeout("unix", strings.TrimPrefix(address, "unix:"), 100*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
@@ -44,8 +43,8 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 			break
 		}
 		select {
-		case err := <-exited:
-			return fmt.Errorf("native Unix RPC exited: %v", err)
+		case <-exited:
+			return fmt.Errorf("native Unix RPC exited: %v", processErr)
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(100 * time.Millisecond):
@@ -78,9 +77,9 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 		cancel()
 		wg.Wait()
 		return nil
-	case err := <-exited:
+	case <-exited:
 		cancel()
 		wg.Wait()
-		return fmt.Errorf("native Unix RPC stopped: %v", err)
+		return fmt.Errorf("native Unix RPC stopped: %v", processErr)
 	}
 }

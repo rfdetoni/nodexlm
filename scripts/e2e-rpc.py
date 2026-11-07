@@ -87,7 +87,7 @@ def main():
             guest = subprocess.Popen([str(CLI),'rpc-node','--dir',str(guest_dir),'--rpc-bin',str(rpc),'--rpc-addr',('127.0.0.1:0' if os.environ.get('NODEXLM_TEST_RPC_TRANSPORT')=='tcp' else 'auto')],
                 env=env,stdout=guest_log,stderr=guest_log)
             processes.append(guest)
-            nodes = wait_for(lambda: [n for n in json.load(api('/v1/nodes')) if n['runtime']['rpc_ready']])
+            nodes = wait_for(lambda: [n for n in json.load(api('/v1/nodes')) if n['runtime']['rpc_ready']],120)
             # Exercise the benchmark marker through a genuine enrolled TLS tunnel.
             measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
             assert measurement['mib_per_second'] > 0
