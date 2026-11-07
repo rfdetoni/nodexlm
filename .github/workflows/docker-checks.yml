@@ -1,0 +1,55 @@
+name: Docker Host validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['Dockerfile', 'compose.yaml', '.github/workflows/docker-checks.yml']
+permissions: {contents: read}
+concurrency:
+  group: nodexlm-docker-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Build and validate Compose
+        run: |
+          docker compose config --quiet
+          docker build --tag nodexlm:test .
+      - name: Check isolated Host lifecycle and restart persistence
+        run: |
+          docker volume create nodexlm-test
+          docker run -d --name nodexlm-test --network host --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges -v nodexlm-test:/data nodexlm:test
+          python3 - <<'PY'
+          import json,subprocess,time,urllib.request
+          base='http://127.0.0.1:8787'
+          def token():return subprocess.check_output(['docker','exec','nodexlm-test','nodexlm','web-token'],text=True).strip()
+          def status(key):
+              request=urllib.request.Request(base+'/api/status',headers={'Authorization':'Bearer '+key})
+              with urllib.request.urlopen(request,timeout=3) as response:return json.load(response)
+          def ready(key=None):
+              for attempt in range(40):
+                  try:
+                      key=key or token()
+                      return key,status(key)
+                  except Exception:
+                      time.sleep(.25)
+              raise AssertionError('Container management API did not become ready')
+          key,first=ready()
+          assert 'runtime' in first and 'settings' in first
+          identity=subprocess.check_output(['docker','exec','nodexlm-test','id','-u'],text=True).strip()
+          assert identity=='10001','Container must run without root'
+          subprocess.run(['docker','restart','--time','20','nodexlm-test'],check=True,stdout=subprocess.DEVNULL)
+          second_key,second=ready(key)
+          assert token()==second_key,'Restart unexpectedly rotated persistent identity'
+          subprocess.run(['docker','stop','--time','20','nodexlm-test'],check=True,stdout=subprocess.DEVNULL)
+          print('PASS: Compose, image build, unprivileged read-only Host, authenticated API and persistent restart')
+          PY
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f nodexlm-test 2>/dev/null || true
+          docker volume rm nodexlm-test 2>/dev/null || true
