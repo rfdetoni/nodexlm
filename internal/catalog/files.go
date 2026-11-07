@@ -4,6 +4,8 @@ package catalog
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +15,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/safedownload"
 )
 
 // ModelURL constructs only a public Hugging Face GGUF resolve URL. The
@@ -94,7 +97,7 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 	req.Header.Set("User-Agent", "NodexLM/0.1 (GGUF downloader)")
 	client := h.Client
 	if client == nil {
-		client = &http.Client{Timeout: 0, Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second}}
+		client = safedownload.Client()
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -109,6 +112,7 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 		return "", errors.New("file exceeds 150 GiB")
 	}
 	var count int64
+	digest := sha256.New()
 	buf := make([]byte, 256<<10)
 	for {
 		n, readErr := res.Body.Read(buf)
@@ -118,6 +122,9 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 				return "", errors.New("file exceeds 150 GiB")
 			}
 			if _, err = file.Write(buf[:n]); err != nil {
+				return "", err
+			}
+			if _, err = digest.Write(buf[:n]); err != nil {
 				return "", err
 			}
 			if progress != nil {
@@ -136,6 +143,9 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 	}
 	if res.ContentLength >= 0 && count != res.ContentLength {
 		return "", errors.New("incomplete download")
+	}
+	if expected, ok := safedownload.ExpectedSHA256(res.Header); ok && subtle.ConstantTimeCompare(digest.Sum(nil), expected) != 1 {
+		return "", errors.New("download SHA-256 does not match repository metadata")
 	}
 	if err = verifyGGUF(file); err != nil {
 		return "", err
