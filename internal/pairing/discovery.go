@@ -91,6 +91,11 @@ func ListenDiscovery(ctx context.Context, port int, offers func() []Offer) error
 	defer sock.Close()
 	go func() { <-ctx.Done(); _ = sock.Close() }()
 	buf := make([]byte, 128)
+	// Respond at most 24 times per second globally and once per second
+	// per source address. UDP source addresses can be spoofed on the LAN.
+	window := time.Now()
+	responses := 0
+	perIP := make(map[string]time.Time)
 	for {
 		_ = sock.SetReadDeadline(time.Now().Add(time.Second))
 		n, addr, err := sock.ReadFromUDP(buf)
@@ -103,10 +108,32 @@ func ListenDiscovery(ctx context.Context, port int, offers func() []Offer) error
 			}
 			return err
 		}
-		if !SameLAN(addr.IP) || string(buf[:n]) != DiscoveryMessage {
+		if string(buf[:n]) != DiscoveryMessage {
 			continue
 		}
+		now := time.Now()
+		if now.Sub(window) >= time.Second {
+			window, responses = now, 0
+			clear(perIP)
+		}
+		if responses >= 24 || !SameLAN(addr.IP) {
+			continue
+		}
+		key := addr.IP.String()
+		if last, seen := perIP[key]; seen && now.Sub(last) < time.Second {
+			continue
+		}
+		// Bound rate-tracking state even when a LAN attacker spoofs IPs.
+		if len(perIP) >= 64 {
+			continue
+		}
+		perIP[key] = now
+		responses++
+		sent := 0
 		for _, offer := range offers() {
+			if sent >= 8 {
+				break
+			}
 			wire, err := json.Marshal(offer)
 			if err != nil {
 				continue
@@ -115,6 +142,7 @@ func ListenDiscovery(ctx context.Context, port int, offers func() []Offer) error
 				continue
 			}
 			_, _ = sock.WriteToUDP(wire, addr)
+			sent++
 		}
 	}
 }
