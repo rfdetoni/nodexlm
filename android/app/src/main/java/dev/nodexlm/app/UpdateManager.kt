@@ -5,6 +5,9 @@ package dev.nodexlm.app
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.app.PendingIntent
+import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.os.Build
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -85,7 +88,17 @@ class UpdateManager(private val activity: Activity) {
                 conn.setRequestProperty("Accept", "application/json")
                 val metadata = try {
                     if (conn.responseCode != 200) throw IllegalStateException("releases HTTP ${conn.responseCode}")
-                    JSONObject(conn.inputStream.bufferedReader().use { it.readText().take(8192) })
+                    val data = ByteArray(8193)
+                    var read = 0
+                    conn.inputStream.use { stream ->
+                        while (read < data.size) {
+                            val n = stream.read(data, read, data.size - read)
+                            if (n < 0) break
+                            read += n
+                        }
+                    }
+                    require(read <= 8192) { "Update manifest too large" }
+                    JSONObject(String(data, 0, read, Charsets.UTF_8))
                 } finally { conn.disconnect() }
                 val version = metadata.getInt("versionCode")
                 val name = metadata.getString("versionName")
@@ -134,8 +147,10 @@ class UpdateManager(private val activity: Activity) {
 
     private fun tryInstallPending() {
         val id = prefs.getLong("download_id", 0L)
-        if (id <= 0 || prefs.getLong("prompted_id", -1L) == id || !verifying.compareAndSet(false, true)) return
+        if (id <= 0 || prefs.getLong("prompted_id", -1L) == id ||
+            !verifying.compareAndSet(false, true)) return
         thread(name = "nodexlm-update-verify") {
+            var staged: File? = null
             try {
                 val cursor = downloads.query(DownloadManager.Query().setFilterById(id)) ?: return@thread
                 val status = cursor.use {
@@ -148,53 +163,119 @@ class UpdateManager(private val activity: Activity) {
                     return@thread
                 }
                 if (status != DownloadManager.STATUS_SUCCESSFUL) return@thread
-                val path = prefs.getString("file_path", "") ?: ""
-                val apk = File(path)
-                require(apk.isFile && apk.length() > 0L && apk.canonicalPath.startsWith(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)!!.canonicalPath + File.separator))
+
+                val original = File(prefs.getString("file_path", "") ?: "")
+                val downloadsDir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: error("Download directory unavailable")
+                require(original.isFile && original.length() > 0L &&
+                    original.canonicalPath.startsWith(downloadsDir.canonicalPath + File.separator)) {
+                    "Update file outside the private download directory"
+                }
+                // Verify exactly the bytes that will be installed. Never use
+                // DownloadManager's external URI after hash verification.
+                val verified = File(activity.cacheDir, "nodexlm-verified-$id.apk")
+                if (verified.exists()) require(verified.delete())
+                staged = verified
                 val digest = MessageDigest.getInstance("SHA-256")
-                apk.inputStream().buffered().use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = input.read(buffer)
-                        if (n < 0) break
-                        digest.update(buffer, 0, n)
+                original.inputStream().buffered().use { input ->
+                    verified.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            digest.update(buffer, 0, n)
+                            output.write(buffer, 0, n)
+                        }
                     }
                 }
                 val hash = digest.digest().joinToString("") { "%02x".format(it) }
-                require(hash == prefs.getString("sha256", "")) { "O SHA-256 do APK não confere" }
-                @Suppress("DEPRECATION")
-                val pkg = activity.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
-                    ?: error("Metadados inválidos do APK")
-                require(pkg?.packageName == activity.packageName) { "APK de outro aplicativo" }
-                require(pkg.longVersionCode == prefs.getInt("version", -1).toLong()) { "Versão do APK inesperada" }
+                require(hash == prefs.getString("sha256", "")) {
+                    "O SHA-256 do APK não confere"
+                }
+                verifyAPKSigner(verified, prefs.getInt("version", -1))
+
                 activity.runOnUiThread {
                     if (!activity.packageManager.canRequestPackageInstalls()) {
                         AlertDialog.Builder(activity)
                             .setTitle("Permitir atualização do NodexLM")
-                            .setMessage("O Android exige que você autorize a instalação desta origem. A instalação sempre será confirmada pelo sistema.")
+                            .setMessage("O Android exige autorização para instalar uma atualização assinada.")
                             .setPositiveButton("Abrir configurações") { _, _ ->
-                                activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}")))
+                                activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:${activity.packageName}")))
                             }
                             .setNegativeButton("Depois", null)
                             .show()
                     } else {
-                        val uri = downloads.getUriForDownloadedFile(id)
-                        requireNotNull(uri) { "Arquivo baixado indisponível" }
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "application/vnd.android.package-archive")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        thread(name = "nodexlm-update-install") {
+                            try {
+                                installVerified(verified, id)
+                                prefs.edit().putLong("prompted_id", id).apply()
+                            } catch (e: Exception) {
+                                Log.e("NodexLMUpdate", "PackageInstaller session failed", e)
+                                toast("Não foi possível instalar a atualização: ${e.message}")
+                            } finally {
+                                verified.delete()
+                            }
                         }
-                        try {
-                            activity.startActivity(intent)
-                            prefs.edit().putLong("prompted_id", id).apply()
-                        } catch (e: Exception) { toast("Não foi possível abrir o instalador: ${e.message}") }
+                        staged = null // install thread now owns the verified copy
                     }
                 }
             } catch (e: Exception) {
                 Log.e("NodexLMUpdate", "Update verification failed", e)
                 prefs.edit().remove("download_id").apply()
                 toast("Atualização rejeitada: ${e.message}")
-            } finally { verifying.set(false) }
+            } finally {
+                // When confirmation is not granted, onResume re-verifies the
+                // download into a fresh private staging copy.
+                if (staged != null) staged?.delete()
+                verifying.set(false)
+            }
+        }
+    }
+
+    private fun verifyAPKSigner(apk: File, version: Int) {
+        @Suppress("DEPRECATION")
+        val candidate = activity.packageManager.getPackageArchiveInfo(
+            apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            ?: error("Metadados inválidos do APK")
+        require(candidate.packageName == activity.packageName) { "APK de outro aplicativo" }
+        require(candidate.longVersionCode == version.toLong()) { "Versão do APK inesperada" }
+        @Suppress("DEPRECATION")
+        val installed = activity.packageManager.getPackageInfo(
+            activity.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        val currentSigners = installed.signingInfo?.apkContentsSigners
+            ?: error("Current APK signature unavailable")
+        val nextSigners = candidate.signingInfo?.apkContentsSigners
+            ?: error("Update APK signature unavailable")
+        require(currentSigners.isNotEmpty() && currentSigners.size == nextSigners.size &&
+            currentSigners.indices.all { i ->
+                currentSigners.any { old ->
+                    MessageDigest.isEqual(old.toByteArray(), nextSigners[i].toByteArray())
+                }
+            }) { "Update APK signing certificate does not match installed application" }
+    }
+
+    private fun installVerified(apk: File, id: Long) {
+        val installer = activity.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(activity.packageName)
+        val sessionId = installer.createSession(params)
+        try {
+            installer.openSession(sessionId).use { session ->
+                session.openWrite("base.apk", 0, apk.length()).use { output ->
+                    apk.inputStream().use { input -> input.copyTo(output, 64 * 1024) }
+                    session.fsync(output)
+                }
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                    (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+                val callback = PendingIntent.getBroadcast(activity, sessionId,
+                    Intent(activity, UpdateInstallReceiver::class.java)
+                        .setAction(UpdateInstallReceiver.ACTION), flags)
+                session.commit(callback.intentSender)
+            }
+        } catch (e: Exception) {
+            installer.abandonSession(sessionId)
+            throw e
         }
     }
 
