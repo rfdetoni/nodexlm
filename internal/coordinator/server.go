@@ -232,13 +232,9 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "unauthorized")
 		return
 	}
-	var req struct {
-		Models            []string `json:"models"`
-		RAMBytes          uint64   `json:"ram_bytes"`
-		AvailableRAMBytes uint64   `json:"available_ram_bytes"`
-        GPUs []protocol.GPUDevice `json:"gpus"`
-        Runtime protocol.RuntimeCapability `json:"runtime"`
-	}
+	// Guests send a full Device profile on lease; only resource fields are
+	// applied, and server-owned identity/status are never trusted.
+	var req protocol.Device
 	if !parse(w, r, &req) {
 		return
 	}
