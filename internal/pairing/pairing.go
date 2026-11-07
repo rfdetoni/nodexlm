@@ -202,7 +202,12 @@ func FetchUntrustedOffer(ctx context.Context, endpoint string) (Offer, []byte, e
 	if err != nil {
 		return Offer{}, nil, err
 	}
-	certs := conn.ConnectionState().PeerCertificates
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		conn.Close()
+		return Offer{}, nil, errors.New("unexpected TLS connection type")
+	}
+	certs := tlsConn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		conn.Close()
 		return Offer{}, nil, errors.New("server presented no certificate")
