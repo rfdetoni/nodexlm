@@ -50,7 +50,7 @@ Após configurar os dois secrets, o pipeline:
 4. Recalcula os checksums dos ZIPs assinados, atualiza o SBOM e regenera manifests estáveis.
 5. Atesta os arquivos finais e só então publica. As chaves importadas são removidas ao terminar.
 
-Tags estáveis `vX.Y.Z` falham se a assinatura Windows não estiver configurada. O canal `edge` permanece experimental e pode distribuir executáveis sem Authenticode. Os testes de assinatura usam certificado descartável no runner e nunca publicam esse certificado como identidade do produto.
+Tags estáveis `vX.Y.Z` falham se a assinatura Windows não estiver configurada. O canal `edge` permanece experimental e pode distribuir executáveis sem Authenticode. Os testes de assinatura usam certificado descartável no runner e nunca publicam esse certificado como identidade do produto. A [validação real x64/ARM64 passou](https://github.com/rfdetoni/nodexlm/actions/runs/42400138899), incluindo timestamp RFC 3161, rejeição de binário/arquivo adulterado e atualização de metadados. O endpoint de timestamp padrão é o RFC 3161 DigiCert por HTTP; a assinatura e a cadeia do timestamp são verificadas pelo SignTool.
 
 ## Homebrew e WinGet
 

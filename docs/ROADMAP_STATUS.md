@@ -66,6 +66,7 @@ Os contratos de texto OpenAI, pool e RPC estão descritos nos guias. Nenhum chec
 | Schemas oficiais WinGet, hashes dos downloads e regressões de manifests | [Registry aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42399741601) |
 | Cinco bundles RPC publicados e coletor de medições | [RPC aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42399443830) |
 | Pareamento com rejeição de fingerprint errado, RPC real e navegador | [E2E aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42398983230) |
+| Assinatura Authenticode x64/ARM64, timestamp RFC 3161, rejeição de adulteração e renovação dos hashes/SBOM (identidade descartável de CI) | [Assinatura aprovada](https://github.com/rfdetoni/nodexlm/actions/runs/42400138899) |
 | Snapshot imutável e publicação por digest | [Distribuição aprovada](https://github.com/rfdetoni/nodexlm/actions/runs/42398983229) |
 
 Esses testes não instalaram secrets de produção, não executaram uma auditoria externa nem comprovaram comportamento em aparelhos físicos.
