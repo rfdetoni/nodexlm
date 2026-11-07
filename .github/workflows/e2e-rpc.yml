@@ -42,6 +42,8 @@ jobs:
           mkdir native
           tar --no-same-owner -xzf rpc.tar.gz -C native
           go build -o nodexlm ./cmd/nodexlm
+      - name: Real LAN multicast discovery
+        run: NODEXLM_TEST_MDNS=1 go test ./internal/mdns -run TestLANMulticastDiscovery -count=1 -timeout=15s
       - name: Install browser test runtime
         run: |
           npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.56.1

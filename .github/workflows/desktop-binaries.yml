@@ -112,6 +112,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* && "$version" != *-* ]]; then
             python3 scripts/package-manifests.py --version "$version" --checksums dist/SHA256SUMS.txt --output manifests
             tar -czf dist/nodexlm-registry-manifests.tar.gz -C manifests .
+            (cd dist && sha256sum nodexlm-registry-manifests.tar.gz >> SHA256SUMS.txt)
           fi
           test "$(find dist -name 'nodexlm_*.tar.gz' -o -name 'nodexlm_*.zip' | wc -l)" -eq 7
           cat dist/SHA256SUMS.txt

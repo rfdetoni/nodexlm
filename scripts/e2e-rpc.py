@@ -137,7 +137,8 @@ def main():
             if os.environ.get('NODEXLM_UI_CHECK'):
                 api('/api/load','POST',{}).close()
                 wait_for(loaded,120)
-                subprocess.run(['node',os.environ['NODEXLM_UI_CHECK'],base,token],check=True,timeout=90)
+                result=subprocess.run(['node',os.environ['NODEXLM_UI_CHECK'],base,token],timeout=90)
+                assert result.returncode==0,'Browser console verification failed'
             print('PASS: pairing, TLS benchmark, native RPC, resident model pool, inference benchmark, SSE and restricted API key')
         finally:
             for process in reversed(processes):

@@ -6,6 +6,7 @@ import hashlib
 import json
 import pathlib
 import uuid
+import subprocess
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--directory',required=True,type=pathlib.Path)
@@ -18,8 +19,19 @@ if not archives:
     parser.error('no release archives found')
 components=[{'type':'platform','bom-ref':'go-stdlib','name':'Go standard library','version':args.go_version,
              'licenses':[{'license':{'id':'BSD-3-Clause'}}]}]
+# go list emits consecutive JSON objects, including transitive dependencies.
+module_data=subprocess.check_output(['go','list','-m','-json','all'],cwd=pathlib.Path(__file__).resolve().parents[1],text=True)
+decoder=json.JSONDecoder()
+while module_data.strip():
+    module_data=module_data.lstrip()
+    module,end=decoder.raw_decode(module_data)
+    module_data=module_data[end:]
+    if module.get('Main'):continue
+    name,version=module['Path'],module['Version']
+    components.append({'type':'library','bom-ref':'gomod:'+name,'name':name,'version':version,
+                       'purl':'pkg:golang/'+name+'@'+version})
 for path in archives:
-    digest=hashlib.file_digest(path.open('rb'),'sha256').hexdigest()
+    digest=hashlib.sha256(path.read_bytes()).hexdigest()
     components.append({'type':'file','bom-ref':path.name,'name':path.name,'version':args.version,
                        'hashes':[{'alg':'SHA-256','content':digest}]})
 bom={'bomFormat':'CycloneDX','specVersion':'1.6','serialNumber':'urn:uuid:'+str(uuid.uuid4()),'version':1,
