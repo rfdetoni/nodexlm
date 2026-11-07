@@ -20,6 +20,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/config"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/process"
 )
 
 // Managed is a lazy local llama-server owner. It keeps GGUF tensors out of
@@ -128,8 +129,15 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if gpu == "" {
 		gpu = "auto"
 	}
-	args := m.args(port, nctx, threads, gpu, meta.BlockCount)
+	// Native llama-server listens on loopback but is reachable by local users.
+	// Authenticate inference to avoid exposing the loaded model to other apps.
+	apiKey, err := config.RandomSecret()
+	if err != nil {
+		return fmt.Errorf("generate local inference credential: %w", err)
+	}
+	args := append(m.args(port, nctx, threads, gpu, meta.BlockCount), "--api-key", apiKey)
 	cmd := exec.Command(m.Binary, args...)
+	process.KillWithParent(cmd)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -141,11 +149,13 @@ func (m *Managed) ensure(ctx context.Context) error {
 		_ = cmd.Wait()
 		return err
 	}
+	endpoint.APIKey = apiKey
 	startup, stop := context.WithTimeout(ctx, 90*time.Second)
 	defer stop()
 	for {
 		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+"/health", nil)
 		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
 			res, err := endpoint.HTTP.Do(req)
 			if err == nil {
 				res.Body.Close()
