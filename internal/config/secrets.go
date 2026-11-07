@@ -38,6 +38,9 @@ func ReadSecrets(dir string) (Secrets, error) {
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
 		return secrets, errors.New("secrets.json must not be readable by other users")
 	}
+	if err := securePrivateFile(path); err != nil {
+		return secrets, err
+	}
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return secrets, err
@@ -75,12 +78,20 @@ func EnsureSecrets(dir string) (Secrets, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return Secrets{}, err
 	}
+	if err := securePrivateDir(dir); err != nil {
+		return Secrets{}, err
+	}
 	// O_EXCL prevents overwriting a concurrently created credential store.
 	f, err := os.OpenFile(filepath.Join(dir, "secrets.json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if errors.Is(err, os.ErrExist) {
 		return ReadSecrets(dir)
 	}
 	if err != nil {
+		return Secrets{}, err
+	}
+	if err := securePrivateFile(f.Name()); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return Secrets{}, err
 	}
 	_, writeErr := f.Write(b)
