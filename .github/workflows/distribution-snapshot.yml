@@ -48,19 +48,29 @@ jobs:
         env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
         run: |
           python3 - <<'PY'
-          import hashlib,json,os,pathlib,subprocess
+          import hashlib,json,os,pathlib,subprocess,urllib.parse,urllib.request
           meta=json.loads(pathlib.Path('.github/distribution-build.json').read_text());tag=meta['tag']
-          result=subprocess.run(['gh','release','view',tag,'--json','isDraft'],capture_output=True,text=True)
-          if result.returncode:
+          endpoint='repos/'+os.environ['GH_REPO']+'/releases'
+          def find_release():
+              pages=json.loads(subprocess.check_output(['gh','api','--paginate','--slurp',endpoint+'?per_page=100']))
+              matches=[r for page in pages for r in page if r['tag_name']==tag]
+              assert len(matches)<=1,'Multiple drafts use the requested immutable tag'
+              return matches[0] if matches else None
+          release=find_release()
+          if release is None:
               subprocess.run(['gh','release','create',tag,'--target','main','--draft','--prerelease','--latest=false','--title','NodexLM immutable preview '+meta['commit'][:8],'--notes','Experimental CLI distribution snapshot of '+meta['commit']+'. This preview is not a production-signed stable release. Manifests pin these immutable files; physical-device and independent cryptographic acceptance remain pending.'],check=True)
-          release=json.loads(subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/releases/tags/'+tag]))
+              release=find_release()
+          assert release is not None,'Created release could not be read by ID'
           existing={a['name']:a for a in release['assets']}
           for file in sorted(pathlib.Path('dist').iterdir()):
               digest='sha256:'+hashlib.sha256(file.read_bytes()).hexdigest()
               if file.name in existing:
                   assert existing[file.name].get('digest')==digest,'Refusing to replace immutable asset '+file.name
               else:
-                  subprocess.run(['gh','release','upload',tag,str(file)],check=True)
-          subprocess.run(['gh','release','edit',tag,'--draft=false','--prerelease','--latest=false'],check=True)
+                  url='https://uploads.github.com/repos/'+os.environ['GH_REPO']+'/releases/'+str(release['id'])+'/assets?name='+urllib.parse.quote(file.name,safe='')
+                  request=urllib.request.Request(url,data=file.read_bytes(),method='POST',headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Content-Type':'application/octet-stream','Accept':'application/vnd.github+json'})
+                  with urllib.request.urlopen(request,timeout=90) as response:uploaded=json.load(response)
+                  assert uploaded.get('digest')==digest,'Uploaded artifact digest differs'
+          subprocess.run(['gh','api','--method','PATCH',endpoint+'/'+str(release['id']),'-F','draft=false','-F','prerelease=true','-f','make_latest=false'],check=True,stdout=subprocess.DEVNULL)
           print('Published immutable preview: '+tag)
           PY
