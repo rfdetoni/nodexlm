@@ -4,12 +4,9 @@ package catalog
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -139,64 +136,13 @@ func (h Hub) downloadSingle(ctx context.Context, repository, filename, directory
 	if err := file.Chmod(0600); err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remote, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "NodexLM/0.1 (GGUF downloader)")
 	client := h.Client
 	if client == nil {
 		client = safedownload.Client()
 	}
-	res, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Hugging Face download HTTP %d", res.StatusCode)
-	}
 	const limit int64 = 150 << 30
-	if res.ContentLength > limit {
-		return "", errors.New("file exceeds 150 GiB")
-	}
-	var count int64
-	digest := sha256.New()
-	buf := make([]byte, 256<<10)
-	for {
-		n, readErr := res.Body.Read(buf)
-		if n > 0 {
-			count += int64(n)
-			if count > limit {
-				return "", errors.New("file exceeds 150 GiB")
-			}
-			if _, err = file.Write(buf[:n]); err != nil {
-				return "", err
-			}
-			if _, err = digest.Write(buf[:n]); err != nil {
-				return "", err
-			}
-			if progress != nil {
-				progress(count, res.ContentLength)
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return "", readErr
-		}
-		if err = ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-	if res.ContentLength >= 0 && count != res.ContentLength {
-		return "", errors.New("incomplete download")
-	}
-	if expected, ok := safedownload.ExpectedSHA256(res.Header); ok && subtle.ConstantTimeCompare(digest.Sum(nil), expected) != 1 {
-		return "", errors.New("download SHA-256 does not match repository metadata")
-	}
-	if err = verifyGGUF(file); err != nil {
+	_, err = safedownload.StreamGGUF(ctx, client, remote, file, limit, progress)
+	if err != nil {
 		return "", err
 	}
 	if err = file.Sync(); err != nil {
