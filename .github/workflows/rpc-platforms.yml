@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/rpc-platforms.yml'
       - 'internal/llamaruntime/patches/**'
 permissions:
   contents: read
@@ -104,4 +103,4 @@ jobs:
             echo 'Immutable release already exists; do not overwrite reviewed binaries.'
             exit 0
           fi
-          gh release create nodexlm-rpc-b12143-r3 dist/*.tar.gz dist/SHA256SUMS.txt --target "$GITHUB_SHA" --title 'Pinned RPC b12143 with private Unix sockets' --notes 'Matched native RPC pairs; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads.' --prerelease --latest=false
+          gh release create nodexlm-rpc-b12143-r3 dist/*.tar.gz dist/SHA256SUMS.txt --target main --title 'Pinned RPC b12143 with private Unix sockets' --notes "Matched native RPC pairs built from $GITHUB_SHA; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads." --prerelease --latest=false

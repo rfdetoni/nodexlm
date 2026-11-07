@@ -1,0 +1,66 @@
+name: Publish verified RPC artifacts
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/rpc-publish.yml', 'internal/llamaruntime/rpc-build.json']
+permissions: {contents: write, actions: read}
+concurrency:
+  group: nodexlm-rpc-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Verify approved build identity and five successful native jobs
+        id: build
+        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          build=json.loads(pathlib.Path('internal/llamaruntime/rpc-build.json').read_text())
+          repo=os.environ['GH_REPO']
+          get=lambda path:json.loads(subprocess.check_output(['gh','api','repos/'+repo+path]))
+          run=get('/actions/runs/'+str(build['run_id']))
+          assert run['head_sha']==build['commit'] and run['head_repository']['full_name']==repo
+          assert run['path']=='.github/workflows/rpc-platforms.yml'
+          jobs=get('/actions/runs/'+str(build['run_id'])+'/jobs?per_page=100')['jobs']
+          native=[j for j in jobs if j['name'].startswith('build (')]
+          assert len(native)==5 and all(j['conclusion']=='success' for j in native)
+          # Publish from current main only while its pinned native source/patch
+          # still matches the build. The release notes retain the build SHA.
+          subprocess.run(['git','fetch','--depth=1','origin',build['commit']],check=True)
+          for file in ['internal/llamaruntime/patches/unix-rpc.patch']:
+              assert subprocess.check_output(['git','show',build['commit']+':'+file])==pathlib.Path(file).read_bytes()
+          before=json.loads(subprocess.check_output(['git','show',build['commit']+':internal/llamaruntime/revision.json']))
+          current=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())
+          assert before['commit']==current['commit'] and before['version']==current['version']
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('run='+str(build['run_id'])+'\n')
+          PY
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.build.outputs.run }}
+          pattern: rpc-*
+          path: dist
+          merge-multiple: true
+      - name: Publish immutable bundles
+        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
+        run: |
+          set -euo pipefail
+          test "$(find dist -name '*.tar.gz' | wc -l)" -eq 5
+          cat dist/*.sha256 > dist/SHA256SUMS.txt
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          tag=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/rpc-build.json"))["tag"])')
+          build=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/rpc-build.json"))["commit"])')
+          cp internal/llamaruntime/rpc-build.json dist/BUILD.json
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Immutable release already exists; no assets overwritten.'
+            exit 0
+          fi
+          # GitHub restricts GITHUB_TOKEN tag creation at non-head commits.
+          # The native source equality above and provenance retain build identity.
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt dist/BUILD.json --target main --title 'Pinned RPC b12143 with private Unix sockets' --notes "Native artifacts built from $build; source revision and Unix patch verified unchanged. Five platform builds and Linux native Unix E2E passed. Artifact attestations bind each binary to its build." --prerelease --latest=false
