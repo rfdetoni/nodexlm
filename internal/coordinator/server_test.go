@@ -154,3 +154,29 @@ func TestCatalogRequiresPairedNode(t *testing.T) {
 		t.Fatalf("expected 401, got %d", response.Code)
 	}
 }
+
+func TestLANHandlerRejectsAdministrativeRoutes(t *testing.T) {
+	s, err := New(adminSecret, joinSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.CloseRPC()
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/v1/nodes"},
+		{"DELETE", "/v1/nodes/example"},
+		{"POST", "/v1/pairing/start"},
+		{"POST", "/v1/jobs"},
+		{"GET", "/v1/jobs/example"},
+		{"POST", "/v1/chat/completions"},
+	} {
+		if got := call(t, s.LANHandler(), tc.method, tc.path, adminSecret, "", nil).Code; got != http.StatusNotFound {
+			t.Errorf("LAN exposed %s %s: HTTP %d", tc.method, tc.path, got)
+		}
+	}
+	if got := call(t, s.LANHandler(), "GET", "/healthz", "", "", nil).Code; got != http.StatusOK {
+		t.Errorf("LAN health probe: HTTP %d", got)
+	}
+	if got := call(t, s.Handler(), "GET", "/v1/nodes", adminSecret, "", nil).Code; got != http.StatusOK {
+		t.Errorf("local dashboard lost administrative access: HTTP %d", got)
+	}
+}
