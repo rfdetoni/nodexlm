@@ -4,8 +4,6 @@ package dashboard
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -539,65 +537,27 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 // fetchModelPart streams one bounded shard to a private staging file. A
 // Hugging Face LFS SHA-256 header is verified whenever it is provided.
 func (m *Manager) fetchModelPart(ctx context.Context, source, target string, offset, limit int64) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
-	if err != nil {
-		return 0, err
-	}
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("download HTTP %d", resp.StatusCode)
-	}
-	if resp.ContentLength > limit-offset {
-		return 0, errors.New("model exceeds 150 GiB limit")
-	}
-	if offset == 0 && resp.ContentLength > 0 {
-		m.mu.Lock()
-		m.download.Total = resp.ContentLength
-		m.mu.Unlock()
-	}
-	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if err != nil {
 		return 0, err
 	}
 	defer file.Close()
-	sum := sha256.New()
-	writer := &countWriter{w: io.MultiWriter(file, sum), update: func(n int64) {
-		m.mu.Lock()
-		m.download.Received = offset + n
-		m.mu.Unlock()
-	}}
-	_, err = io.Copy(writer, io.LimitReader(resp.Body, limit-offset+1))
+	size, err := safedownload.StreamGGUF(ctx, m.httpClient, source, file, limit-offset,
+		func(n, total int64) {
+			m.mu.Lock()
+			m.download.Received = offset + n
+			if total >= 0 {
+				m.download.Total = offset + total
+			}
+			m.mu.Unlock()
+		})
 	if err != nil {
 		return 0, err
 	}
-	if writer.n > limit-offset || resp.ContentLength >= 0 && writer.n != resp.ContentLength {
-		return 0, errors.New("incomplete or oversized GGUF part")
-	}
-	if expected, ok := safedownload.ExpectedSHA256(resp.Header); ok &&
-		subtle.ConstantTimeCompare(sum.Sum(nil), expected) != 1 {
-		return 0, errors.New("GGUF LFS SHA-256 mismatch")
-	}
-	if err = file.Sync(); err != nil {
+	if err := file.Sync(); err != nil {
 		return 0, err
 	}
-	var magic [4]byte
-	if err = file.Close(); err != nil {
-		return 0, err
-	}
-	opened, err := os.Open(target)
-	if err != nil {
-		return 0, err
-	}
-	_, err = io.ReadFull(opened, magic[:])
-	_ = opened.Close()
-	if err != nil || string(magic[:]) != "GGUF" {
-		return 0, errors.New("invalid GGUF shard header")
-	}
-	return writer.n, nil
+	return size, nil
 }
 
 // publishModelPart is exclusive even on filesystems that do not implement
