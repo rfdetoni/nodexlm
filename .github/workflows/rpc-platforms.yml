@@ -70,7 +70,7 @@ jobs:
               digest=hashlib.sha256(p.read_bytes()).hexdigest()
               (p.parent/(p.name+'.sha256')).write_text(digest+'  '+p.name+'\n')
           PY
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         if: matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu'
         with: {go-version-file: go.mod, cache: false}
       - name: Native Unix RPC end-to-end
