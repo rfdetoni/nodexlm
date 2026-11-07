@@ -45,9 +45,12 @@ jobs:
           $ErrorActionPreference='Stop'
           $certificate=$null
           try {
-            $certificate=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=NodexLM CI ONLY' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(1)
+            Write-Host 'Creating disposable software signing key'
+            $certificate=New-SelfSignedCertificate -Provider 'Microsoft Software Key Storage Provider' -KeyAlgorithm RSA -KeyLength 2048 -Type CodeSigningCert -Subject 'CN=NodexLM CI ONLY' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(1)
             Export-Certificate -Cert $certificate -FilePath test-certificate.cer | Out-Null
-            Import-Certificate -FilePath test-certificate.cer -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+            Write-Host 'Trusting this disposable CI certificate only for the current runner user'
+            certutil -user -f -addstore Root test-certificate.cer
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot initialize CI-only trust store' }
             ./scripts/sign-windows.ps1 -Directory test-dist -CertificateThumbprint $certificate.Thumbprint
             python scripts/finalize-release.py --directory test-dist
             if ($LASTEXITCODE -ne 0) { throw 'Final metadata update failed' }

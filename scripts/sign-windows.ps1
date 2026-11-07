@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$Directory,
     [Parameter(Mandatory=$true)][string]$CertificateThumbprint,
-    [string]$TimestampUrl = 'http://timestamp.digicert.com'
+    [string]$TimestampUrl = 'https://timestamp.digicert.com'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -21,6 +21,17 @@ if (-not $codeSigning) {
 }
 $tool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
 if (-not $tool) { throw 'Windows SDK SignTool is required.' }
+function Invoke-SignTool([string[]]$ToolArguments) {
+    $start = [Diagnostics.ProcessStartInfo]::new($tool.FullName)
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    foreach ($argument in $ToolArguments) { $start.ArgumentList.Add($argument) }
+    $child = [Diagnostics.Process]::Start($start)
+    try {
+        if (-not $child.WaitForExit(90000)) { $child.Kill($true); throw 'SignTool exceeded the 90-second signing/verification deadline.' }
+        if ($child.ExitCode -ne 0) { throw "SignTool failed with exit code $($child.ExitCode)" }
+    } finally { $child.Dispose() }
+}
 $manifest = Get-Content (Join-Path $Directory 'SHA256SUMS.txt')
 foreach ($architecture in @('amd64','arm64')) {
     $name = "nodexlm_windows_$architecture.zip"
@@ -35,10 +46,9 @@ foreach ($architecture in @('amd64','arm64')) {
         Expand-Archive -LiteralPath $archive -DestinationPath $staging
         $executable = Join-Path $staging 'nodexlm.exe'
         $arguments = @('sign','/sha1',$CertificateThumbprint,'/s','My','/fd','SHA256','/tr',$TimestampUrl,'/td','SHA256',$executable)
-        & $tool.FullName @arguments
-        if ($LASTEXITCODE -ne 0) { throw "SignTool failed for $architecture" }
-        & $tool.FullName verify /pa /all $executable
-        if ($LASTEXITCODE -ne 0) { throw "Authenticode chain or timestamp verification failed for $architecture" }
+        Write-Host "Signing and timestamping $architecture"
+        Invoke-SignTool $arguments
+        Invoke-SignTool @('verify','/pa','/all',$executable)
         $signature = Get-AuthenticodeSignature $executable
         if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $CertificateThumbprint -or -not $signature.TimeStamperCertificate) {
             throw "Invalid signer identity or missing timestamp for $architecture"
