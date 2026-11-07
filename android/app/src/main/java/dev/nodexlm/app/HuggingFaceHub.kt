@@ -39,7 +39,7 @@ internal class HuggingFaceHub(private val context: Context) {
         conn.setRequestProperty("Accept", "application/json")
         if (auth) {
             val prefs = context.getSharedPreferences("nodexlm", Context.MODE_PRIVATE)
-            val token = prefs.getString("node_token", null) ?: error("Device not paired")
+            val token = NodeSecrets.read(context).ifBlank { error("Device not paired") }
             conn.setRequestProperty("Authorization", "Bearer $token")
             conn.setRequestProperty("X-Nodex-Node", prefs.getString("node_id", "") ?: "")
             PinnedHostTls.configure(conn, context)
@@ -65,7 +65,7 @@ internal class HuggingFaceHub(private val context: Context) {
         require(q.length in 2..64) { "Search needs 2–64 characters" }
         val prefs = context.getSharedPreferences("nodexlm", Context.MODE_PRIVATE)
         val host = prefs.getString("coordinator", "")?.trimEnd('/') ?: ""
-        if (host.startsWith("https://") && !prefs.getString("node_token", "").isNullOrEmpty()) {
+        if (host.startsWith("https://") && runCatching { NodeSecrets.read(context) }.getOrDefault("").isNotEmpty()) {
             // Pairing's TLS credential authenticates this request, not the admin API.
             // The Host only includes ready RPC nodes in its memory estimate.
             try {
