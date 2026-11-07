@@ -46,7 +46,7 @@ func StreamGGUF(ctx context.Context, client *http.Client, source string, file *o
 		}
 		// With no immutable digest, a failed response must be restarted rather
 		// than appending an unrelated version from a new request.
-		if received > 0 && expected == nil {
+		if received > 0 && (expected == nil || total < 0) {
 			if err := file.Truncate(0); err != nil {
 				return 0, err
 			}
@@ -155,6 +155,7 @@ type progressWriter struct {
 	written  int64
 	progress func(received, total int64)
 	total    int64
+	last     time.Time
 }
 
 func (w *progressWriter) Write(p []byte) (int, error) {
@@ -165,8 +166,9 @@ func (w *progressWriter) Write(p []byte) (int, error) {
 	if n > 0 {
 		_, _ = w.hash.Write(p[:n])
 		w.written += int64(n)
-		if w.progress != nil {
+		if w.progress != nil && time.Since(w.last) >= 250*time.Millisecond {
 			w.progress(w.base+w.written, w.total)
+			w.last = time.Now()
 		}
 	}
 	return n, err
