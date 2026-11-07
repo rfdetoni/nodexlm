@@ -115,8 +115,15 @@ func (s *Server) adminOK(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func parse(w http.ResponseWriter, r *http.Request, out any) bool {
-	if err := json.NewDecoder(r.Body).Decode(out); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
 		fail(w, http.StatusBadRequest, "invalid JSON or body too large")
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		fail(w, http.StatusBadRequest, "unexpected trailing JSON data")
 		return false
 	}
 	return true
@@ -234,9 +241,24 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	if !parse(w, r, &req) {
 		return
 	}
-	if len(req.Models) > 128 || len(req.GPUs) > 16 {
-        fail(w, 400, "invalid model or GPU count")
+	if len(req.Models) > 128 || len(req.GPUs) > 16 ||
+		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
+		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 {
+		fail(w, 400, "invalid node resources")
 		return
+	}
+	for _, model := range req.Models {
+		if len(model) == 0 || len(model) > 256 {
+			fail(w, 400, "invalid model filename")
+			return
+		}
+	}
+	for _, gpu := range req.GPUs {
+		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes {
+			fail(w, 400, "invalid GPU resource report")
+			return
+		}
 	}
 	deadline := time.NewTimer(leaseWait)
 	defer deadline.Stop()
