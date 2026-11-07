@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$Directory,
     [Parameter(Mandatory=$true)][string]$CertificateThumbprint,
-    [string]$TimestampUrl = 'https://timestamp.digicert.com'
+    [string]$TimestampUrl = 'http://timestamp.digicert.com'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
