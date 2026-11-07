@@ -54,6 +54,9 @@ jobs:
       - name: Real native model inference (CPU fallback on paravirtual macOS)
         shell: bash
         env:
+          # The paravirtual Apple GPU lacks RMS_NORM; disable that backend
+          # while testing this bundle's real CPU fallback and Unix transport.
+          GGML_METAL_DEVICES: 0
           NODEXLM_TEST_RPC_DEVICE: ${{ matrix.os == 'darwin' && 'CPU' || '' }}
           NODEXLM_TEST_GPU_LAYERS: ${{ matrix.os == 'darwin' && '0' || 'auto' }}
           NODEXLM_RPC_DIR: ${{ github.workspace }}/native
