@@ -61,3 +61,18 @@ O código de pareamento **não** é o token de administrador. O GGUF de um model
 **RAM e VRAM não são simplesmente somadas.** GPUs integradas normalmente compartilham memória com o sistema, e os cálculos de compatibilidade são estimativas. Android pode interromper serviços em segundo plano conforme o fabricante. A distribuição RPC não representa paralelismo de especialistas MoE automático.
 
 Código-fonte licenciado sob **AGPL-3.0-only**. Projeto independente; não utiliza código do aplicativo PrivateLM.
+
+## Verificar a procedência dos binários
+
+Os arquivos desktop/CLI da release `nodexlm-edge` possuem um atestado
+criptográfico de build associado ao commit e ao workflow do GitHub Actions.
+Após baixar o arquivo, verifique o SHA-256 do release e o atestado com o
+GitHub CLI (não é necessário confiar só no checksum publicado junto do binário):
+
+```sh
+gh attestation verify nodexlm_linux_amd64.tar.gz --repo rfdetoni/nodexlm
+```
+
+As releases experimentais Android não são equivalentes a uma assinatura
+persistente de produção; um APK debug novo pode exigir reinstalação.
+
