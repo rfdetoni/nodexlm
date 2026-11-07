@@ -1,0 +1,37 @@
+# Copyright (C) 2026 Rodrigo Felipe de Toni Grave
+# SPDX-License-Identifier: AGPL-3.0-only
+# Run `sudo -u nodexlm-guest NODEXLM_HOME=/var/lib/nodexlm-guest nodexlm guest`
+# once interactively to enroll before starting this background service.
+[Unit]
+Description=NodexLM GGML RPC Guest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nodexlm-guest
+Group=nodexlm-guest
+Environment=NODEXLM_HOME=/var/lib/nodexlm-guest
+ExecStart=/usr/local/bin/nodexlm guest --backend cpu
+Restart=on-failure
+RestartSec=5
+StateDirectory=nodexlm-guest
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nodexlm-guest
+UMask=0077
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
