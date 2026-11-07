@@ -25,10 +25,16 @@ function Invoke-SignTool([string[]]$ToolArguments) {
     $start = [Diagnostics.ProcessStartInfo]::new($tool.FullName)
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
     foreach ($argument in $ToolArguments) { $start.ArgumentList.Add($argument) }
     $child = [Diagnostics.Process]::Start($start)
+    $stdout = $child.StandardOutput.ReadToEndAsync()
+    $stderr = $child.StandardError.ReadToEndAsync()
     try {
         if (-not $child.WaitForExit(90000)) { $child.Kill($true); throw 'SignTool exceeded the 90-second signing/verification deadline.' }
+        Write-Host $stdout.GetAwaiter().GetResult()
+        Write-Host $stderr.GetAwaiter().GetResult()
         if ($child.ExitCode -ne 0) { throw "SignTool failed with exit code $($child.ExitCode)" }
     } finally { $child.Dispose() }
 }
