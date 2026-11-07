@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/dashboard/static/styles.css', 'internal/llamaruntime/revision.json']
+    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/dashboard/static/styles.css', 'internal/llamaruntime/revision.json', 'internal/local/managed.go']
 permissions:
   contents: read
 concurrency:

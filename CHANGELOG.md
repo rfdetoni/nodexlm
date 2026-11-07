@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Roadmap implementado — 2026-11-07
 
+- Credencial de inferência nativa removida dos argumentos do processo; ambiente privado e teste de regressão para evitar exposição em listagens.
+
 - Shards completos no Android, verificação em segundo plano protegida contra cancelamento, SSE UTF-8/amostragem/stop e monitoramento de lease no modo independente.
 - Pool de quatro modelos, cache por modelo, benchmark real de inferência e plano com KV/métricas observadas. Modelos adicionais usam o Host devido ao limite de um cliente nativo por Guest.
 - Contadores de tokens/gerações/erros, histograma de duração, reconexões/túneis e gráfico de latência; descoberta DNS-SD com fallback UDP.

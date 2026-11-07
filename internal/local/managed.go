@@ -123,8 +123,10 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("generate local inference credential: %w", err)
 	}
-	args := append(m.args(port, nctx, threads, gpu, meta.BlockCount), "--api-key", apiKey)
+	args := m.args(port, nctx, threads, gpu, meta.BlockCount)
+	// Keep the native inference credential out of process argument listings.
 	cmd := exec.Command(m.Binary, args...)
+	cmd.Env = append(os.Environ(), "LLAMA_API_KEY="+apiKey)
 	process.KillWithParent(cmd)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = os.Stderr
