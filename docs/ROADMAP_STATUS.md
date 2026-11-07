@@ -26,6 +26,8 @@ Os 19 itens estão mapeados abaixo. As funcionalidades foram implementadas e val
 
 ## Evidências reproduzíveis
 
+- [Validação final do runtime e navegador](https://github.com/rfdetoni/nodexlm/actions/runs/42370633600) aprovada após retirar a credencial dos argumentos nativos. [Build final desktop/CLI](https://github.com/rfdetoni/nodexlm/actions/runs/42370633605) executa a regressão da credencial, testes Go/vet, cross-compilação e pacotes.
+
 - Go: `go test -race ./... -timeout 90s`, `go vet ./...`, `govulncheck ./...` (nenhuma vulnerabilidade encontrada na execução), regressão DOM do catálogo e smoke do instalador.
 - A credencial da API nativa é transmitida por ambiente, sem aparecer nos argumentos do processo; regressão cobre sobrescrita de credencial herdada e ausência nos argumentos.
 - Native TCP local: `NODEXLM_TEST_RPC_TRANSPORT=tcp NODEXLM_RPC_DIR=/tmp/nodexlm-native-build NODEXLM_TEST_MODEL=/tmp/nodexlm-tiny.gguf python3 scripts/e2e-rpc.py`. Inclui dois modelos residentes, geração no segundo modelo e benchmark em um Guest real.
