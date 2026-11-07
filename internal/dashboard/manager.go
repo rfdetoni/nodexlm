@@ -313,7 +313,7 @@ func (m *Manager) load(ctx context.Context) error {
 			rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
 			remoteCapacities = append(remoteCapacities, guest.CapacityBytes)
 		}
-		localLayers, err = clusterplan.LocalLayerCount(model.BlockCount, uint64(info.Size()), hostCapacity, remoteCapacities)
+		localLayers, err = clusterplan.LocalLayerCount(model.BlockCount, uint64(size), hostCapacity, remoteCapacities)
 		if err != nil {
 			return err
 		}
