@@ -42,18 +42,7 @@ internal class HuggingFaceHub(private val context: Context) {
             val token = prefs.getString("node_token", null) ?: error("Device not paired")
             conn.setRequestProperty("Authorization", "Bearer $token")
             conn.setRequestProperty("X-Nodex-Node", prefs.getString("node_id", "") ?: "")
-            val cert = File(context.filesDir, "coordinator.crt")
-            if (!cert.isFile) error("Host certificate unavailable")
-            val store = KeyStore.getInstance(KeyStore.getDefaultType())
-            store.load(null, null)
-            store.setCertificateEntry("coordinator", cert.inputStream().use {
-                CertificateFactory.getInstance("X.509").generateCertificate(it)
-            })
-            val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-            factory.init(store)
-            val ssl = SSLContext.getInstance("TLS")
-            ssl.init(null, factory.trustManagers, null)
-            conn.sslSocketFactory = ssl.socketFactory // hostname verification stays enabled
+            PinnedHostTls.configure(conn, context)
         }
         try {
             if (conn.responseCode != 200) error("HTTP ${conn.responseCode}")
