@@ -1,0 +1,26 @@
+name: Optional Flutter source validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['desktop/**', '.github/workflows/flutter-checks.yml']
+permissions: {contents: read}
+concurrency:
+  group: nodexlm-flutter-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Pinned official Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
+      - name: Analyze optional desktop sources
+        working-directory: desktop
+        run: |
+          "$RUNNER_TEMP/flutter/bin/flutter" pub get
+          "$RUNNER_TEMP/flutter/bin/flutter" analyze --no-pub

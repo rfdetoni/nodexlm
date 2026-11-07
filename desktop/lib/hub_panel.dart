@@ -42,7 +42,7 @@ class _HubPanelState extends State<HubPanel> {
     try {
       final args = ['hub','search','--query',query.text.trim(),'--json'];
       if (localOnly) args.add('--fit');
-      if (widget.adminToken.isNotEmpty && widget.coordinator.startsWith('https://')) {
+      if (widget.adminToken.isNotEmpty && (widget.coordinator.startsWith('https://') || widget.coordinator.startsWith('http://'))) {
         args.addAll(['--server',widget.coordinator]);
         if (widget.caFile.isNotEmpty) args.addAll(['--ca',widget.caFile]);
       }

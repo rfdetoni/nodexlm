@@ -28,7 +28,7 @@ func hub(args []string) error {
 		q := f.String("query", "", "Hugging Face model search")
 		jsonMode := f.Bool("json", false, "emit JSON recommendations")
 		fit := f.Bool("fit", false, "show models estimated to fit one local node")
-		server := f.String("server", "", "optional coordinator HTTPS URL to include active cluster nodes")
+		server := f.String("server", "", "optional management URL (loopback HTTP or HTTPS) to include active cluster nodes")
 		ca := f.String("ca", "", "coordinator certificate file")
 		if err := f.Parse(args[1:]); err != nil {
 			return err

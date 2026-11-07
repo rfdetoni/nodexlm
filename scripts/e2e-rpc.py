@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CLI = ROOT / 'nodexlm'
+CLI = ROOT / ('nodexlm.exe' if os.name=='nt' else 'nodexlm')
 
 
 def port():
@@ -65,7 +65,7 @@ def main():
         try:
             host = subprocess.Popen([str(CLI),'host','--dir',str(host_dir),
                 '--addr',f'127.0.0.1:{lan_port}','--web-addr',f'127.0.0.1:{web_port}',
-                '--discovery-port',str(discovery_port),'--rpc-transport',os.environ.get('NODEXLM_TEST_RPC_TRANSPORT','auto'),'--llama-bin',str(runtime/'bin/llama-server')],
+                '--discovery-port',str(discovery_port),'--rpc-transport',os.environ.get('NODEXLM_TEST_RPC_TRANSPORT','auto'),'--llama-bin',str(runtime/'bin'/('llama-server.exe' if os.name=='nt' else 'llama-server'))],
                 env=env,stdout=log,stderr=log)
             processes.append(host)
             code = wait_for(lambda: re.search(r'PAIRING CODE: ([A-Z0-9]{8})',log_path.read_text()))[1]
@@ -83,7 +83,7 @@ def main():
                     if exc.code==401:raise
                     raise AssertionError(f"{method} {path}: HTTP {exc.code}: {exc.read().decode()}") from exc
 
-            rpc = next(p for p in [runtime/'bin/ggml-rpc-server',runtime/'bin/rpc-server'] if p.exists())
+            rpc = next(p for p in [runtime/'bin'/name for name in ('ggml-rpc-server','rpc-server','ggml-rpc-server.exe','rpc-server.exe')] if p.exists())
             guest = subprocess.Popen([str(CLI),'rpc-node','--dir',str(guest_dir),'--rpc-bin',str(rpc),'--rpc-addr',('127.0.0.1:0' if os.environ.get('NODEXLM_TEST_RPC_TRANSPORT')=='tcp' else 'auto')],
                 env=env,stdout=guest_log,stderr=guest_log)
             processes.append(guest)

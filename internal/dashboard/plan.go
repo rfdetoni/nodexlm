@@ -13,13 +13,14 @@ import (
 )
 
 type placement struct {
-	NodeID      string               `json:"node_id,omitempty"`
-	Name        string               `json:"name"`
-	Network     *rpcmesh.Measurement `json:"network,omitempty"`
-	Endpoint    string               `json:"endpoint"`
-	Layers      int                  `json:"layers"`
-	WeightBytes uint64               `json:"estimated_weight_bytes"`
-	Budget      uint64               `json:"budget_bytes"`
+	TokensPerSecond *float64             `json:"tokens_per_second,omitempty"`
+	NodeID          string               `json:"node_id,omitempty"`
+	Name            string               `json:"name"`
+	Network         *rpcmesh.Measurement `json:"network,omitempty"`
+	Endpoint        string               `json:"endpoint"`
+	Layers          int                  `json:"layers"`
+	WeightBytes     uint64               `json:"estimated_weight_bytes"`
+	Budget          uint64               `json:"budget_bytes"`
 }
 
 func (m *Manager) Plan() (map[string]any, error) {
@@ -81,8 +82,21 @@ func (m *Manager) Plan() (map[string]any, error) {
 		value := uint64(4) * uint64(settings.ContextTokens) * uint64(meta.BlockCount) * uint64(meta.EmbeddingLength) * uint64(meta.KVHeadCount) / uint64(meta.HeadCount)
 		kvBytes = &value
 	}
+	samples := m.InferenceSamples()
+	for i := range nodes {
+		key := settings.Model
+		if nodes[i].NodeID != "" {
+			key += "@" + nodes[i].NodeID
+		}
+		for _, sample := range samples {
+			if sample.Model == key && time.Since(sample.MeasuredAt) < 24*time.Hour {
+				rate := sample.TokensPerSecond
+				nodes[i].TokensPerSecond = &rate
+			}
+		}
+	}
 	var tps *float64
-	for _, sample := range m.InferenceSamples() {
+	for _, sample := range samples {
 		if sample.Model == settings.Model && time.Since(sample.MeasuredAt) < 24*time.Hour {
 			rate := sample.TokensPerSecond
 			tps = &rate
@@ -97,7 +111,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if uint64(size) > host {
 		bottleneck = "host-memory"
 	}
-	return map[string]any{"model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and F16 KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is a recent measurement for this model/configuration, not a prediction from bandwidth."}, nil
+	return map[string]any{"model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and F16 KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
 }
 func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 	if len(id) != 64 {

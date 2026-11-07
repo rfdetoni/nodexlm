@@ -17,8 +17,13 @@ sensíveis** solicitando um canal privado de contato.
 
 ## Limites conhecidos
 
-- O protocolo nativo GGML RPC não autentica conexões na interface de
-  loopback. Não execute Guests em máquinas compartilhadas ou não confiáveis.
+- Em POSIX, o runtime RPC com patch utiliza sockets Unix em diretórios
+  privados (0700, socket 0600). Windows e runtimes legados mantêm TCP
+  loopback sem autenticação GGML. Processos da mesma conta continuam
+  confiáveis; utilize contas dedicadas.
+- O esquema de pareamento por código não é um PAKE padronizado auditado.
+  A revisão de código e as atestações dos binários não equivalem a auditoria
+  criptográfica independente. Veja `docs/PAIRING.md`.
 - As credenciais de pareamento e o arquivo `secrets.json` devem ficar
   restritos à conta que executa o Host.
 - Um certificado TLS já pareado é fixado no Guest; sua substituição

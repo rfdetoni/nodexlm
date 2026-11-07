@@ -1,8 +1,10 @@
 # NodexLM
 
-A local inference cluster for Linux, macOS, Windows and Android Guests. The Host keeps the GGUF model and can place transformer layers on authenticated Guests through TLS-wrapped GGML RPC. One model is resident on the Host at a time. Standalone workers can serve their own models through the job queue.
+A local inference cluster for Linux, macOS, Windows and Android Guests. The Host keeps the GGUF model and can place transformer layers on authenticated Guests through TLS-wrapped GGML RPC. The primary model may use RPC; up to three additional models can remain resident on the Host within its memory budget. Standalone workers can serve their own models through the job queue.
 
-This is experimental software for a trusted LAN/VPN. Loopback native RPC is unauthenticated: use dedicated machines/accounts and avoid untrusted local applications. Pairing binds an eight-character code to the Host certificate; it is not an externally audited PAKE.
+This is experimental software for a trusted LAN/VPN. Patched POSIX runtimes use private Unix RPC sockets; Windows and legacy runtimes retain unauthenticated loopback TCP. Use dedicated machines/accounts and avoid untrusted local applications. Pairing binds an eight-character code to the Host certificate; it is not an externally audited PAKE.
+
+English guides: [Host](docs/en/HOST.md), [Guest](docs/en/GUEST.md), [Android](docs/en/ANDROID.md), [models/MoE](docs/en/MODELS.md), [diagnostics](docs/en/DIAGNOSTICS.md), [pairing](docs/en/PAIRING.md).
 
 ## Quick start
 
@@ -24,7 +26,7 @@ nodexlm doctor --json
 nodexlm bench --node NODE_ID --json
 ```
 
-`bench` measures an idle authenticated TLS tunnel, stores the result in the configuration directory, and requires an upgraded Guest. Its echo throughput is aggregate traffic in both directions, not inference tokens/s.
+`bench` measures an idle authenticated TLS tunnel, stores the result in the configuration directory, and requires an upgraded Guest. Its echo throughput is aggregate traffic in both directions. Use `nodexlm bench --model MODEL [--node NODE_ID]` for a real, bounded inference workload; unload resident models first. The plan includes recent measurements and an explicit F16 KV estimate.
 
 ## OpenAI-compatible inference
 
@@ -50,4 +52,4 @@ go build -o nodexlm ./cmd/nodexlm
 python3 scripts/smoke.py
 ```
 
-Real RPC inference tests require the matching native bundle and a tiny GGUF; see `scripts/e2e-rpc.py`. They are manually dispatched in Actions to avoid routine native build minutes. Linux CPU tests do not establish Android/Vulkan or other-platform compatibility.
+Real RPC inference tests require the matching native bundle and a tiny GGUF; see `scripts/e2e-rpc.py`. They are manually dispatched or scoped to changes in the E2E workflow/browser checks to avoid routine native build minutes. Linux CPU tests do not establish Android/Vulkan or other-platform compatibility.

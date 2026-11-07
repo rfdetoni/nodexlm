@@ -20,21 +20,21 @@ Known Content-Length is checked against disk space. Unknown-length streams remai
 
 `nodexlm doctor [--dir PATH] [--json]` reports local listeners, directory permissions, disk space, the certificate validity/SAN/fingerprint, AVX2 on Linux, glibc, Vulkan-tool availability and live cluster data when the default management listener is reachable. `unverified` explicitly means no conclusion was established. Local listener probes cannot prove a LAN firewall is open. Custom ports require separate reachability checks.
 
-`GET /metrics` is served on loopback and requires the admin bearer token. It exposes current online nodes, connected RPC nodes and job counts by status. Completed/failed/cancelled jobs are retained for up to one hour, so those values are gauges rather than lifetime counters. This initial endpoint does not expose token counters, reconnect histories or latency histograms.
+`GET /metrics` is served on loopback and requires the admin bearer token. It exposes current online nodes, connected RPC nodes and job counts by status. Completed/failed/cancelled jobs are retained for up to one hour, so those values are gauges rather than lifetime counters. Host metrics include generation/error counters, cumulative duration histogram buckets, backend-reported completion tokens and recent per-model throughput/cache gauges. Tokens absent from native usage (including interrupted generations) are not guessed. `/api/observability` provides bounded per-node RTT histories, reconnect failures and tunnel capacity counters; the console plots actual RTT samples.
 
 Every HTTP request receives a server-generated `X-Request-ID`. Correlation events are debug-level. `NODEXLM_LOG_FORMAT=json` selects JSON process logs; the default is human-readable slog output. Worker logs use `job_id`.
 
 `nodexlm bench --node ID [--json]` uses marker 2 on an idle, authenticated TLS tunnel; marker 1 remains native GGML. The Guest must advertise support. Stop inference before running it. Results include RTT, total echoed bytes and aggregate bidirectional throughput, saved as `bench-ID.json`. No model tokens/s is inferred from these values.
 
-The cluster-plan preview uses actual GGUF block metadata and complete shard size. Counts and memory are estimates; native GGML decides final remote allocation. It does not yet incorporate stored benchmark results, KV-cache size or measured per-model inference speed.
+The cluster-plan preview uses actual GGUF block metadata and complete shard size. Counts and memory are estimates; native GGML decides final remote allocation. It incorporates stored network samples (up to 24 hours), an F16 KV estimate when architecture metadata is available, and recent measured model speed. Network bottleneck thresholds are explicitly advisory; measurements can become stale after configuration changes and are not throughput predictions.
 
 ## Cancellation and scheduling
 
-Disconnecting a Host SSE client cancels its native HTTP request. Unload cancels an active generation/load. Queued-worker requests are notified through channels; `priority` (-10..10, default 0) orders jobs stably within the bounded queue. `DELETE /v1/jobs/ID` cancels queued/running jobs. A Go worker checks its lease state every second, cancels its backend request and acknowledges cancellation before the node is reused. Legacy workers without that protocol may finish their current generation before their lease is reclaimed.
+Disconnecting a Host SSE client cancels its native HTTP request. Unload cancels an active generation/load. Queued-worker requests are notified through channels; `priority` (-10..10, default 0) orders jobs stably within the bounded queue. `DELETE /v1/jobs/ID` cancels queued/running jobs. Go and upgraded Android standalone workers check lease state every second and cancel their backend/native generation. Legacy workers without that protocol may finish their current generation before their lease is reclaimed.
 
 ## Android
 
-The RPC service uses a random loopback port per execution. This reduces predictable-port collisions; it does not authenticate GGML or isolate other local apps. Thermal status SEVERE always stops the service. Settings add charging-only operation, battery threshold and an hour window (including overnight windows). Restart the Guest after changing preferences. A safety stop posts its reason; restarting requires a deliberate user action. CPU/Vulkan and background behavior require physical-device validation.
+The patched Android RPC service uses a filesystem Unix socket within private app storage, connected through `LocalSocket`. Patched POSIX desktop bundles also support private Unix sockets; Windows/legacy runtimes use random loopback TCP and require a dedicated account/machine. Thermal status SEVERE always stops the service. Settings add charging-only operation, battery threshold and an hour window (including overnight windows). Restart the Guest after changing preferences. A safety stop posts its reason; restarting requires a deliberate user action. CPU/Vulkan and background behavior require physical-device validation.
 
 ## Docker
 
@@ -42,8 +42,18 @@ On Linux, `docker compose up --build -d` starts an unprivileged Host with a pers
 
 ## Releases
 
-CLI release archives carry GitHub artifact attestations and a CycloneDX inventory (`nodexlm.cdx.json`) of the CLI, Go standard library and shipped archives. Separately downloaded native runtimes are outside this CLI SBOM. Review their pinned revision/hashes independently.
+CLI release archives carry GitHub artifact attestations and a CycloneDX inventory (`nodexlm.cdx.json`) of the CLI, Go standard library, declared Go modules and shipped archives/packages. Separately downloaded native runtimes are outside this CLI SBOM. Review their pinned revision/hashes independently.
 
 Set `NODEXLM_VERIFY_PROVENANCE=1` for the POSIX installer or use `install.ps1 -VerifyProvenance` to require `gh attestation verify --repo rfdetoni/nodexlm` before executing the downloaded binary. GitHub CLI and any credentials it requires must already be configured. Old releases without attestations fail this mode. Checksums still protect transfer integrity when provenance verification is not requested. This is artifact provenance, not Authenticode or a third-party security audit.
 
 The default remains experimental `edge` until a stable release exists; `NODEXLM_CHANNEL=stable` opts into GitHub's latest stable release. No stable version is invented by the installer.
+
+## Resident models and packaging
+
+A primary model may use RPC. Up to three additional models may run on the Host with conservative memory admission. Each native process owns its KV; no cross-model cache or automatic eviction interrupts another client. The pinned Guest server handles one native client at a time, so additional resident models never attach to its occupied backend. Unload all residents before `bench --model MODEL [--node ID]`.
+
+Desktop workflows build `.deb` and `.rpm` for Linux amd64/arm64/armhf. Their dedicated system accounts are created at installation; services are not enabled or started automatically. Configure enrollment first, then enable the desired systemd unit. The CLI/Web archives remain available for seven OS/architecture targets.
+
+Stable `vX.Y.Z` releases generate a Homebrew formula and winget manifests using the actual release digests. These are reviewable release artifacts; availability in the public Homebrew/winget indexes requires a separate accepted upstream submission. Do not claim that generating a manifest publishes it to those indexes.
+
+DNS-SD advertises `nodexlm.local` and `_nodexlm._tcp.local` on private IPv4 multicast networks. UDP discovery remains available when multicast is blocked or another Host advertises the same alias. Discovery results never replace code/certificate verification.

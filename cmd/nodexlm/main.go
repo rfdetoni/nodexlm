@@ -120,11 +120,11 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm join --server https://host:8443 --name worker-1 --model model.gguf --ca ./server.crt
   nodexlm node --backend http://127.0.0.1:8080 --model model.gguf --ca ./server.crt
   nodexlm rpc-node                   # shares CPU/GPU for ONE distributed GGUF
-  nodexlm nodes --server https://host:8443 --ca ./server.crt
-  nodexlm revoke --id NODE_ID --server https://host:8443 --ca ./server.crt
-  nodexlm chat --server https://host:8443 --model model.gguf --prompt "Hello" --ca ./server.crt
+  nodexlm nodes --server http://127.0.0.1:8787 --ca ./server.crt
+  nodexlm revoke --id NODE_ID --server http://127.0.0.1:8787 --ca ./server.crt
+  nodexlm chat --server http://127.0.0.1:8787 --model model.gguf --prompt "Hello" --ca ./server.crt
   nodexlm models --dir ./models
-  nodexlm hub search --query "qwen gguf" --json [--server https://host:8443 --ca ./server.crt]
+  nodexlm hub search --query "qwen gguf" --json [--server http://127.0.0.1:8787]
   nodexlm hub download --repo owner/repo --file model.Q4_K_M.gguf --dir ./models
   nodexlm hub import --file /path/to/manual.gguf --dir ./models
   nodexlm local --model ./models/model.gguf --prompt "hello"

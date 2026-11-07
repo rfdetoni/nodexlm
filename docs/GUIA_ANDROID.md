@@ -17,7 +17,7 @@ O app é experimental; build aprovado não comprova execução ou desempenho em 
 4. Em **Backend de processamento**, escolha o modo apropriado e pressione **Ativar Guest RPC (sem GGUF local)**.
 5. Na notificação do Android, verifique se o Guest permanece ativo. Para interromper, use **Parar Guest RPC**.
 
-O servidor GGML RPC é iniciado em um processo Android isolado, na porta **127.0.0.1:50052**, e só recebe chamadas do Host por túneis HTTPS autenticados. O GGUF permanece no Host, e o Android recebe buffers, tensores e grafos.
+O servidor GGML RPC é iniciado em um processo Android isolado e usa um **socket Unix no diretório privado do aplicativo**. O serviço acessa esse socket por `LocalSocket` e recebe chamadas do Host por túneis HTTPS autenticados. O GGUF permanece no Host, e o Android recebe buffers, tensores e grafos.
 
 ## Modos
 
@@ -46,3 +46,11 @@ O Android utiliza um serviço em primeiro plano, wake lock de CPU e bloqueio de 
 A **inferência independente** continua existindo para GGUF armazenado no telefone, mas não compartilha camadas do modelo do Host.
 
 Veja [Host](GUIA_HOST.md) e [diagnóstico](GUIA_DIAGNOSTICO.md).
+
+## Modelos e energia
+
+Na importação de GGUF dividido, selecione todas as partes do mesmo modelo. A biblioteca só mostra conjuntos completos; o download baixa e verifica as partes antes de publicar a primeira. Downloads Android usam o gerenciador nativo do sistema; não prometem as mesmas garantias de retomada do downloader Go.
+
+Em Ajustes, configure operação somente carregando, bateria mínima e intervalo de horas (inclusive atravessando meia-noite). Temperatura SEVERE interrompe o serviço. A notificação informa o motivo; reiniciar exige ação do usuário. O modo independente suporta texto incremental UTF-8, amostragem, stop e cancelamento de lease; mantém os limites de contexto/saída documentados no código nativo.
+
+As telas e notificações possuem recursos em inglês e português do Brasil, escolhidos pelo idioma do Android. Erros retornados pelo sistema/runtime podem manter sua língua original.

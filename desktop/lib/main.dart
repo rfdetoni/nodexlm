@@ -36,7 +36,7 @@ class ControlCenter extends StatefulWidget {
 }
 
 class _ControlCenterState extends State<ControlCenter> {
-  final url = TextEditingController(text: 'https://127.0.0.1:8443');
+  final url = TextEditingController(text: 'http://127.0.0.1:8787');
   final token = TextEditingController();
   final caFile = TextEditingController();
   final model = TextEditingController();
@@ -58,8 +58,9 @@ class _ControlCenterState extends State<ControlCenter> {
 
   Future<dynamic> request(String method, String endpoint, [Object? body]) async {
     final base = Uri.tryParse(url.text.trim());
-    if (base == null || base.scheme != 'https') {
-      throw const FormatException('A valid HTTPS coordinator URL is required');
+    if (base == null || base.host.isEmpty || base.userInfo.isNotEmpty || base.hasQuery || base.hasFragment ||
+        !(base.scheme == 'https' || base.scheme == 'http' && ['localhost', '127.0.0.1', '::1'].contains(base.host))) {
+      throw const FormatException('Use HTTPS or a loopback HTTP management URL');
     }
     final context = SecurityContext(withTrustedRoots: true);
     if (caFile.text.trim().isNotEmpty) context.setTrustedCertificates(caFile.text.trim());
@@ -83,11 +84,12 @@ class _ControlCenterState extends State<ControlCenter> {
     setState(() { busy=true;status='Refreshing cluster…'; });
     try {
       final list=await request('GET','/v1/nodes') as List<dynamic>;
+      if (!mounted) return;
       setState(() {
         nodes..clear()..addAll(list.cast<Map<String,dynamic>>());
         status='${nodes.length} registered nodes';
       });
-    } catch(e) {setState(() => status='Could not refresh: $e');}
+    } catch(e) {if(mounted)setState(() => status='Could not refresh: $e');}
     finally {if(mounted)setState(() =>busy=false);}
   }
 
@@ -100,15 +102,16 @@ class _ControlCenterState extends State<ControlCenter> {
       final output=await request('POST','/v1/chat/completions',{
         'model': model.text.trim(),
         'messages':[
-          for(final item in chats) {'role':item.role,'content':item.text},
+          for(final item in chats.where((item) => item.role == 'user' || item.role == 'assistant').toList().reversed.take(63).toList().reversed) {'role':item.role,'content':item.text},
         ],
         'max_tokens':512,
         'stream':false,
       }) as Map<String,dynamic>;
+      if (!mounted) return;
       final choices=output['choices'] as List<dynamic>;
       final response=(choices.first as Map<String,dynamic>)['message'] as Map<String,dynamic>;
       setState(() {chats.add((role:'assistant',text:'${response['content']}'));status='Complete';});
-    } catch(e){setState(() {chats.add((role:'error',text:'$e'));status='Failed';});}
+    } catch(e){if(mounted)setState(() {if(chats.isNotEmpty && chats.last.role=='user')chats.removeLast();chats.add((role:'error',text:'$e'));prompt.text=value;status='Failed';});}
     finally {if(mounted)setState(() => busy=false);}
   }
 
@@ -125,7 +128,7 @@ class _ControlCenterState extends State<ControlCenter> {
   Widget connection() => ListView(children:[
     const Text('Coordinator connection',style:TextStyle(fontSize:22,fontWeight:FontWeight.w600)),
     const SizedBox(height:12),
-    TextField(controller:url,decoration:const InputDecoration(labelText:'HTTPS URL',border:OutlineInputBorder())),
+    TextField(controller:url,decoration:const InputDecoration(labelText:'Management URL (local port 8787)',border:OutlineInputBorder())),
     const SizedBox(height:12),
     TextField(controller:token,obscureText:true,decoration:const InputDecoration(labelText:'Admin token',border:OutlineInputBorder())),
     const SizedBox(height:12),

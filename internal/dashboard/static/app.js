@@ -258,9 +258,10 @@ $('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pa
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas'));
  for(const node of plan.nodes)area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));
- area.append(el('p','', 'KV F16 estimado: '+fmt(plan.estimated_kv_bytes)+' · '+(plan.tokens_per_second?plan.tokens_per_second.toFixed(1)+' tokens/s medidos':'Tokens/s ainda não medido')+' · '+plan.bottleneck));
+ area.append(el('p','', 'KV F16 estimado: '+fmt(plan.estimated_kv_bytes)+' · '+(plan.tokens_per_second?plan.tokens_per_second.toFixed(1)+' tokens/s medidos':'Tokens/s ainda não medido')+' · '+({'unmeasured':'Gargalo ainda não medido','network-advisory':'Atenção à velocidade da rede','host-memory':'Limite de memória do Host'}[plan.bottleneck]||plan.bottleneck)));
  for(const node of plan.nodes){if(node.network)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.network.round_trip_ms.toFixed(2)+' ms RTT · '+node.network.mib_per_second.toFixed(1)+' MiB/s de eco'));}
- area.append(el('p','muted',plan.notice));
+ for(const node of plan.nodes){if(node.tokens_per_second)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.tokens_per_second.toFixed(1)+' tokens/s observados'));}
+ area.append(el('p','muted','Camadas e KV F16 são estimativas; a alocação final depende do runtime. Aviso de rede: RTT acima de 10 ms ou eco abaixo de 50 MiB/s. Tokens/s são medidos, sem previsão pela banda; mudar a configuração ou os nós pode invalidar a comparação.'));
 }));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
 $('stopChat').addEventListener('click',()=>chatController?.abort());
@@ -317,7 +318,7 @@ async function refreshObservations(){
   const history=node.latency||[];
   if(history.length){
    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 600 140');svg.setAttribute('role','img');svg.setAttribute('aria-label','Histórico de latência RTT do Guest em milissegundos');svg.setAttribute('class','latency-chart');
-   const peak=Math.max(1,...history.map(p=>p.round_trip_ms));const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('points',history.map((p,i)=>(20+i*560/Math.max(1,history.length-1))+','+(120-100*p.round_trip_ms/peak)).join(' '));line.setAttribute('fill','none');line.setAttribute('stroke','currentColor');line.setAttribute('stroke-width','3');svg.append(line);info.append(svg);
+   const peak=Math.max(1,...history.map(p=>p.round_trip_ms));const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('points',history.map((p,i)=>(20+i*560/Math.max(1,history.length-1))+','+(120-100*p.round_trip_ms/peak)).join(' '));line.setAttribute('fill','none');line.setAttribute('stroke','currentColor');line.setAttribute('stroke-width','3');svg.append(line);for(let i=0;i<history.length;i++){const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');dot.setAttribute('cx',String(20+i*560/Math.max(1,history.length-1)));dot.setAttribute('cy',String(120-100*history[i].round_trip_ms/peak));dot.setAttribute('r','3');dot.setAttribute('fill','currentColor');svg.append(dot)}info.append(svg);
    const last=history[history.length-1];info.append(el('p','',last.round_trip_ms.toFixed(2)+' ms RTT · '+last.mib_per_second.toFixed(1)+' MiB/s de eco'));
   }
   row.append(info);area.append(row);
