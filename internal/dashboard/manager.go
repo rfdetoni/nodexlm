@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	urlpath "path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -79,7 +79,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: max(1, runtime.NumCPU()-1), ContextTokens: 2048, GPULayers: "auto"}}
-	b, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
+	b, err := os.ReadFile(fileurlpath.Join(dir, "runtime.json"))
 	if err == nil {
 		if err = json.Unmarshal(b, &m.settings); err != nil {
 			return nil, fmt.Errorf("runtime settings: %w", err)
@@ -163,14 +163,14 @@ func (m *Manager) Update(s Settings) error {
 	if err != nil {
 		return err
 	}
-	if err := writePrivate(filepath.Join(m.dir, "runtime.json"), raw); err != nil {
+	if err := writePrivate(fileurlpath.Join(m.dir, "runtime.json"), raw); err != nil {
 		return err
 	}
 	m.settings = s
 	return nil
 }
 func writePrivate(path string, body []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".runtime-")
+	f, err := os.CreateTemp(fileurlpath.Dir(path), ".runtime-")
 	if err != nil {
 		return err
 	}
@@ -193,10 +193,10 @@ func writePrivate(path string, body []byte) error {
 	return os.Rename(f.Name(), path)
 }
 func modelPath(dir, name string) (string, error) {
-	if name == "" || filepath.Base(name) != name || !strings.EqualFold(filepath.Ext(name), ".gguf") || strings.ContainsAny(name, "/\\\x00") || name == "." || name == ".." {
+	if name == "" || fileurlpath.Base(name) != name || !strings.EqualFold(filepath.Ext(name), ".gguf") || strings.ContainsAny(name, "/\\\x00") || name == "." || name == ".." {
 		return "", errors.New("model name must be a GGUF file in the models directory")
 	}
-	path := filepath.Join(dir, name)
+	path := fileurlpath.Join(dir, name)
 	// Do not follow symlinks out of the managed model directory.
 	info, err := os.Lstat(path)
 	if err == nil && !info.Mode().IsRegular() {
@@ -441,7 +441,7 @@ func (m *Manager) StartDownload(urlText, name string) error {
 	if err != nil {
 		return err
 	}
-	parts, err := catalog.ShardNames(path.Base(u.Path))
+	parts, err := catalog.ShardNames(urlpath.Base(u.Path))
 	if err != nil {
 		return err
 	}
@@ -449,7 +449,7 @@ func (m *Manager) StartDownload(urlText, name string) error {
 		return errors.New("sharded GGUF destination must use the original first-shard filename")
 	}
 	for _, part := range parts {
-		if _, err := os.Lstat(filepath.Join(m.modelDir, part)); err == nil {
+		if _, err := os.Lstat(fileurlpath.Join(m.modelDir, part)); err == nil {
 			return fmt.Errorf("GGUF shard %s already exists", part)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -483,7 +483,7 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 		errorText = err.Error()
 		return
 	}
-	shards, err := catalog.ShardNames(path.Base(sourceURL.Path))
+	shards, err := catalog.ShardNames(urlpath.Base(sourceURL.Path))
 	if err != nil {
 		errorText = err.Error()
 		return
@@ -499,10 +499,10 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 	for _, shard := range shards {
 		partURL := *sourceURL
 		if len(shards) > 1 {
-			partURL.Path = path.Join(path.Dir(sourceURL.Path), shard)
+			partURL.Path = urlpath.Join(urlpath.Dir(sourceURL.Path), shard)
 			partURL.RawPath = ""
 		}
-		out := filepath.Join(stage, shard)
+		out := fileurlpath.Join(stage, shard)
 		n, err := m.fetchModelPart(ctx, partURL.String(), out, received, limit)
 		if err != nil {
 			errorText = fmt.Sprintf("GGUF shard %s: %v", shard, err)
@@ -512,7 +512,7 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 	}
 	// The first shard holds the architecture metadata; the other parts must
 	// be valid GGUF containers but may not repeat all of that metadata.
-	if _, err = local.InspectGGUF(filepath.Join(stage, shards[0])); err != nil {
+	if _, err = local.InspectGGUF(fileurlpath.Join(stage, shards[0])); err != nil {
 		errorText = "invalid GGUF: " + err.Error()
 		return
 	}
@@ -525,11 +525,11 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 		}
 	}()
 	for _, shard := range shards {
-		target := filepath.Join(m.modelDir, shard)
+		target := fileurlpath.Join(m.modelDir, shard)
 		if len(shards) == 1 {
 			target = destination
 		}
-		if err = publishModelPart(filepath.Join(stage, shard), target); err != nil {
+		if err = publishModelPart(fileurlpath.Join(stage, shard), target); err != nil {
 			errorText = fmt.Sprintf("publish GGUF shard %s: %v", shard, err)
 			return
 		}
@@ -593,16 +593,17 @@ func (m *Manager) fetchModelPart(ctx context.Context, source, target string, off
 		return 0, err
 	}
 	var magic [4]byte
-	if file.Close(); true { // read via a separate descriptor after closing writer
-		opened, openErr := os.Open(target)
-		if openErr != nil {
-			return 0, openErr
-		}
-		_, err = io.ReadFull(opened, magic[:])
-		_ = opened.Close()
-		if err != nil || string(magic[:]) != "GGUF" {
-			return 0, errors.New("invalid GGUF shard header")
-		}
+	if err = file.Close(); err != nil {
+		return 0, err
+	}
+	opened, err := os.Open(target)
+	if err != nil {
+		return 0, err
+	}
+	_, err = io.ReadFull(opened, magic[:])
+	_ = opened.Close()
+	if err != nil || string(magic[:]) != "GGUF" {
+		return 0, errors.New("invalid GGUF shard header")
 	}
 	return writer.n, nil
 }
