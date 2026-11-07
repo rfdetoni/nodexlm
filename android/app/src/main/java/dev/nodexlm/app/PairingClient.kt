@@ -143,7 +143,14 @@ internal class PairingClient(private val context: Context) {
         }
         val tls = SSLContext.getInstance("TLS")
         tls.init(null, arrayOf<TrustManager>(untrusted), SecureRandom())
-        val socket = tls.socketFactory.createSocket(url.host, if (url.port > 0) url.port else 443) as SSLSocket
+        val raw = java.net.Socket()
+        raw.connect(java.net.InetSocketAddress(url.host, if (url.port > 0) url.port else 443), 5000)
+        val socket = try {
+            tls.socketFactory.createSocket(raw, url.host, if (url.port > 0) url.port else 443, true) as SSLSocket
+        } catch (e: Exception) {
+            raw.close()
+            throw e
+        }
         return socket.use { s ->
             s.soTimeout = 6000
             s.startHandshake()
@@ -151,26 +158,10 @@ internal class PairingClient(private val context: Context) {
         }
     }
 
-    private fun openPinnedConnection(url: String, certDER: ByteArray): HttpsURLConnection {
-        val pin = MessageDigest.getInstance("SHA-256").digest(certDER)
-        val pinned = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
-            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-                if (chain.isEmpty() || !MessageDigest.isEqual(pin, MessageDigest.getInstance("SHA-256").digest(chain[0].encoded)))
-                    throw java.security.cert.CertificateException("Coordinator TLS certificate mismatch")
-            }
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    private fun openPinnedConnection(url: String, certDER: ByteArray): HttpsURLConnection =
+        (URL(url).openConnection() as HttpsURLConnection).apply {
+            PinnedHostTls.configure(this, certDER)
         }
-        val tls = SSLContext.getInstance("TLS")
-        tls.init(null, arrayOf<TrustManager>(pinned), SecureRandom())
-        return (URL(url).openConnection() as HttpsURLConnection).apply {
-            sslSocketFactory = tls.socketFactory
-            hostnameVerifier = javax.net.ssl.HostnameVerifier { _, session ->
-                try { MessageDigest.isEqual(pin, MessageDigest.getInstance("SHA-256").digest(session.peerCertificates.first().encoded)) }
-                catch (_: Exception) { false }
-            }
-        }
-    }
 
     private fun requestOffer(endpoint: String, certDER: ByteArray): JSONObject {
         val c = openPinnedConnection(endpoint + "/v1/pairing/offer", certDER)
