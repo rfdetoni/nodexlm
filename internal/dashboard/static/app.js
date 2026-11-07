@@ -77,7 +77,7 @@ async function applyModel(name) {
   await refresh();
   notice('Carregando '+name+'...');
   await api('/api/load','POST',{});
-  notice(name+' aplicado ao Host');
+  notice('Carregamento iniciado: '+name);
   await refresh();
  } finally {actionBusy=false; if(latestStatus){renderLocalModels(localModels,latestStatus);renderCatalog();}}
 }
@@ -168,7 +168,10 @@ async function refresh(){
  latestStatus=status;localModels=models;
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
- $('modelState').textContent=status.runtime.loaded?'Carregado':'Descarregado';
+ $('modelState').textContent=status.runtime.loading
+  ? 'Carregando · '+String(status.runtime.phase||'preparando').replace(/_/g,' ')
+  : status.runtime.error ? 'Falha · '+status.runtime.error
+  : status.runtime.loaded?'Carregado':'Descarregado';
  const s=status.settings;
  const prior=$('modelSelect').value;
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
@@ -195,7 +198,7 @@ $('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-adm
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',{model:$('modelSelect').value,threads:+$('threads').value,context_tokens:+$('contextTokens').value,gpu_layers:$('gpuLayers').value,moe_cpu:$('moeCPU').checked,distributed:$('distributed').checked,moe_cpu_layers:+$('moeCPULayers').value,moe_cache_mib:+$('moeCache').value});notice('Configuração salva');settingsInitialized=false;await refresh()})});
-$('load').addEventListener('click',()=>guard(async()=>{notice('Carregando modelo...');await api('/api/load','POST',{});notice('Modelo carregado');await refresh()}));
+$('load').addEventListener('click',()=>guard(async()=>{await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
 $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
 $('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pairing/start','POST',{});$('pairCode').hidden=false;$('pairCode').textContent=p.code+' · válido por '+p.expires_in;notice('Código renovado')}));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{const prompt=$('prompt').value;$('chatOutput').textContent='Gerando resposta...';const result=await api('/api/chat','POST',{messages:[{role:'user',content:prompt}],max_tokens:512});$('chatOutput').textContent=result.answer})});
