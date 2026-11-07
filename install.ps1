@@ -9,6 +9,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 may otherwise negotiate obsolete HTTPS protocols.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 try {
     if ([string]::IsNullOrWhiteSpace($InstallDir)) {
@@ -43,6 +45,21 @@ try {
         $expected = $Matches[1].ToLowerInvariant()
         $actual = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -cne $expected) { throw 'SHA-256 mismatch: download rejected' }
+        # Explicitly reject unexpected ZIP entries before extraction, including
+        # absolute paths, traversals, nested directories and alternate streams.
+        Add-Type -AssemblyName System.IO.Compression
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            $seen = @{}
+            foreach ($entry in $zip.Entries) {
+                if ($entry.FullName -cnotin @('nodexlm.exe', 'LICENSE') -or $seen.ContainsKey($entry.FullName)) {
+                    throw "Unsafe release ZIP entry: $($entry.FullName)"
+                }
+                $seen[$entry.FullName] = $true
+            }
+            if (-not $seen.ContainsKey('nodexlm.exe')) { throw 'NodexLM binary missing in release ZIP' }
+        }
+        finally { $zip.Dispose() }
         $extracted = Join-Path $temporary 'extracted'
         Expand-Archive -LiteralPath $archivePath -DestinationPath $extracted -Force
         $binary = Join-Path $extracted 'nodexlm.exe'
@@ -53,13 +70,21 @@ try {
         Copy-Item -LiteralPath $binary -Destination $destination -Force
         Write-Host "NodexLM installed: $destination"
 
-        $existing = [Environment]::GetEnvironmentVariable('Path', 'User')
-        $segments = @($existing -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        if (-not ($segments | Where-Object { $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') })) {
-            $updated = (($segments + $InstallDir) -join ';')
-            [Environment]::SetEnvironmentVariable('Path', $updated, 'User')
-            Write-Host 'User PATH updated; restart the terminal to use the nodexlm command.'
+        # Keep existing REG_EXPAND_SZ entries unexpanded; .NET environment
+        # access may expand %USERPROFILE% and change their registry semantics.
+        $registry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        if ($null -eq $registry) { throw 'Cannot update user environment registry key' }
+        try {
+            $existing = [string]$registry.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $kind = try { $registry.GetValueKind('Path') } catch { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+            $segments = @($existing -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if (-not ($segments | Where-Object { $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') })) {
+                $updated = (($segments + $InstallDir) -join ';')
+                $registry.SetValue('Path', $updated, $kind)
+                Write-Host 'User PATH updated; restart the terminal to use the nodexlm command.'
+            }
         }
+        finally { $registry.Close() }
         if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') })) {
             $env:Path = "$InstallDir;$env:Path"
         }
