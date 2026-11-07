@@ -140,3 +140,18 @@ func TestPBKDF2CrossPlatformVector(t *testing.T) {
 		t.Fatalf("PBKDF2 incompatible with standard library: %x", key)
 	}
 }
+
+func TestUntrustedPairingOfferIsBoundedAndCancellable(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 10<<10))
+	}))
+	defer server.Close()
+	if _, _, err := FetchUntrustedOffer(context.Background(), server.URL); err == nil {
+		t.Fatal("accepted oversized untrusted discovery payload")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := FetchUntrustedOffer(ctx, server.URL); err == nil {
+		t.Fatal("cancelled pairing fetch did not stop")
+	}
+}

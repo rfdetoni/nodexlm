@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -193,12 +194,20 @@ func FetchUntrustedOffer(ctx context.Context, endpoint string) (Offer, []byte, e
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return Offer{}, nil, errors.New("HTTPS endpoint required")
 	}
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", u.Host, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}) // #nosec G402 -- no secrets; authenticated by VerifyOffer before use.
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: 3 * time.Second},
+		Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}, // #nosec G402 -- no secrets; authenticated by VerifyOffer before use.
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", u.Host)
 	if err != nil {
 		return Offer{}, nil, err
 	}
-	certs := conn.ConnectionState().PeerCertificates
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		conn.Close()
+		return Offer{}, nil, errors.New("unexpected TLS connection type")
+	}
+	certs := tlsConn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		conn.Close()
 		return Offer{}, nil, errors.New("server presented no certificate")
@@ -208,7 +217,7 @@ func FetchUntrustedOffer(ctx context.Context, endpoint string) (Offer, []byte, e
 	// Untrusted HTTPS response is used only to retrieve the offer, then verified
 	// against the code and authenticated TLS fingerprint before any POST.
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		InsecureSkipVerify: true, MinVersion: tls.VersionTLS12,
+		InsecureSkipVerify: true, MinVersion: tls.VersionTLS13,
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 || subtle.ConstantTimeCompare(sha256sum(cs.PeerCertificates[0].Raw), sha256sum(der)) != 1 {
 				return errors.New("TLS certificate changed during discovery")
@@ -228,8 +237,16 @@ func FetchUntrustedOffer(ctx context.Context, endpoint string) (Offer, []byte, e
 	if resp.StatusCode != 200 {
 		return Offer{}, nil, fmt.Errorf("pairing unavailable: HTTP %d", resp.StatusCode)
 	}
+	// The untrusted LAN peer must not send an unbounded JSON response.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (8<<10)+1))
+	if err != nil {
+		return Offer{}, nil, err
+	}
+	if len(body) > 8<<10 {
+		return Offer{}, nil, errors.New("pairing offer too large")
+	}
 	var offer Offer
-	if err := json.NewDecoder(resp.Body).Decode(&offer); err != nil {
+	if err := json.Unmarshal(body, &offer); err != nil {
 		return Offer{}, nil, err
 	}
 	if offer.Endpoint != endpoint {
