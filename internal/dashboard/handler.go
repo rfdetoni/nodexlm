@@ -132,13 +132,11 @@ func (d *Dashboard) Handler() http.Handler {
 		reply(w, 200, s)
 	}))
 	mux.HandleFunc("POST /api/load", d.api(func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 100*time.Second)
-		defer cancel()
-		if err := d.Manager.Load(ctx); err != nil {
+		if err := d.Manager.StartLoad(); err != nil {
 			failure(w, 400, err)
 			return
 		}
-		reply(w, 200, d.Manager.State())
+		reply(w, 202, d.Manager.State())
 	}))
 	mux.HandleFunc("POST /api/unload", d.api(func(w http.ResponseWriter, r *http.Request) { d.Manager.Unload(); reply(w, 200, d.Manager.State()) }))
 	mux.HandleFunc("POST /api/chat", d.api(func(w http.ResponseWriter, r *http.Request) {

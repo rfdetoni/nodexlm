@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"testing"
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
@@ -127,5 +128,48 @@ func TestURLRestrictions(t *testing.T) {
 	}
 	if _, err := parseModelURL("https://huggingface.co/owner/repo/resolve/main/model.gguf?download=1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAsyncLoadDoesNotBlockStatusAndReportsError(t *testing.T) {
+	h, m := newTestUI(t)
+	const secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	// Distributed mode without an RPC provider fails before runtime download.
+	if err := os.WriteFile(filepath.Join(m.modelDir, "test.gguf"), []byte("GGUF"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	settings := Settings{Model: "test.gguf", Threads: 2, ContextTokens: 2048, GPULayers: "auto", Distributed: true}
+	if got := req(h, "PUT", "/api/settings", secret, "", settings).Code; got != 200 {
+		t.Fatalf("settings: HTTP %d", got)
+	}
+	if got := req(h, "POST", "/api/load", secret, "", nil).Code; got != 202 {
+		t.Fatalf("load should be asynchronous: HTTP %d", got)
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		started := time.Now()
+		status := req(h, "GET", "/api/status", secret, "", nil)
+		if status.Code != 200 || time.Since(started) > time.Second {
+			t.Fatalf("status blocked or unavailable while preparing: %d", status.Code)
+		}
+		var payload struct {
+			Runtime struct {
+				Loading bool   `json:"loading"`
+				Phase   string `json:"phase"`
+				Error   string `json:"error"`
+			} `json:"runtime"`
+		}
+		if err := json.Unmarshal(status.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if !payload.Runtime.Loading {
+			if payload.Runtime.Phase != "error" || payload.Runtime.Error == "" {
+				t.Fatalf("async error not reflected in status: %+v", payload.Runtime)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("model load did not report failure")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

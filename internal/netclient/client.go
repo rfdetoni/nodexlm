@@ -85,7 +85,7 @@ func (c *Client) UseRoots(pool *x509.CertPool) error {
 	if !ok {
 		return errors.New("unsupported transport")
 	}
-	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13}
 	return nil
 }
 
@@ -102,7 +102,7 @@ func (c *Client) UsePinnedCertificate(hexDigest string) error {
 		return errors.New("unsupported transport")
 	}
 	t.Proxy = nil // Paired LAN nodes must connect directly without a proxy.
-	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true,
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true,
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 {
 				return errors.New("coordinator did not present certificate")

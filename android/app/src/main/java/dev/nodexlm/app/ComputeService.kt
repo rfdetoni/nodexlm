@@ -154,19 +154,7 @@ class ComputeService : Service() {
     private fun request(url:String,token:String,node:String,body:JSONObject):JSONObject {
         val c=(URL(url).openConnection() as HttpURLConnection)
         if(c is HttpsURLConnection) {
-            val ca=File(filesDir,"coordinator.crt")
-            if(ca.exists()) {
-                val cert=CertificateFactory.getInstance("X.509").generateCertificate(ca.inputStream())
-                val store=KeyStore.getInstance(KeyStore.getDefaultType())
-                store.load(null,null)
-                store.setCertificateEntry("nodexlm-coordinator",cert)
-                val factory=TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-                factory.init(store)
-                val ssl=SSLContext.getInstance("TLS")
-                ssl.init(null,factory.trustManagers,null)
-                c.sslSocketFactory=ssl.socketFactory
-                // Never override the TLS hostname verifier.
-            }
+            PinnedHostTls.configure(c, this)
         }
         c.requestMethod="POST"
         c.connectTimeout=7_000

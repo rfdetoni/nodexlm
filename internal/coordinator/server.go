@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -57,25 +58,36 @@ func New(adminToken, enrollmentToken string) (*Server, error) {
 	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
 }
 
-func (s *Server) Handler() http.Handler {
+// Handler includes administrative endpoints and must only be exposed on localhost.
+func (s *Server) Handler() http.Handler { return s.handler(true) }
+
+// LANHandler is limited to authenticated Guest and pairing traffic.
+// Administrative endpoints are only served by the loopback dashboard.
+func (s *Server) LANHandler() http.Handler { return s.handler(false) }
+
+func (s *Server) handler(administrative bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/nodes/enroll", s.enroll)
 	mux.HandleFunc("GET /v1/pairing/offer", s.pairingOffer)
-	mux.HandleFunc("POST /v1/pairing/start", s.pairingStart)
+	if administrative {
+		mux.HandleFunc("POST /v1/pairing/start", s.pairingStart)
+	}
 	mux.HandleFunc("POST /v1/pairing/enroll", s.pairingEnroll)
 	mux.HandleFunc("POST /v1/nodes/heartbeat", s.heartbeat)
 	mux.HandleFunc("GET /v1/nodes/catalog", s.modelCatalog)
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
 	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
 	mux.HandleFunc("POST /v1/nodes/result/{id}", s.result)
-	mux.HandleFunc("GET /v1/nodes", s.listNodes)
-	mux.HandleFunc("DELETE /v1/nodes/{id}", s.revokeNode)
-	mux.HandleFunc("POST /v1/jobs", s.submit)
-	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
-	mux.HandleFunc("POST /v1/chat/completions", s.chat)
+	if administrative {
+		mux.HandleFunc("GET /v1/nodes", s.listNodes)
+		mux.HandleFunc("DELETE /v1/nodes/{id}", s.revokeNode)
+		mux.HandleFunc("POST /v1/jobs", s.submit)
+		mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
+		mux.HandleFunc("POST /v1/chat/completions", s.chat)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
@@ -104,8 +116,15 @@ func (s *Server) adminOK(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func parse(w http.ResponseWriter, r *http.Request, out any) bool {
-	if err := json.NewDecoder(r.Body).Decode(out); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
 		fail(w, http.StatusBadRequest, "invalid JSON or body too large")
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		fail(w, http.StatusBadRequest, "unexpected trailing JSON data")
 		return false
 	}
 	return true
@@ -144,12 +163,25 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	s.register(w, req.Device)
 }
 
+// Validates every externally supplied resource field before it is persisted
+// or included in memory planning. Server-owned identity/status are overwritten.
 func validDevice(d protocol.Device) bool {
-	if len(d.Name) == 0 || len(d.Name) > 100 || len(d.Platform) == 0 || len(d.Platform) > 30 || len(d.Models) > 128 {
+	if len(d.Name) == 0 || len(d.Name) > 100 ||
+		len(d.Platform) == 0 || len(d.Platform) > 30 ||
+		len(d.Architecture) > 100 || len(d.Models) > 128 ||
+		len(d.GPUs) > 16 || d.CPUCount < 1 || d.CPUCount > 4096 ||
+		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
+		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 {
 		return false
 	}
 	for _, m := range d.Models {
 		if len(m) < 1 || len(m) > 256 {
+			return false
+		}
+	}
+	for _, gpu := range d.GPUs {
+		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes {
 			return false
 		}
 	}
@@ -200,19 +232,30 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "unauthorized")
 		return
 	}
-	var req struct {
-		Models            []string `json:"models"`
-		RAMBytes          uint64   `json:"ram_bytes"`
-		AvailableRAMBytes uint64   `json:"available_ram_bytes"`
-        GPUs []protocol.GPUDevice `json:"gpus"`
-        Runtime protocol.RuntimeCapability `json:"runtime"`
-	}
+	// Guests send a full Device profile on lease; only resource fields are
+	// applied, and server-owned identity/status are never trusted.
+	var req protocol.Device
 	if !parse(w, r, &req) {
 		return
 	}
-	if len(req.Models) > 128 || len(req.GPUs) > 16 {
-        fail(w, 400, "invalid model or GPU count")
+	if len(req.Models) > 128 || len(req.GPUs) > 16 ||
+		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
+		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 {
+		fail(w, 400, "invalid node resources")
 		return
+	}
+	for _, model := range req.Models {
+		if len(model) == 0 || len(model) > 256 {
+			fail(w, 400, "invalid model filename")
+			return
+		}
+	}
+	for _, gpu := range req.GPUs {
+		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes {
+			fail(w, 400, "invalid GPU resource report")
+			return
+		}
 	}
 	deadline := time.NewTimer(leaseWait)
 	defer deadline.Stop()
@@ -547,7 +590,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	if !parse(w, r, &profile) {
 		return
 	}
-	if !validDevice(profile) || len(profile.GPUs) > 16 || profile.CPUCount < 1 || profile.CPUCount > 4096 {
+	if !validDevice(profile) {
 		fail(w, 400, "invalid node profile")
 		return
 	}

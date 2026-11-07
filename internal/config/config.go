@@ -95,7 +95,7 @@ func CreateCertificate(certPath, keyPath string, hosts []string) error {
 	if err != nil {
 		return err
 	}
-	template := x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "NodexLM Coordinator"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
+	template := x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "NodexLM Coordinator"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(10 * 365 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
 	for _, host := range hosts {
 		host = strings.TrimSpace(host)
 		if host == "" {
@@ -124,5 +124,10 @@ func CreateCertificate(certPath, keyPath string, hosts []string) error {
 	if err := atomicWrite(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: priv})); err != nil {
 		return err
 	}
-	return atomicWrite(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	if err := atomicWrite(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})); err != nil {
+		// A partial key+cert pair would make the next Host startup fail.
+		_ = os.Remove(keyPath)
+		return err
+	}
+	return nil
 }
