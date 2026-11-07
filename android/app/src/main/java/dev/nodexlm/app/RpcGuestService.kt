@@ -198,17 +198,8 @@ class RpcGuestService : Service() {
         error("Native Android GGML RPC server did not start on loopback")
     }
 
-    private fun pinnedSSLContext(): SSLContext {
-        val certificate = File(filesDir, "coordinator.crt").inputStream().use {
-            CertificateFactory.getInstance("X.509").generateCertificate(it)
-        }
-        val store = KeyStore.getInstance(KeyStore.getDefaultType())
-        store.load(null, null)
-        store.setCertificateEntry("nodexlm-host-pinned", certificate)
-        val managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        managers.init(store)
-        return SSLContext.getInstance("TLS").apply { init(null, managers.trustManagers, null) }
-    }
+    private fun pinnedSSLContext(): SSLContext =
+        PinnedHostTls.context(PinnedHostTls.certificate(this))
 
     private fun sendHeartbeat(endpoint: String, node: String, token: String,
                               name: String, mode: String, ssl: SSLContext) {
@@ -244,7 +235,7 @@ class RpcGuestService : Service() {
                 .put("rpc_ready", false))
         val connection = java.net.URL(endpoint.trimEnd('/') + "/v1/nodes/heartbeat")
             .openConnection() as HttpsURLConnection
-        connection.sslSocketFactory = ssl.socketFactory
+        PinnedHostTls.configure(connection, this)
         connection.requestMethod = "POST"
         connection.connectTimeout = 7000
         connection.readTimeout = 7000
@@ -291,7 +282,9 @@ class RpcGuestService : Service() {
             remote.connect(InetSocketAddress(host, port), 7000)
             remote.soTimeout = 10_000
             remote.sslParameters = remote.sslParameters.apply {
-                endpointIdentificationAlgorithm = "HTTPS"
+                // Paired certificate pin is verified in PinnedHostTls.
+                // Do not require the original IP in the self-signed SAN.
+                endpointIdentificationAlgorithm = null
                 // The native GGML relay uses a raw HTTP/1.1 CONNECT that is
                 // hijacked by Go. HTTP/2 ALPN would return binary SETTINGS,
                 // which looks like a malformed HTTP response.
