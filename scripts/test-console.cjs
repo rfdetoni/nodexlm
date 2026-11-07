@@ -53,7 +53,9 @@ const {chromium} = require('playwright');
     for (const [name, width, height] of [['desktop',1280,900], ['mobile',390,844]]) {
       await page.setViewportSize({width,height});
       await page.locator('#chatForm').scrollIntoViewIfNeeded();
-      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: horizontal overflow`);
+      const overflow=await page.evaluate(() => [...document.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>innerWidth+1&&getComputedStyle(e).position!=='fixed').map(e=>e.tagName+'#'+e.id+'.'+e.className).slice(0,15));
+      await page.screenshot({path: path.join(out, name+'.png'), fullPage: true});
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: horizontal overflow: ${overflow.join(', ')}`);
       await page.screenshot({path: path.join(out, name+'.png'), fullPage: true});
     }
     assert.deepEqual(errors, [], 'Browser JavaScript errors');

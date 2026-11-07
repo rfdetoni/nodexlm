@@ -56,6 +56,8 @@ type Manager struct {
 	residents             map[string]*Manager
 	closed                bool
 	samples               map[string]InferenceSample
+	generationTokens      uint64
+	generationBuckets     [8]uint64
 	generationCount       uint64
 	generationErrors      uint64
 	generationSeconds     float64

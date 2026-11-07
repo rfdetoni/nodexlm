@@ -149,15 +149,15 @@ class MainActivity : Activity() {
         thread(name="nodexlm-vulkan-probe") {
             val report = try {
                 val devices = org.json.JSONObject(NativeRpc.inspect()).optJSONArray("gpus")
-                if(devices == null || devices.length() == 0) "GPU Vulkan indisponível · CPU disponível"
+                if(devices == null || devices.length() == 0) getString(R.string.gpu_unavailable)
                 else buildString {
-                    append("Vulkan detectado: ")
+                    append(getString(R.string.gpu_detected))
                     for(i in 0 until devices.length()) {
                         if(i>0)append(", ")
                         append(devices.optJSONObject(i)?.optString("name", "GPU") ?: "GPU")
                     }
                 }
-            } catch(e: Throwable) { "Não foi possível consultar a GPU; CPU permanece disponível" }
+            } catch(e: Throwable) { getString(R.string.gpu_probe_failed) }
             runOnUiThread {gpuStatus.text = report}
         }
         worker.addView(action(getString(R.string.ui_586f2f6fc723)) {

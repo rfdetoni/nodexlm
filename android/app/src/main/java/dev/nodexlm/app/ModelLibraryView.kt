@@ -56,7 +56,7 @@ internal class ModelLibraryView(
         query.setText("Qwen")
         query.setTextColor(0xffeef4ff.toInt())
         query.setHintTextColor(0xff8f9bab.toInt())
-        query.hint = "Buscar modelo ou organização"
+        query.hint = activity.getString(R.string.query_hint)
         searchCard.addView(query)
         searchCard.addView(action(activity.getString(R.string.ui_76a328da1ce2)) { search() })
         addView(searchCard)
@@ -97,7 +97,7 @@ internal class ModelLibraryView(
             try {
                 val file = ModelFiles.importSet(activity,uris)
                 activity.runOnUiThread {
-                    status.text = "Modelo importado: ${file.name}"
+                    status.text = activity.getString(R.string.import_done,file.name)
                     refreshLibrary()
                     onSelected(file)
                 }
@@ -120,11 +120,11 @@ internal class ModelLibraryView(
                     if (!isAttachedToWindow) { finding = false; return@runOnUiThread }
                     results.removeAllViews()
                     for (model in models) showCandidate(model)
-                    status.text = "${models.size} arquivos GGUF encontrados · capacidade estimada, não garantida"
+                    status.text = activity.getString(R.string.search_count,models.size)
                     finding=false
                 }
             } catch (e:Exception) {
-                activity.runOnUiThread {status.text = "Busca indisponível: ${e.message}";finding=false}
+                activity.runOnUiThread {status.text = activity.getString(R.string.search_failed,e.message);finding=false}
             }
         }
     }
@@ -135,12 +135,12 @@ internal class ModelLibraryView(
         row.addView(text("${model.repository}  ·  ${gib(model.sizeBytes)}",13,false))
         val suitable=model.placement=="single-node-candidate"
         row.addView(text(when(model.placement) {
-            "single-node-candidate" -> "Estimativa: compatível com um nó"
-            "distributed-candidate" -> "Candidato distribuído (requer Guests RPC prontos)"
-            "insufficient-memory" -> "Memória agregada insuficiente"
-            else -> "Compatibilidade não confirmada"
+            "single-node-candidate" -> activity.getString(R.string.placement_single)
+            "distributed-candidate" -> activity.getString(R.string.placement_distributed)
+            "insufficient-memory" -> activity.getString(R.string.placement_memory)
+            else -> activity.getString(R.string.placement_unknown)
         },12,false).apply {setTextColor(if(suitable)0xff80d6b4.toInt() else 0xffe6ba78.toInt())})
-        row.addView(action("Baixar ${gib(model.sizeBytes)}") { confirmDownload(model) })
+        row.addView(action(activity.getString(R.string.download_size,gib(model.sizeBytes))) { confirmDownload(model) })
         results.addView(row)
     }
 
@@ -162,7 +162,7 @@ internal class ModelLibraryView(
             val fileName = ModelFiles.safeFilename(model.filename.substringAfterLast('/'))
             val root=ModelFiles.directory(activity)
             val target=File(root,fileName)
-            require(!target.exists()) { "Este modelo já está na biblioteca" }
+            require(!target.exists()) { activity.getString(R.string.model_exists) }
             require(root.usableSpace >= model.sizeBytes) { "Insufficient free storage" }
             val parts=ModelFiles.shards(fileName)
             prefs.edit().putString("parts",org.json.JSONArray(parts).toString()).putInt("part_index",0)
@@ -175,10 +175,10 @@ internal class ModelLibraryView(
         val root=ModelFiles.directory(activity)
         val target=File(root,fileName)
         val staging=File(root,".${fileName}.download")
-            require(!staging.exists()) { "Este modelo já está sendo baixado" }
+            require(!staging.exists()) { activity.getString(R.string.model_downloading) }
             val request=DownloadManager.Request(Uri.parse(source))
                 .setTitle("NodexLM: $fileName")
-                .setDescription("Modelo GGUF de $repository")
+                .setDescription(activity.getString(R.string.model_source,repository))
                 .setMimeType("application/octet-stream")
                 .setDestinationUri(Uri.fromFile(staging))
                 .setAllowedOverRoaming(false)
@@ -217,6 +217,7 @@ internal class ModelLibraryView(
     private fun completeDownload() {
         if(verifying)return
         verifying=true
+        val downloadId=prefs.getLong("id",0L)
         val file=File(prefs.getString("staging","")?:"")
         val source=prefs.getString("current_source","")?:""
         thread(name="nodexlm-verify-shard") {
@@ -232,8 +233,8 @@ internal class ModelLibraryView(
                     val actual=digest.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
                     require(actual.equals(expected,true)) { "GGUF SHA-256 mismatch" }
                 }
-                activity.runOnUiThread {verifying=false;finishDownload()}
-            }catch(e:Exception){activity.runOnUiThread {verifying=false;clearDownload();status.text=activity.getString(R.string.download_rejected,e.message)}}
+                activity.runOnUiThread {verifying=false;if(isAttachedToWindow&&prefs.getLong("id",0L)==downloadId)finishDownload()}
+            }catch(e:Exception){activity.runOnUiThread {verifying=false;if(isAttachedToWindow&&prefs.getLong("id",0L)==downloadId){clearDownload();status.text=activity.getString(R.string.download_rejected,e.message)}}}
         }
     }
     private fun finishDownload() {
@@ -242,11 +243,11 @@ internal class ModelLibraryView(
         val root=ModelFiles.directory(activity).canonicalFile
         try {
             require(staging.canonicalFile.parentFile==root && target.canonicalFile.parentFile==root)
-            require(!target.exists() && ModelFiles.validGGUF(staging)) { "Arquivo GGUF inválido ou já existente" }
+            require(!target.exists() && ModelFiles.validGGUF(staging)) { activity.getString(R.string.gguf_invalid_exists) }
             val parts=org.json.JSONArray(prefs.getString("parts","[]"))
             val index=prefs.getInt("part_index",0)
             val ready=File(root,".${target.name}.ready")
-            require(!ready.exists()&&staging.renameTo(ready)) { "Falha ao preparar shard" }
+            require(!ready.exists()&&staging.renameTo(ready)) { activity.getString(R.string.shard_prepare_failed) }
             if(index+1<parts.length()){
                 prefs.edit().putInt("part_index",index+1).commit()
                 val source=Uri.parse(prefs.getString("source","")).buildUpon().path(Uri.parse(prefs.getString("source","")).path!!.substringBeforeLast('/')+"/"+parts.getString(index+1)).build().toString()
@@ -255,7 +256,7 @@ internal class ModelLibraryView(
             }
             val total=(0 until parts.length()).sumOf {File(root,".${parts.getString(it)}.ready").length()}
             val expected=prefs.getLong("size",0L)
-            require(expected<=0L||expected==total) { "Download incompleto" }
+            require(expected<=0L||expected==total) { activity.getString(R.string.download_incomplete) }
             val created=mutableListOf<File>()
             try{
                 for(i in parts.length()-1 downTo 0){val dst=File(root,parts.getString(i));require(!dst.exists()&&File(root,".${dst.name}.ready").renameTo(dst));created.add(dst)}
@@ -288,7 +289,7 @@ internal class ModelLibraryView(
         val current=ModelFiles.selected(activity)?.canonicalPath
         for (file in ModelFiles.list(activity)) {
             val row=card()
-            row.addView(text(file.name+(if(file.canonicalPath==current)"  •  selecionado" else ""),14,true))
+            row.addView(text(file.name+(if(file.canonicalPath==current)activity.getString(R.string.selected_suffix) else ""),14,true))
             row.addView(text(gib(ModelFiles.modelBytes(file)),12,false))
             row.addView(action(activity.getString(R.string.ui_60b42e0b4454)) {
                 ModelFiles.select(activity,file)

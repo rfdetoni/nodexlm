@@ -114,12 +114,12 @@ class UpdateManager(private val activity: Activity) {
                 val installed = activity.packageManager.getPackageInfo(activity.packageName, 0).longVersionCode
                 prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
                 if (version <= installed) {
-                    if (manual) toast("NodexLM já está atualizado")
+                    if (manual) toast(activity.getString(R.string.update_current))
                     return@thread
                 }
                 val old = prefs.getLong("download_id", 0)
                 if (prefs.getInt("version", -1) == version && old > 0) {
-                    if (manual) toast("Atualização $name já está em download")
+                    if (manual) toast(activity.getString(R.string.update_downloading,name))
                     tryInstallPending()
                     return@thread
                 }
@@ -127,7 +127,7 @@ class UpdateManager(private val activity: Activity) {
                 if (destination.exists()) destination.delete()
                 val request = DownloadManager.Request(Uri.parse(url))
                     .setTitle("NodexLM $name")
-                    .setDescription("Atualização oficial verificada por SHA-256")
+                    .setDescription(activity.getString(R.string.update_verified))
                     .setMimeType("application/vnd.android.package-archive")
                     .setDestinationUri(Uri.fromFile(destination))
                     .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -137,10 +137,10 @@ class UpdateManager(private val activity: Activity) {
                 prefs.edit().putLong("download_id", id).putString("sha256", checksum)
                     .putInt("version", version).putString("file_path", destination.absolutePath)
                     .remove("prompted_id").apply()
-                if (manual) toast("Baixando NodexLM $name")
+                if (manual) toast(activity.getString(R.string.update_started,name))
             } catch (e: Exception) {
                 Log.w("NodexLMUpdate", "Cannot check GitHub Releases", e)
-                if (manual) toast("Não foi possível verificar atualizações: ${e.message}")
+                if (manual) toast(activity.getString(R.string.update_check_failed,e.message))
             } finally { checking.set(false) }
         }
     }
@@ -159,7 +159,7 @@ class UpdateManager(private val activity: Activity) {
                 }
                 if (status == DownloadManager.STATUS_FAILED) {
                     prefs.edit().remove("download_id").apply()
-                    toast("Falha ao baixar a atualização")
+                    toast(activity.getString(R.string.update_download_failed))
                     return@thread
                 }
                 if (status != DownloadManager.STATUS_SUCCESSFUL) return@thread
@@ -190,7 +190,7 @@ class UpdateManager(private val activity: Activity) {
                 }
                 val hash = digest.digest().joinToString("") { "%02x".format(it) }
                 require(hash == prefs.getString("sha256", "")) {
-                    "O SHA-256 do APK não confere"
+                    activity.getString(R.string.update_sha_failed)
                 }
                 verifyAPKSigner(verified, prefs.getInt("version", -1))
 
@@ -216,7 +216,7 @@ class UpdateManager(private val activity: Activity) {
                                 prefs.edit().putLong("prompted_id", id).apply()
                             } catch (e: Exception) {
                                 Log.e("NodexLMUpdate", "PackageInstaller session failed", e)
-                                toast("Não foi possível instalar a atualização: ${e.message}")
+                                toast(activity.getString(R.string.update_install_failed,e.message))
                             } finally {
                                 verified.delete()
                             }
@@ -226,7 +226,7 @@ class UpdateManager(private val activity: Activity) {
             } catch (e: Exception) {
                 Log.e("NodexLMUpdate", "Update verification failed", e)
                 prefs.edit().remove("download_id").apply()
-                toast("Atualização rejeitada: ${e.message}")
+                toast(activity.getString(R.string.update_rejected,e.message))
             } finally {
                 // When confirmation is not granted, onResume re-verifies the
                 // download into a fresh private staging copy.
@@ -240,9 +240,9 @@ class UpdateManager(private val activity: Activity) {
         @Suppress("DEPRECATION")
         val candidate = activity.packageManager.getPackageArchiveInfo(
             apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
-            ?: error("Metadados inválidos do APK")
+            ?: error(activity.getString(R.string.apk_metadata_invalid))
         require(candidate.packageName == activity.packageName) { "APK de outro aplicativo" }
-        require(candidate.longVersionCode == version.toLong()) { "Versão do APK inesperada" }
+        require(candidate.longVersionCode == version.toLong()) { activity.getString(R.string.apk_version_invalid) }
         @Suppress("DEPRECATION")
         val installed = activity.packageManager.getPackageInfo(
             activity.packageName, PackageManager.GET_SIGNING_CERTIFICATES)

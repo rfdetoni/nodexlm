@@ -31,13 +31,7 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	if child != nil {
 		start := time.Now()
 		err := child.withGeneration(ctx, req, generate)
-		m.mu.Lock()
-		m.generationCount++
-		m.generationSeconds += time.Since(start).Seconds()
-		if err != nil {
-			m.generationErrors++
-		}
-		m.mu.Unlock()
+		m.recordGeneration(time.Since(start), err)
 		return err
 	}
 	if err := m.acquire(ctx); err != nil {
@@ -59,13 +53,7 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	defer func() { m.mu.Lock(); m.generationCancel = nil; m.mu.Unlock(); cancel() }()
 	start := time.Now()
 	err := generate(generationCtx, engine, req)
-	m.mu.Lock()
-	m.generationCount++
-	m.generationSeconds += time.Since(start).Seconds()
-	if err != nil {
-		m.generationErrors++
-	}
-	m.mu.Unlock()
+	m.recordGeneration(time.Since(start), err)
 	return err
 }
 func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, emit func([]byte) error) error {

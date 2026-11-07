@@ -51,7 +51,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                 Log.e("NodexLMUpdate", "APK installation rejected: $detail")
                 context.getSharedPreferences("nodexlm_updates", Context.MODE_PRIVATE).edit()
                     .remove("download_id").remove("prompted_id").apply()
-                Toast.makeText(context, "Atualização não instalada: $detail", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, context.getString(R.string.update_not_installed,detail), Toast.LENGTH_LONG).show()
             }
         }
     }

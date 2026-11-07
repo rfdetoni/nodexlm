@@ -50,3 +50,10 @@ dialog{max-width:min(480px,calc(100vw - 28px));color:#e1e6ed;background:#191f27;
 @media(forced-colors:active){*{scrollbar-color:auto}button:focus-visible{outline-color:Highlight}}
 
 .latency-chart{display:block;width:100%;max-width:600px;min-height:100px;color:#8bc8ff}.buttons{flex-wrap:wrap}#residentModels{margin-top:12px}
+
+/* Intrinsic form widths must not widen the document on narrow screens. */
+.inputs{grid-template-columns:repeat(2,minmax(0,1fr))}
+input,select,textarea{min-width:0;max-width:100%}
+.metrics strong,#residentModels strong{overflow-wrap:anywhere}
+#toast{max-width:min(400px,calc(100vw - 36px));overflow-wrap:anywhere}
+@media(max-width:540px){.inputs{grid-template-columns:minmax(0,1fr)}.topline{gap:12px}.hint{font-size:12px;text-align:right;max-width:45%}.metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
