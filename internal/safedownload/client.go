@@ -6,6 +6,9 @@ package safedownload
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"errors"
 	"net"
 	"net/http"
@@ -90,4 +93,20 @@ func Client() *http.Client {
 			MaxIdleConns: 2, MaxIdleConnsPerHost: 1, IdleConnTimeout: 10 * time.Second,
 		},
 	}
+}
+
+// ExpectedSHA256 extracts a content digest from Hugging Face LFS metadata.
+// A weak/opaque ETag is not treated as a checksum.
+func ExpectedSHA256(h http.Header) ([]byte, bool) {
+	for _, key := range []string{"X-Linked-Etag", "ETag"} {
+		value := strings.Trim(h.Get(key), " \"")
+		if len(value) != sha256.Size*2 {
+			continue
+		}
+		b, err := hex.DecodeString(value)
+		if err == nil && len(b) == sha256.Size {
+			return b, true
+		}
+	}
+	return nil, false
 }
