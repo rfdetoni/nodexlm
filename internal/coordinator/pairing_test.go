@@ -74,7 +74,7 @@ func TestRevocationInvalidatesNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := s.Handler()
-	created := call(t, h, "POST", "/v1/nodes/enroll", joinSecret, "", protocol.Enrollment{Device: protocol.Device{Name: "revoked-node", Platform: "linux"}})
+	created := call(t, h, "POST", "/v1/nodes/enroll", joinSecret, "", protocol.Enrollment{Device: protocol.Device{Name: "revoked-node", Platform: "linux", CPUCount: 1}})
 	if created.Code != 201 {
 		t.Fatalf("enroll: %s", created.Body.String())
 	}
