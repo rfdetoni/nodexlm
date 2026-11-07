@@ -4,6 +4,7 @@ package dev.nodexlm.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -187,6 +188,13 @@ class MainActivity : Activity() {
             } catch (e: Exception) { setStatus("Abra as configurações do sistema para permitir atividade em segundo plano") }
         })
         settings.addView(action("Verificar atualizações") {updateManager.check(manual=true)})
+        settings.addView(action("Licenças de terceiros") {
+            try {
+                val notice = assets.open("THIRD_PARTY_NOTICES.txt").bufferedReader().use { it.readText() }
+                AlertDialog.Builder(this).setTitle("Licenças de terceiros")
+                    .setMessage(notice).setPositiveButton("Fechar", null).show()
+            } catch (e: Exception) { setStatus("Não foi possível abrir as licenças") }
+        })
         settings.addView(label("Versão: ${packageManager.getPackageInfo(packageName,0).versionName}",12,false))
         content.addView(settings)
     }
