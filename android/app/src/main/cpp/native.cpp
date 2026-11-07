@@ -77,6 +77,8 @@ Java_dev_nodexlm_app_NativeEntry_generate(JNIEnv* env,jobject,jobjectArray javaR
     std::lock_guard<std::mutex> lock(guard);
     if(!ctx||!model)return bytes(env,"NODEXLM_ERROR: no loaded model");
     if(!javaRoles || !javaContents)return bytes(env,"NODEXLM_ERROR: missing messages");
+    // A prior cancel only interrupts its generation, not the next request.
+    cancelled.store(false);
     const jsize count=env->GetArrayLength(javaRoles);
     if(count<=0||count>64||env->GetArrayLength(javaContents)!=count)return bytes(env,"NODEXLM_ERROR: invalid messages");
     std::vector<std::string> roles;roles.reserve(count);
