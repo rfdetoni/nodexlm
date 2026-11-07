@@ -95,7 +95,7 @@ class ComputeService : Service() {
         if (!coordinator.startsWith("https://")||model == null || !model.isFile){Log.e(logTag,"Invalid worker configuration");stopWorker();return}
         try {
             var id=prefs.getString("node_id","")?:""
-            var token=prefs.getString("node_token","")?:""
+            val token=NodeSecrets.read(this)
             if (id.isEmpty()||token.isEmpty()) error("Device not paired; enter the host's pairing code in the app first")
             var loaded=false
             var lastInference=android.os.SystemClock.elapsedRealtime()
