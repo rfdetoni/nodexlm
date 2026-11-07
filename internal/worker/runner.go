@@ -89,13 +89,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		jobCtx, stop := context.WithTimeout(ctx, 3*time.Minute)
 		answer, generateErr := r.Engine.Generate(jobCtx, work.Request)
 		stop()
-		out := protocol.JobResult{Result: answer}
-		if generateErr != nil {
-			out.Error = generateErr.Error()
-			if len(out.Error) > 1000 {
-				out.Error = out.Error[:1000]
-			}
-		}
+		out := boundedResult(answer, generateErr)
 		resultCtx, done := context.WithTimeout(ctx, 15*time.Second)
 		_, err = r.Client.Request(resultCtx, http.MethodPost, "/v1/nodes/result/"+work.ID, out, nil)
 		done()
@@ -104,4 +98,22 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// The coordinator rejects oversized JobResult bodies and otherwise leaves
+// the lease running until expiry. Report a bounded failure instead of trying
+// to submit an invalid oversized result (including escaped JSON expansion).
+func boundedResult(answer string, generateErr error) protocol.JobResult {
+	if generateErr != nil {
+		message := generateErr.Error()
+		if len(message) > 1000 {
+			message = message[:1000]
+		}
+		return protocol.JobResult{Error: message}
+	}
+	const maxResultBytes = 128 << 10
+	if len(answer) > maxResultBytes {
+		return protocol.JobResult{Error: "inference result exceeds coordinator limit; reduce max_tokens"}
+	}
+	return protocol.JobResult{Result: answer}
 }
