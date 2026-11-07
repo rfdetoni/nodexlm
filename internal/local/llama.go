@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/catalog"
 )
 
 type Engine struct {
@@ -95,12 +96,34 @@ func Models(root string) ([]protocol.ModelRecord, error) {
 		if err != nil {
 			continue
 		}
-		info, err := d.Info()
+		size, err := ModelSize(p)
 		if err != nil {
-			continue
+			continue // incomplete model set must not be selectable in the UI
 		}
-		items = append(items, protocol.ModelRecord{Name: d.Name(), Size: info.Size(), Architecture: meta.Architecture, MoE: meta.IsMoE, ExpertCount: meta.ExpertCount, ActiveExperts: meta.ActiveExperts})
+		items = append(items, protocol.ModelRecord{Name: d.Name(), Size: size, Architecture: meta.Architecture, MoE: meta.IsMoE, ExpertCount: meta.ExpertCount, ActiveExperts: meta.ActiveExperts})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 	return items, nil
+}
+
+// ModelSize checks that every shard exists as a regular file and sums all
+// parts. The first shard alone must never be considered a complete model.
+func ModelSize(first string) (int64, error) {
+	names, err := catalog.ShardNames(filepath.Base(first))
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, name := range names {
+		filename := filepath.Join(filepath.Dir(first), name)
+		info, err := os.Lstat(filename)
+		if err != nil {
+			return 0, fmt.Errorf("GGUF part %s missing: %w", name, err)
+		}
+		if !info.Mode().IsRegular() || info.Size() < 4 || total > (1<<63-1)-info.Size() {
+			return 0, errors.New("invalid GGUF shard")
+		}
+		total += info.Size()
+	}
+	return total, nil
 }
