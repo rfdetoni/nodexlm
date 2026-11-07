@@ -24,6 +24,7 @@ import (
 type Engine struct {
 	BackendURL string
 	HTTP       *http.Client
+	APIKey     string // Ephemeral private llama-server key, never exposed to clients.
 }
 
 func New(backend string) (*Engine, error) {
@@ -49,6 +50,9 @@ func (e *Engine) Generate(ctx context.Context, request protocol.ChatRequest) (st
 		return "", err
 	}
 	r.Header.Set("Content-Type", "application/json")
+	if e.APIKey != "" {
+		r.Header.Set("Authorization", "Bearer "+e.APIKey)
+	}
 	resp, err := e.HTTP.Do(r)
 	if err != nil {
 		return "", err
