@@ -1,0 +1,62 @@
+name: Published RPC platform validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/rpc-smoke.yml', 'internal/llamaruntime/revision.json']
+permissions: {contents: read}
+concurrency:
+  group: nodexlm-rpc-smoke-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-22.04, os: linux, arch: amd64, backend: cpu}
+          - {runner: ubuntu-24.04-arm, os: linux, arch: arm64, backend: cpu}
+          - {runner: ubuntu-24.04, os: linux, arch: amd64, backend: vulkan}
+          - {runner: macos-15, os: darwin, arch: arm64, backend: metal}
+          - {runner: windows-latest, os: windows, arch: amd64, backend: cpu}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod, cache: false}
+      - name: Software Vulkan driver for CI
+        if: matrix.backend == 'vulkan'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers
+      - name: Fetch reviewed bundle and model
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,tarfile,urllib.request
+          revision=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())
+          platform='/'.join(os.environ[k] for k in ('TARGET_OS','TARGET_ARCH','BACKEND'))
+          name='nodexlm-rpc_'+revision['version']+'_'+platform.replace('/','_')+'.tar.gz'
+          urls=[('rpc.tar.gz','https://github.com/rfdetoni/nodexlm/releases/download/'+revision['rpc_release']+'/'+name,revision['published'][platform]),
+                ('tiny.gguf','https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf','270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d')]
+          for file,url,expected in urls:
+              with urllib.request.urlopen(url,timeout=90) as response:data=response.read(128*1024*1024+1)
+              assert len(data)<=128*1024*1024 and hashlib.sha256(data).hexdigest()==expected,file
+              pathlib.Path(file).write_bytes(data)
+          with tarfile.open('rpc.tar.gz') as archive:
+              # The archive has already matched the embedded reviewed digest.
+              archive.extractall('native')
+          PY
+      - name: Real native model inference
+        shell: bash
+        env:
+          NODEXLM_RPC_DIR: ${{ github.workspace }}/native
+          NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
+        run: |
+          go test ./internal/config ./internal/llamaruntime ./internal/dashboard -timeout 90s
+          go build -o nodexlm${{ matrix.os == 'windows' && '.exe' || '' }} ./cmd/nodexlm
+          python3 scripts/e2e-rpc.py

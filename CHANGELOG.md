@@ -2,7 +2,18 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
-## Em desenvolvimento — 2026-11-06
+## Roadmap implementado — 2026-11-07
+
+- Shards completos no Android, verificação em segundo plano protegida contra cancelamento, SSE UTF-8/amostragem/stop e monitoramento de lease no modo independente.
+- Pool de quatro modelos, cache por modelo, benchmark real de inferência e plano com KV/métricas observadas. Modelos adicionais usam o Host devido ao limite de um cliente nativo por Guest.
+- Contadores de tokens/gerações/erros, histograma de duração, reconexões/túneis e gráfico de latência; descoberta DNS-SD com fallback UDP.
+- Patch Unix RPC compilado em Linux, ARM64, macOS, Windows e Vulkan; inferência Unix Linux aprovada no CI. Windows mantém TCP loopback.
+- Empacotamento deb/rpm, geração de manifests Homebrew/winget para tags estáveis e SBOM dos módulos Go/pacotes. Docker passa a incluir `go.sum` e baixar os módulos antes do build.
+- Guias EN e recursos Android EN/pt-BR. Flutter opcional corrigido para administração em 8787 e recuperação do chat após falha.
+- E2E real de navegador em desktop/mobile, multicast em CI, fuzz de pareamento/extração e análise de vulnerabilidades Go sem ocorrências.
+- Auditoria PAKE independente, assinatura de produção, aprovação em índices externos e QA físico continuam identificados em [ROADMAP_STATUS](docs/ROADMAP_STATUS.md).
+
+## Histórico — 2026-11-06
 
 ### Confiabilidade e operação
 - CLI e painel usam um downloader único, com retomada validada por Range/If-Range, SHA-256 incluindo redirecionamentos LFS, espaço livre e retenção de parciais.

@@ -3,13 +3,14 @@ package dashboard
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"time"
+
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 type placement struct {
@@ -77,9 +78,10 @@ func (m *Manager) Plan() (map[string]any, error) {
 	nodes = append([]placement{{Name: "Host", Endpoint: "Host", Layers: localLayers, WeightBytes: uint64(size) * uint64(localLayers) / uint64(meta.BlockCount), Budget: host}}, nodes...)
 
 	var kvBytes *uint64
-	if meta.EmbeddingLength > 0 && meta.HeadCount > 0 && meta.KVHeadCount > 0 && meta.KVHeadCount <= meta.HeadCount && meta.BlockCount <= 4096 && meta.EmbeddingLength <= 1<<20 {
+	if meta.EmbeddingLength > 0 && meta.HeadCount > 0 && meta.KVHeadCount > 0 && meta.KVHeadCount <= meta.HeadCount && meta.EmbeddingLength%meta.HeadCount == 0 && meta.BlockCount <= 4096 && meta.EmbeddingLength <= 1<<20 {
 		// F16 K and V tensors; architectures with other KV layouts remain unknown.
-		value := uint64(4) * uint64(settings.ContextTokens) * uint64(meta.BlockCount) * uint64(meta.EmbeddingLength) * uint64(meta.KVHeadCount) / uint64(meta.HeadCount)
+		width := uint64(meta.EmbeddingLength/meta.HeadCount) * uint64(meta.KVHeadCount)
+		value := uint64(4) * uint64(settings.ContextTokens) * uint64(meta.BlockCount) * width
 		kvBytes = &value
 	}
 	samples := m.InferenceSamples()

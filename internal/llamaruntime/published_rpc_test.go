@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 )
 
@@ -21,6 +22,9 @@ func testRPCArchive(t *testing.T) []byte {
 	gz := gzip.NewWriter(&buf)
 	tarWriter := tar.NewWriter(gz)
 	for _, name := range []string{"bin/llama-server", "bin/ggml-rpc-server"} {
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
 		contents := []byte("#!/bin/sh\necho ok\n")
 		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0755, Size: int64(len(contents)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
@@ -56,7 +60,7 @@ func TestPublishedChecksum(t *testing.T) {
 func TestPublishedRPCVerifiedInstall(t *testing.T) {
 	archive := testRPCArchive(t)
 	digest := sha256.Sum256(archive)
-	name := fmt.Sprintf("nodexlm-rpc_%s_linux_amd64_cpu.tar.gz", Version)
+	name := fmt.Sprintf("nodexlm-rpc_%s_%s_%s_cpu.tar.gz", Version, runtime.GOOS, runtime.GOARCH)
 	manifest := []byte(hex.EncodeToString(digest[:]) + "  " + name + "\n")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -70,7 +74,7 @@ func TestPublishedRPCVerifiedInstall(t *testing.T) {
 	}))
 	defer server.Close()
 	if !publishedRPCSupported("cpu") {
-		t.Skip("Linux amd64 only")
+		t.Skip("platform has no published CPU pair")
 	}
 	home := t.TempDir()
 	srv, rpc, err := fetchPublishedRPC(context.Background(), home, "cpu", server.URL)
@@ -83,7 +87,7 @@ func TestPublishedRPCVerifiedInstall(t *testing.T) {
 }
 
 func TestPublishedRPCTamperRejected(t *testing.T) {
-	name := fmt.Sprintf("nodexlm-rpc_%s_linux_amd64_cpu.tar.gz", Version)
+	name := fmt.Sprintf("nodexlm-rpc_%s_%s_%s_cpu.tar.gz", Version, runtime.GOOS, runtime.GOARCH)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/SHA256SUMS.txt" {
 			fmt.Fprintf(w, "%064x  %s\n", 1, name)
@@ -93,7 +97,7 @@ func TestPublishedRPCTamperRejected(t *testing.T) {
 	}))
 	defer server.Close()
 	if !publishedRPCSupported("cpu") {
-		t.Skip("Linux amd64 only")
+		t.Skip("platform has no published CPU pair")
 	}
 	if _, _, err := fetchPublishedRPC(context.Background(), t.TempDir(), "cpu", server.URL); err == nil {
 		t.Fatal("accepted corrupted runtime")

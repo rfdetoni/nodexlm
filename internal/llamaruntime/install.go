@@ -359,17 +359,17 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	if err != nil {
 		return "", "", err
 	}
-	if server, rpc, err := installedDistributed(home, backend); err == nil {
+	if server, rpc, err := installedDistributed(home, backend); err == nil && (!UnixRPCBundles() || SupportsUnixRPC(ctx, server)) {
 		return server, rpc, nil
 	}
 	// Prefer a ready-to-run, pinned RPC pair: ordinary Linux Guests should not
 	// need CMake, a compiler or root access just to join a trusted cluster.
 	var publishedErr error
 	if publishedRPCSupported(backend) {
-		fmt.Fprintln(os.Stderr, "NodexLM: preparando runtime RPC Linux x64 verificado...")
+		fmt.Fprintln(os.Stderr, "NodexLM: preparando runtime RPC verificado para "+runtime.GOOS+"/"+runtime.GOARCH+"...")
 		var s, p string
 		s, p, publishedErr = fetchPublishedRPC(ctx, home, backend, publishedRPCBaseURL)
-		if publishedErr == nil && SupportsRPC(ctx, s) {
+		if publishedErr == nil && SupportsRPC(ctx, s) && (!UnixRPCBundles() || SupportsUnixRPC(ctx, s)) {
 			return s, p, nil
 		}
 		if publishedErr == nil {
@@ -378,7 +378,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	}
 	// Existing official archives may already include matching RPC binaries.
 	server, rpc, err := Ensure(ctx, home, backend)
-	if err == nil && rpc != "" && SupportsRPC(ctx, server) {
+	if err == nil && rpc != "" && SupportsRPC(ctx, server) && (!UnixRPCBundles() || SupportsUnixRPC(ctx, server)) {
 		return server, rpc, nil
 	}
 	// Some official releases omit GGML_RPC. Automatically build the missing

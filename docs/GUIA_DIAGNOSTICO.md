@@ -17,12 +17,12 @@ Esse erro significa que a biblioteca GGML compartilhada não está acessível ao
 
 1. Atualize a CLI pelo [instalador](../INSTALL.md).
 2. Encerre a execução antiga e reinicie `nodexlm guest --backend cpu`.
-3. Se persistir, procure as bibliotecas ao lado do executável RPC em `~/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-r2/`.
+3. Se persistir, procure as bibliotecas ao lado do executável RPC em `~/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-nodexlm-rpc-b12143-r3/`.
 
 Caso o diretório do runtime esteja incompleto e precise recriá-lo, o comando abaixo remove **apenas** o runtime baixado, não as credenciais do Guest:
 
 ```sh
-rm -rf "$HOME/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-r2"
+rm -rf "$HOME/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-nodexlm-rpc-b12143-r3"
 nodexlm guest --backend cpu
 ```
 
@@ -160,3 +160,11 @@ se existem **dois Guests executando ao mesmo tempo com o mesmo
 pareamento**: ambos compartilham o mesmo identificador do nó e o
 limite de 8 conexões. Pare o processo antigo e reinicie o Host e o Guest
 uma vez para descartar os túneis de uma versão anterior.
+
+## Transportes e bundles atuais
+
+Os bundles r3 fixados incluem Linux amd64 CPU/Vulkan, Linux arm64 CPU, macOS arm64 Metal e Windows amd64 CPU. CPU Linux amd64 foi compilado em Ubuntu 22.04; Vulkan amd64 utiliza o ambiente Ubuntu 24.04 e exige libc/driver compatíveis. `auto` continua escolhendo CPU no Linux/Windows e Metal no macOS.
+
+POSIX com bundle r3 utiliza socket Unix privado. Runtimes customizados precisam anunciar suporte Unix para seleção automática; `nodexlm host --rpc-transport tcp` permite interoperabilidade explícita com runtime legado. Windows mantém TCP loopback. Não abra a porta nativa na LAN.
+
+Se o mDNS não estiver disponível, informe o endereço HTTPS explicitamente. UDP 46465 continua disponível; DNS-SD usa UDP 5353 e a rede pode bloquear multicast.

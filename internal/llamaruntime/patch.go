@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"fmt"
 	"os/exec"
-	"strings"
 	"time"
 )
 
@@ -28,4 +27,12 @@ func SupportsUnixRPC(ctx context.Context, binary string) bool {
 	out, _ := exec.CommandContext(check, binary, "--help").CombinedOutput()
 	return bytes.Contains(out, []byte("unix:/")) || bytes.Contains(out, []byte("--socket PATH"))
 }
-func UnixRPCBundles() bool { return strings.Contains(revision.RPCRelease, "-r3") }
+func UnixRPCBundles() bool { return revision.UnixRPC }
+
+// An explicit custom runtime must prove its own transport capability.
+func PreferUnixRPC(ctx context.Context, requested string) bool {
+	if requested == "" || requested == "llama-server" {
+		return UnixRPCBundles()
+	}
+	return SupportsUnixRPC(ctx, requested)
+}

@@ -1,48 +1,45 @@
-# Estado do roadmap — 06/11/2026
+# Estado do roadmap — 07/11/2026
 
-Base da implementação: `de3c676`, posterior à avaliação estática de `1a477fd`. Este arquivo distingue código implementado de aceitação comprovada. O roadmap original tem 19 itens e **não está integralmente concluído**.
+Os 19 itens estão mapeados abaixo. As funcionalidades foram implementadas e validadas conforme a evidência indicada. **O roadmap não pode ser declarado 100% aceito enquanto faltarem auditoria criptográfica independente, credenciais de assinatura de produção e validações em hardware físico.** Compilação, teste automatizado e auditoria externa são evidências diferentes.
 
-| # | Item | Estado e evidência |
+| # | Item | Entrega e aceitação |
 |---|---|---|
-| 1 | GGUF em shards | Go/CLI/Host: catálogo, download/importação e tamanho agregado já existiam na base e foram revalidados. Novo downloader e testes cobrem falhas parciais. Android ainda não agrupa/baixa conjuntos completos. |
-| 2 | Download robusto | Implementado em pacote compartilhado: Range/If-Range, SHA-256 inclusive nos redirects, espaço disponível, timeout de inatividade, parciais persistentes, publicação exclusiva e bloqueio entre processos. Testes de interrupção, corrupção, Range inválido e fallback do servidor passaram. Checksum só é afirmado quando existe metadado verificável. |
-| 3 | API OpenAI SSE | Host nativo e worker Go implementados e testados. Texto, amostragem, lista de modelo, cancelamento e chave separada. E2E nativo passou. Workers Android legados não têm o novo transporte de eventos; ferramentas/imagens e outros campos OpenAI não são suportados. |
-| 4 | doctor | Comando texto/JSON implementado; diagnóstico local e sugestões. Firewall/SAN/clock são descritos com seus limites; sem alegar prova de conectividade da LAN. Portas customizadas exigem verificação separada. |
-| 5 | Chat do painel | Código implementado com múltiplos turnos, histórico local apagável, parâmetros, SSE, tempos e interrupção. Teste DOM do catálogo e E2E de API passaram. QA visual bloqueada: download do Playwright inválido; Chrome alternativo não inicia por proibição de socket Unix no ambiente. |
-| 6 | Plano do cluster | Prévia de camadas e memória implementada a partir de metadados reais. Estimativas identificadas. Ainda não usa o resultado do bench, nem prevê tokens/s ou contabiliza KV cache. |
-| 7 | Observabilidade | Métricas de nós/jobs no loopback autenticado, request ID e opção de JSON log implementados. Faltam contadores completos de tokens/reconexão, histogramas e gráfico no painel. |
-| 8 | bench | RTT e eco de banda pelo túnel TLS real, resultado persistido pela CLI. E2E passou. Não mede ainda uma carga de inferência por dispositivo nem alimenta o planejador. |
-| 9 | Energia Android | Perfil de carga, limiar de bateria, horário, térmico e notificação implementados. Porta nativa aleatória e benchmark adicionados. Compilação APK/JNI e teste em dispositivo ainda pendentes. |
-| 10 | Mais bundles RPC | Revisão centralizada entre Go/Gradle/CMake/workflow. Apenas o bundle Linux x64 CPU existente foi efetivamente executado. ARM64/macOS/Windows/Vulkan ainda precisam de build, publicação imutável e hashes revisados. |
-| 11 | Releases assinadas | Proveniência existente preservada; inventário CycloneDX e verificação opcional de atestação nos instaladores adicionados. Nova release não foi publicada. Certificado Authenticode e assinatura Android persistente dependem de credenciais próprias. |
-| 12 | Distribuição | Dockerfile/Compose Linux adicionados; units systemd existentes preservadas. Docker não disponível para execução local. Pacotes deb/rpm e publicação Homebrew/winget ainda pendentes. |
-| 13 | Inglês e contribuição | README.en, guia de operações EN e CONTRIBUTING adicionados. Tradução de todos os guias e internacionalização completa do Android ainda pendentes. |
-| 14 | E2E e fuzz | E2E real de pareamento, benchmark TLS, GGUF nativo RPC e SSE executado em Linux CPU. Workflow manual adicionado. Fuzz GGUF e regressões de extração/credenciais/cancelamento executados. Demais plataformas e fuzz de pareamento/extração permanecem complementares. |
-| 15 | mDNS | Pendente; descoberta UDP existente mantida. |
-| 16 | Múltiplos modelos/prioridade | Fila de workers recebe prioridade estável (-10..10). Host continua com um único runtime/modelo residente; pool de modelos ainda pendente. |
-| 17 | KV cache compartilhado | Pendente de suporte/contrato upstream e validação do benefício; nenhuma implementação simulada. |
-| 18 | RPC Unix/fd | Pendente de patch upstream. Porta aleatória reduz previsibilidade, mas não autentica RPC nem substitui isolamento. |
-| 19 | PAKE auditado | Pendente de revisão criptográfica independente ou migração auditada. Nenhuma certificação externa é alegada. |
+| 1 | GGUF em shards | Host/CLI e Android agrupam conjuntos completos, somam tamanhos, importam todas as partes e publicam a primeira somente após completar o conjunto. Android usa seleção múltipla e fila persistida de downloads. Testes Go/JUnit e build APK passaram. |
+| 2 | Download robusto | Downloader Go compartilhado: Range/If-Range, SHA-256 LFS, espaço disponível, timeout de inatividade, parciais persistentes, publicação exclusiva e bloqueio entre processos. Android utiliza DownloadManager e verifica cabeçalho/tamanho/SHA quando o metadado existe. As garantias de retomada do sistema Android não são equiparadas às do Go. |
+| 3 | API OpenAI SSE | Host nativo, worker Go e Android independente transmitem texto incremental e cancelam a execução. Amostragem, stop, UTF-8, usage e chave de inferência restrita. E2E nativo passou; APK/JNI compilado. Ferramentas e imagens não integram este contrato de texto. |
+| 4 | doctor | Texto/JSON, listeners locais, permissões, disco, certificado, CPU/libc/Vulkan e estado do cluster. Firewall remoto/SAN/rede são apresentados com seus limites; sem afirmar conectividade não medida. |
+| 5 | Chat do painel | Múltiplos turnos, histórico local confirmado/apagável, parâmetros, SSE, interrupção e tempos medidos. Browser E2E real passou em 1280×900 e 390×844; corrigidos restauração do histórico e overflow móvel. Capturas revisadas. |
+| 6 | Plano do cluster | Camadas/pesos por nó, KV F16 estimado com metadados de arquitetura, medições de RTT/banda e tokens/s observados por modelo/nó. Não converte eco em previsão de tokens/s. Mudanças de configuração podem invalidar comparações. |
+| 7 | Observabilidade | Contadores de geração/erros/tokens reportados, histograma cumulativo de duração, gauges de throughput/cache, reconexões e capacidade de túneis. Histórico RTT limitado e gráfico no painel. Tokens ausentes de usage/interrupções não são inventados. |
+| 8 | bench | CLI/UI medem RTT/eco no túnel TLS e executam carga real de inferência no Host ou em um Guest escolhido. Resultados alimentam o plano. Exige descarregar modelos antes da carga; não desaloja modelos silenciosamente. E2E real passou. |
+| 9 | Energia Android | Carga, bateria mínima, horário noturno, térmico, notificação e parada deliberada. Regressões JUnit passaram; APK universal CPU ARMv7/CPU+Vulkan ARM64 compilado. Consumo/temperatura/ROM exigem aparelho físico. |
+| 10 | Mais bundles RPC | Cinco builds aprovados: Linux amd64 CPU/Vulkan, Linux arm64 CPU, macOS arm64 Metal e Windows amd64 CPU. [Release r3 publicada](https://github.com/rfdetoni/nodexlm/releases/tag/nodexlm-rpc-b12143-r3), com cinco hashes SHA-256 conferidos entre manifesto e metadados dos assets antes de ativá-los no código. O E2E Unix nativo Linux passou no build. |
+| 11 | Releases assinadas | Atestações GitHub/SLSA, inventário CycloneDX com módulos Go e pacotes, verificação opcional de procedência nos instaladores e fluxo Android de assinatura persistente em tags. Authenticode e chaves Android de produção dependem de credenciais do proprietário; não foi gerada assinatura fictícia. |
+| 12 | Distribuição | CLI/Web em sete destinos, pacotes deb/rpm amd64/arm64/armhf, contas/units systemd e Docker/Compose Linux. Build/empacotamento desktop passou. Fórmula Homebrew/manifests winget são gerados de checksums reais em tags estáveis; aprovação/publicação nos índices externos permanece externa. Docker não executado neste ambiente sem daemon. |
+| 13 | Inglês e contribuição | README EN, operações, guias Host/Guest/Android/modelos/diagnóstico/pareamento, CONTRIBUTING e recursos Android EN/pt-BR. Erros de sistema/runtime podem permanecer no idioma original. Frontend Flutter opcional corrigido e aprovado por `flutter analyze`. |
+| 14 | E2E e fuzz | E2E real TLS/RPC, pool, benchmark, SSE, chave restrita, navegador e mDNS em CI. Fuzz GGUF, pareamento e caminhos de extração. Testes/cross-build e análise de vulnerabilidades Go passaram. Não equivale a teste em todos os aparelhos/drivers. |
+| 15 | mDNS | DNS-SD `_nodexlm._tcp.local` e `nodexlm.local`, anúncios, conflito, TTL de saída e fallback UDP. Descoberta multicast real passou em CI Linux. Limitado a redes privadas IPv4 com multicast disponível; identidade ainda exige código/certificado. |
+| 16 | Múltiplos modelos/prioridade | Até quatro modelos residentes com orçamento de memória, processos/KV independentes, listagem e unload individual; prioridade estável -10..10 na fila. Principal pode usar RPC; adicionais usam o Host porque o GGML fixado atende um cliente por Guest. Pool e geração direcionada passaram em E2E. |
+| 17 | KV cache compartilhado | Reutilização de prefixo via `cache_prompt`, KV nos backends que executam as camadas e métricas de tokens reutilizados do runtime fixado. Estado isolado por modelo/processo. Não há compartilhamento genérico de tensores KV entre modelos ou sessões incompatíveis; isso exige outro contrato upstream. |
+| 18 | RPC Unix/fd | Patch real de `llama.cpp b12143`, build embarcado Android, Host/Guest POSIX por sockets privados e seleção explícita/automática de transporte. E2E Unix Linux passou no CI. Windows e runtime customizado sem suporte ficam em TCP; nenhum suporte fd inexistente é anunciado. |
+| 19 | PAKE auditado | **Bloqueado por avaliação externa.** O protocolo atual por código/certificado é customizado e não recebe o nome de PAKE auditado. Requer auditoria criptográfica independente ou migração interoperável revisada por especialista, incluindo Go/Android, vetores e rollout. Revisão interna/testes não substituem essa aceitação. |
 
-## Correções adicionais da revisão
+## Evidências reproduzíveis
 
-- Credenciais `agent.json` POSIX não podem ser arquivos públicos ou symlinks; diretório privado é endurecido ao gravar.
-- Lease revogado é rechecado antes da entrega de trabalho; resultado tardio não acessa nó removido. Revogação/túnel são serializados.
-- Requisições desconectadas liberam a fila; cancelamento em execução só libera o nó após confirmação/expiração.
-- Resultados grandes demais no worker terminam com erro explícito, evitando lease preso.
-- Geração confere o modelo novamente após aguardar a admissão, evitando usar outro modelo depois de unload/load.
-- Resposta não-streaming preserva ID, usage e finish_reason do llama-server.
-- Bloqueios entre processos protegem staging e publicação sem arquivo de lock permanentemente preso após crash.
-- Leitura de corpos HTTP e escrita de frames têm limites de tempo. O relay limpa deadlines herdados do HTTP ao assumir o socket.
-- NAT64/Teredo/6to4 são recusados pelo downloader público, e todas as partes GGUF têm seu cabeçalho conferido.
-- Limites da fila/histórico, overflow de estimativa e configuração em máquinas com mais de 256 CPUs foram tratados.
-- Arquivos Go formatados e `gofmt` obrigatório no PR. CI de PR inclui smoke da CLI/scripts sem disparar build nativo pesado.
+- Go: `go test -race ./... -timeout 90s`, `go vet ./...`, `govulncheck ./...` (nenhuma vulnerabilidade encontrada na execução), regressão DOM do catálogo e smoke do instalador.
+- Native TCP local: `NODEXLM_TEST_RPC_TRANSPORT=tcp NODEXLM_RPC_DIR=/tmp/nodexlm-native-build NODEXLM_TEST_MODEL=/tmp/nodexlm-tiny.gguf python3 scripts/e2e-rpc.py`. Inclui dois modelos residentes, geração no segundo modelo e benchmark em um Guest real.
+- [CI nativo de cinco plataformas](https://github.com/rfdetoni/nodexlm/actions/runs/42368564577): os cinco jobs de build passaram, incluindo inferência Unix Linux. A primeira tentativa de publicação recebeu HTTP 403 do GitHub; [a publicação corrigida passou](https://github.com/rfdetoni/nodexlm/actions/runs/42369384350), reutilizando os artefatos com conferência de identidade do build/checksums.
+- [E2E navegador e multicast](https://github.com/rfdetoni/nodexlm/actions/runs/42368732058): login, duas gerações, persistência/deleção do histórico, plano, métricas, interrupção, layouts desktop/mobile e DNS-SD real aprovados. Capturas disponíveis no artifact desse run.
+- [Análise Flutter](https://github.com/rfdetoni/nodexlm/actions/runs/42369160094) aprovada.
+- [APK e JUnit](https://github.com/rfdetoni/nodexlm/actions/runs/42368522518) e [pacotes desktop/CLI](https://github.com/rfdetoni/nodexlm/actions/runs/42368732076) aprovados.
+- Fuzz curto: 71.481 entradas de descoberta/pareamento e 15.510 caminhos de arquivo sem falha. Há corpus GGUF adicional; esses tempos curtos não substituem fuzz contínuo/auditoria.
+- Upstream nativo: `2bc46baa9207d098d03741ac394e7faaf1a955b6`; modelo de teste: `stories260K.gguf`, SHA-256 `270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d`.
 
-## Evidência de execução
+## Dependências externas para aceite final
 
-- `go test -race ./...`, `go vet ./...`, `git diff --check`, JavaScript syntax/DOM regression e teste do instalador POSIX.
-- Cross build da CLI para Linux amd64/arm64/arm, macOS amd64/arm64 e Windows amd64/arm64. Cross build não equivale a execução nesses sistemas.
-- `scripts/smoke.py`: HTTPS, cadastro, lease, backend e resposta de chat.
-- `scripts/e2e-rpc.py`: pareamento por código, pin TLS, benchmark real, runtime publicado com hash `17d10d9a…`, GGUF de 260K parâmetros com hash `270cba1b…`, carregamento RPC, SSE e rejeição de operação administrativa com chave de inferência.
-- Fuzz GGUF curto: 208 execuções sem falha. Isso não substitui fuzz contínuo nem auditoria do parser.
-- Validação visual, APK, Flutter, Docker e execução nativa fora do Linux CPU não foram aprovadas nesta sessão.
+1. Contratar/executar revisão criptográfica independente do pareamento ou aprovar uma migração PAKE interoperável auditada. Até lá, permanece o modelo de confiança LAN/VPN documentado.
+2. Fornecer certificados/chaves de assinatura de produção quando houver release estável. Atestação de procedência não é Authenticode nem certificado de auditoria.
+3. Validar Android/Metal/Vulkan em aparelhos e drivers reais, energia/térmico em ROMs relevantes e Docker no ambiente alvo. O CI com GPU virtual/software não comprova desempenho físico.
+4. Criar uma tag estável quando o produto estiver pronto e submeter os manifests gerados a Homebrew/winget. A aceitação desses projetos depende de seus mantenedores.
+
+Os contratos de texto OpenAI, pool e RPC estão descritos nos guias. Nenhum checkbox altera os limites efetivos do GGML ou certifica uma avaliação externa que não ocorreu.

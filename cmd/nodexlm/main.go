@@ -208,7 +208,7 @@ func serve(args []string) error {
 	if *rpcTransport == "unix" && runtime.GOOS == "windows" {
 		return errors.New("Unix RPC transport requires Linux or macOS")
 	}
-	unixRPC := *rpcTransport == "unix" || *rpcTransport == "auto" && runtime.GOOS != "windows" && (llamaruntime.UnixRPCBundles() || *llamaBin != "llama-server" && llamaruntime.SupportsUnixRPC(context.Background(), *llamaBin))
+	unixRPC := *rpcTransport == "unix" || *rpcTransport == "auto" && runtime.GOOS != "windows" && llamaruntime.PreferUnixRPC(context.Background(), *llamaBin)
 	if unixRPC {
 		if err := s.UseUnixRPC(); err != nil {
 			return err
