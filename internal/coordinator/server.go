@@ -20,6 +20,7 @@ import (
 
 	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/requestlog"
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
 
@@ -44,6 +45,7 @@ type Server struct {
 	nodes      map[string]*nodeState
 	jobs       map[string]*protocol.Job
 	queue      []string
+	events     map[string]*jobEvents
 	logger     *slog.Logger
 	storePath  string
 	pair       *pairing.Session
@@ -55,7 +57,7 @@ func New(adminToken, enrollmentToken string) (*Server, error) {
 	if len(adminToken) < 32 || len(enrollmentToken) < 32 || adminToken == enrollmentToken {
 		return nil, errors.New("admin and enrollment tokens must be distinct, at least 32 characters each")
 	}
-	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
+	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.
@@ -81,21 +83,27 @@ func (s *Server) handler(administrative bool) http.Handler {
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
 	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
 	mux.HandleFunc("POST /v1/nodes/result/{id}", s.result)
+	mux.HandleFunc("GET /v1/nodes/jobs/{id}", s.nodeJob)
+	mux.HandleFunc("POST /v1/nodes/chunks/{id}", s.streamChunk)
 	if administrative {
 		mux.HandleFunc("GET /v1/nodes", s.listNodes)
+		mux.HandleFunc("GET /metrics", s.Metrics)
+		mux.HandleFunc("GET /v1/models", s.models)
+		mux.HandleFunc("POST /v1/bench/{id}", s.bench)
 		mux.HandleFunc("DELETE /v1/nodes/{id}", s.revokeNode)
 		mux.HandleFunc("POST /v1/jobs", s.submit)
 		mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
+		mux.HandleFunc("DELETE /v1/jobs/{id}", s.cancelJob)
 		mux.HandleFunc("POST /v1/chat/completions", s.chat)
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return requestlog.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != "GET" {
 			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}
 		mux.ServeHTTP(w, r)
-	})
+	}))
 }
 
 func auth(r *http.Request, sum [32]byte) bool {
@@ -261,26 +269,37 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	defer deadline.Stop()
 	for {
 		s.mu.Lock()
+		if s.nodes[id] != n {
+			s.mu.Unlock()
+			fail(w, 401, "node authorization revoked")
+			return
+		}
 		n.device.LastSeen = time.Now()
 		n.device.Status = "online"
 		n.device.Models = append([]string(nil), req.Models...)
 		if req.RAMBytes > 0 && req.RAMBytes < 1<<50 && req.AvailableRAMBytes <= req.RAMBytes {
-            n.device.RAMBytes = req.RAMBytes
-            n.device.AvailableRAMBytes = req.AvailableRAMBytes
-        }
-        if req.GPUs != nil {
-            valid := true
-            for _, gpu := range req.GPUs {
-                if gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes || len(gpu.Name) > 128 { valid = false; break }
-            }
-            if valid { n.device.GPUs = append([]protocol.GPUDevice(nil),req.GPUs...) }
-        }
-        if req.Runtime.Engine != "" {
-            n.device.Runtime.Installed = req.Runtime.Installed
-            n.device.Runtime.Engine = req.Runtime.Engine
-            n.device.Runtime.Version = req.Runtime.Version
-            // RPC readiness is set exclusively by the authenticated tunnel.
-        }
+			n.device.RAMBytes = req.RAMBytes
+			n.device.AvailableRAMBytes = req.AvailableRAMBytes
+		}
+		if req.GPUs != nil {
+			valid := true
+			for _, gpu := range req.GPUs {
+				if gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes || len(gpu.Name) > 128 {
+					valid = false
+					break
+				}
+			}
+			if valid {
+				n.device.GPUs = append([]protocol.GPUDevice(nil), req.GPUs...)
+			}
+		}
+		if req.Runtime.Engine != "" {
+			n.device.Runtime.Installed = req.Runtime.Installed
+			n.device.Runtime.Engine = req.Runtime.Engine
+			n.device.Runtime.Version = req.Runtime.Version
+			n.device.Runtime.Benchmark = req.Runtime.Benchmark
+			// RPC readiness is set exclusively by the authenticated tunnel.
+		}
 		if n.active == "" {
 			for i, jid := range s.queue {
 				j := s.jobs[jid]
@@ -347,8 +366,14 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	j := s.jobs[jid]
 	n := s.nodes[id]
-	if j == nil || j.NodeID != id || j.Status != "running" || n.active != jid {
+	if j == nil || j.NodeID != id || n == nil || (j.Status != "running" && j.Status != "cancelled") || n.active != jid {
 		fail(w, 409, "job is not leased to node")
+		return
+	}
+	if j.Status == "cancelled" {
+		n.active = ""
+		n.device.Busy = false
+		respond(w, 200, map[string]string{"status": "cancelled"})
 		return
 	}
 	now := time.Now()
@@ -362,6 +387,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	}
 	n.active = ""
 	n.device.Busy = false
+	s.notifyLocked(jid)
 	respond(w, 200, map[string]string{"status": j.Status})
 }
 
@@ -387,29 +413,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, out)
 }
 
-func validateChat(req protocol.ChatRequest) string {
-	if req.Model == "" || len(req.Model) > 256 {
-		return "model is required"
-	}
-	if len(req.Messages) == 0 || len(req.Messages) > 64 {
-		return "1-64 messages required"
-	}
-	if req.MaxTokens < 0 || req.MaxTokens > 4096 {
-		return "max_tokens exceeds limit"
-	}
-	if req.Stream {
-		return "streaming is not implemented yet"
-	}
-	for _, m := range req.Messages {
-		if m.Role != "system" && m.Role != "user" && m.Role != "assistant" {
-			return "invalid message role"
-		}
-		if len(m.Content) > 65536 {
-			return "message too large"
-		}
-	}
-	return ""
-}
+func validateChat(req protocol.ChatRequest) string { return protocol.ValidateChat(req) }
 
 func (s *Server) queueJob(req protocol.ChatRequest) (*protocol.Job, error) {
 	id, err := token()
@@ -418,20 +422,23 @@ func (s *Server) queueJob(req protocol.ChatRequest) (*protocol.Job, error) {
 	}
 	job := &protocol.Job{ID: id, Request: req, Status: "queued", Created: time.Now()}
 	s.mu.Lock()
-	if len(s.queue) >= 128 {
+	if len(s.queue) >= 128 || len(s.jobs) >= 4096 {
 		s.mu.Unlock()
 		return nil, errors.New("queue at capacity")
 	}
 	s.jobs[id] = job
+	s.events[id] = &jobEvents{changed: make(chan struct{}, 1)}
 	s.queue = append(s.queue, id)
+	sort.SliceStable(s.queue, func(i, j int) bool { return s.jobs[s.queue[i]].Request.Priority > s.jobs[s.queue[j]].Request.Priority })
 	for _, n := range s.nodes {
 		select {
 		case n.signal <- struct{}{}:
 		default:
 		}
 	}
+	snapshot := *job
 	s.mu.Unlock()
-	return job, nil
+	return &snapshot, nil
 }
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(w, r) {
@@ -486,31 +493,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, err.Error())
 		return
 	}
-	tick := time.NewTicker(100 * time.Millisecond)
-	defer tick.Stop()
-	max := time.NewTimer(jobDeadline + 20*time.Second)
-	defer max.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-max.C:
-			fail(w, 504, "inference timed out")
-			return
-		case <-tick.C:
-			s.mu.Lock()
-			snap := *s.jobs[j.ID]
-			s.mu.Unlock()
-			if snap.Status == "completed" {
-				respond(w, 200, map[string]any{"id": snap.ID, "object": "chat.completion", "model": req.Model, "choices": []any{map[string]any{"index": 0, "message": protocol.Message{Role: "assistant", Content: snap.Result}, "finish_reason": "stop"}}})
-				return
-			}
-			if snap.Status == "failed" {
-				fail(w, 502, snap.Error)
-				return
-			}
-		}
-	}
+	s.waitChat(w, r, j.ID, req.Stream)
 }
 
 // Cleanup cancels timed-out jobs and releases busy nodes. It does not retry an
@@ -526,7 +509,7 @@ func (s *Server) Cleanup(ctx context.Context) {
 			s.mu.Lock()
 			now := time.Now()
 			for _, j := range s.jobs {
-				if j.Status == "running" && j.Started != nil && now.Sub(*j.Started) > jobDeadline {
+				if (j.Status == "running" || j.Status == "cancelled") && j.Started != nil && now.Sub(*j.Started) > jobDeadline {
 					j.Status = "failed"
 					j.Error = "execution lease expired"
 					j.Completed = &now
@@ -540,8 +523,10 @@ func (s *Server) Cleanup(ctx context.Context) {
 					j.Error = "no compatible node available"
 					j.Completed = &now
 				}
-				if (j.Status == "completed" || j.Status == "failed") && j.Completed != nil && now.Sub(*j.Completed) > time.Hour {
+				s.notifyLocked(j.ID)
+				if (j.Status == "completed" || j.Status == "failed" || j.Status == "cancelled") && j.Completed != nil && now.Sub(*j.Completed) > time.Hour {
 					delete(s.jobs, j.ID)
+					delete(s.events, j.ID)
 				}
 			}
 			q := s.queue[:0]
@@ -567,15 +552,18 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "invalid node credential")
 		return
 	}
+
 	s.mu.Lock()
-	if n := s.nodes[id]; n != nil {
-		// Actual readiness is calculated from the authenticated relay's
-		// live connections; do not mark ready before CONNECT succeeds.
-		n.device.LastSeen = time.Now()
-		n.device.Status = "online"
+	defer s.mu.Unlock()
+	n := s.nodes[id]
+	if n == nil || !auth(r, n.credential) {
+		fail(w, 401, "node authorization revoked")
+		return
 	}
-	s.mu.Unlock()
+	n.device.LastSeen = time.Now()
+	n.device.Status = "online"
 	s.rpcHub.ServeTunnel(w, r, id)
+
 }
 
 // heartbeat retains the authenticated node identity while updating live

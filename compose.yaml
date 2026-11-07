@@ -1,0 +1,22 @@
+services:
+  host:
+    build: .
+    # Linux host networking preserves LAN discovery and keeps management on
+    # actual host loopback. Do not publish the management port on 0.0.0.0.
+    network_mode: host
+    environment:
+      NODEXLM_HOME: /data
+      NODEXLM_API_KEY: ${NODEXLM_API_KEY:-}
+    volumes:
+      - nodexlm-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 20s
+volumes:
+  nodexlm-data:

@@ -8,6 +8,10 @@ on:
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - 'internal/llamaruntime/revision.json'
+      - 'internal/dashboard/static/**'
+      - 'scripts/**'
+      - 'install.sh'
       - '.github/workflows/pr-checks.yml'
   workflow_dispatch:
 
@@ -24,14 +28,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false
-      - run: go test -race ./...
+      - name: Formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go test -race ./... -timeout 120s
+      - run: node --check internal/dashboard/static/app.js && node scripts/test-dashboard-models.cjs
+      - run: sh scripts/test-install.sh
+      - run: go build -o nodexlm ./cmd/nodexlm && python3 scripts/smoke.py
       - run: go vet ./...
 
   windows-config:
@@ -39,10 +48,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false

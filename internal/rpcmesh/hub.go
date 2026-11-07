@@ -88,6 +88,8 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 		return
 	}
 	item.track(conn)
+	_ = conn.SetDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	// The buffered writer owns HTTP headers; do not pass the socket to ggml until
 	// the relay sends a one-byte ready signal when a local RPC connection arrives.
 	if _, err = buf.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err == nil {
@@ -97,6 +99,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 		item.finish(conn)
 		return
 	}
+	_ = conn.SetWriteDeadline(time.Time{})
 	pending := &idleTunnel{
 		conn:    conn,
 		claimed: make(chan struct{}),

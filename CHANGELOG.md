@@ -4,6 +4,16 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Em desenvolvimento — 2026-11-06
 
+### Confiabilidade e operação
+- CLI e painel usam um downloader único, com retomada validada por Range/If-Range, SHA-256 incluindo redirecionamentos LFS, espaço livre e retenção de parciais.
+- API OpenAI de texto no loopback usa o modelo carregado no Host, com SSE, parâmetros de amostragem e chave de inferência separada; respostas completas preservam usage/finish_reason.
+- Worker Go transmite eventos incrementais e cancela seu backend quando o cliente encerra o pedido. Fila com prioridade limitada, cancelamento explícito e notificação por canal.
+- Chat do console com histórico local apagável, temperatura, limite de tokens, interrupção e tempos medidos. Prévia de camadas/memória do cluster, com estimativas identificadas.
+- `doctor`, benchmark de RTT/banda no túnel TLS e métricas autenticadas em loopback. Comandos administrativos passam a usar a porta 8787 por padrão.
+- Revisão nativa centralizada em `internal/llamaruntime/revision.json`; configuração Docker/Compose para Linux, documentação EN e inventário CycloneDX das releases CLI.
+- Android: porta RPC aleatória, suporte ao benchmark TLS, perfil de carga/bateria/horário e notificação de interrupção; configuração de páginas nativas de 16 KiB. Exige build/device QA.
+- Teste E2E executado em Linux CPU com pareamento real, GGUF de 260K parâmetros, runtime nativo RPC fixado por hash, streaming e chave API restrita. Workflow pesado somente manual.
+
 ### Segurança, Windows e ciclo de vida
 - Atualizado o compilador das releases Go para 1.27.3, com correções de segurança recentes.
 - Reinicializações do Host no Windows deixam de interpretar permissões POSIX sintéticas como ACLs.

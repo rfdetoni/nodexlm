@@ -23,8 +23,7 @@ import (
 
 // A reviewed, immutable upstream release and per-artifact checksums.
 // Update the tag and all hashes together, never download unverified "latest".
-const Version = "b12143"
-const repoURL = "https://github.com/ggml-org/llama.cpp/releases/download/" + Version + "/"
+var repoURL = "https://github.com/ggml-org/llama.cpp/releases/download/" + Version + "/"
 
 type Artifact struct{ Name, SHA256 string }
 
@@ -312,37 +311,39 @@ func AutoExecutable(ctx context.Context, home, requested string) (string, error)
 // Official release archives are preferred. When they were built without RPC,
 // create a matched llama-server + ggml-rpc-server pair from the pinned upstream
 // source. Both programs must use the same RPC protocol revision.
-const SourceCommit = "2bc46baa9207d098d03741ac394e7faaf1a955b6"
 
 func SupportsRPC(ctx context.Context, server string) bool {
-    // The precompiled release contains libggml.so.N beside the executable,
-    // not in the system library path. Match the runtime environment used by
-    // the Guest process, or --help will fail before checking RPC support.
+	// The precompiled release contains libggml.so.N beside the executable,
+	// not in the system library path. Match the runtime environment used by
+	// the Guest process, or --help will fail before checking RPC support.
 	testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(testCtx, server, "--help")
-    if runtime.GOOS == "linux" {
-        p := filepath.Dir(server)
-        if prev := os.Getenv("LD_LIBRARY_PATH"); prev != "" { p += string(os.PathListSeparator)+prev }
-        cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+p)
-    }
-    out, err := cmd.CombinedOutput()
+	if runtime.GOOS == "linux" {
+		p := filepath.Dir(server)
+		if prev := os.Getenv("LD_LIBRARY_PATH"); prev != "" {
+			p += string(os.PathListSeparator) + prev
+		}
+		cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+p)
+	}
+	out, err := cmd.CombinedOutput()
 	// llama-server commonly prints help to stderr and exits 0 or 1.
 	return (err == nil || len(out) > 0) && strings.Contains(string(out), "--rpc")
 }
+
 // Use a fresh cache for the corrected Linux x64 runtime package. Existing
 // b12143 cpu-rpc directories may contain binaries with missing GGML SONAME
 // libraries and must not be reused after upgrading the CLI.
 func distributedDir(home, backend string) string {
-    dir := installDir(home, backend) + "-rpc"
-    if publishedRPCSupported(backend) {
-        return dir + "-r2"
-    }
-    return dir
+	dir := installDir(home, backend) + "-rpc"
+	if publishedRPCSupported(backend) {
+		return dir + "-r2"
+	}
+	return dir
 }
 
 func installedDistributed(home, backend string) (string, string, error) {
-    dir := distributedDir(home, backend)
+	dir := distributedDir(home, backend)
 	server := executable(dir, "llama-server")
 	rpc := executable(dir, "ggml-rpc-server")
 	if rpc == "" {
@@ -371,7 +372,9 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		if publishedErr == nil && SupportsRPC(ctx, s) {
 			return s, p, nil
 		}
-		if publishedErr == nil { publishedErr = errors.New("downloaded runtime lacks RPC support") }
+		if publishedErr == nil {
+			publishedErr = errors.New("downloaded runtime lacks RPC support")
+		}
 	}
 	// Existing official archives may already include matching RPC binaries.
 	server, rpc, err := Ensure(ctx, home, backend)

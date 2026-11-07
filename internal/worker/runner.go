@@ -3,12 +3,14 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
 	"math/rand"
 	"net/http"
+	"os"
 	"runtime"
 	"time"
 
@@ -56,15 +58,15 @@ func (r *Runner) Run(ctx context.Context) error {
 		return errors.New("worker requires a model and local llama-server backend")
 	}
 	delay := time.Second
-    deviceName, _ := os.Hostname()
-    var profile protocol.Device
-    var sampledAt time.Time
+	deviceName, _ := os.Hostname()
+	var profile protocol.Device
+	var sampledAt time.Time
 	for ctx.Err() == nil {
-        if time.Since(sampledAt) >= 15*time.Second {
-            profile = hardware.Collect(deviceName, []string{r.Model})
-            profile.Runtime.Installed = true
-            sampledAt = time.Now()
-        }
+		if time.Since(sampledAt) >= 15*time.Second {
+			profile = hardware.Collect(deviceName, []string{r.Model})
+			profile.Runtime.Installed = true
+			sampledAt = time.Now()
+		}
 		var work protocol.Job
 		queryCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 		status, err := r.Client.Request(queryCtx, http.MethodPost, "/v1/nodes/lease", profile, &work)
@@ -85,10 +87,59 @@ func (r *Runner) Run(ctx context.Context) error {
 		if status == http.StatusNoContent {
 			continue
 		}
-		r.Logger.Info("inference job started", "job", work.ID, "model", work.Request.Model)
+		r.Logger.Info("inference job started", "job_id", work.ID, "model", work.Request.Model)
 		jobCtx, stop := context.WithTimeout(ctx, 3*time.Minute)
-		answer, generateErr := r.Engine.Generate(jobCtx, work.Request)
+
+		monitorDone := make(chan struct{})
+		go func() {
+			defer close(monitorDone)
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-jobCtx.Done():
+					return
+				case <-ticker.C:
+					var state struct {
+						Status string `json:"status"`
+					}
+					pollCtx, cancel := context.WithTimeout(jobCtx, 5*time.Second)
+					status, err := r.Client.Request(pollCtx, http.MethodGet, "/v1/nodes/jobs/"+work.ID, nil, &state)
+					cancel()
+					if status == http.StatusUnauthorized || status == http.StatusNotFound || err == nil && state.Status != "running" {
+						stop()
+						return
+					}
+				}
+			}
+		}()
+		var answer string
+		var generateErr error
+		if work.Request.Stream {
+			if engine, ok := r.Engine.(interface {
+				GenerateStream(context.Context, protocol.ChatRequest, func([]byte) error) error
+			}); ok {
+				generateErr = engine.GenerateStream(jobCtx, work.Request, func(frame []byte) error {
+					payload := bytes.TrimSpace(bytes.TrimPrefix(frame, []byte("data: ")))
+					if bytes.Equal(payload, []byte("[DONE]")) {
+						return nil
+					}
+					_, err := r.Client.Request(jobCtx, http.MethodPost, "/v1/nodes/chunks/"+work.ID, map[string]any{"data": json.RawMessage(payload)}, nil)
+					return err
+				})
+			} else {
+				generateErr = errors.New("worker engine does not support streaming")
+			}
+		} else {
+			answer, generateErr = r.Engine.Generate(jobCtx, work.Request)
+		}
+
 		stop()
+		<-monitorDone
+		if len(answer) > 1<<19 {
+			answer = ""
+			generateErr = errors.New("generation result exceeds coordinator limit")
+		}
 		out := protocol.JobResult{Result: answer}
 		if generateErr != nil {
 			out.Error = generateErr.Error()
@@ -100,7 +151,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		_, err = r.Client.Request(resultCtx, http.MethodPost, "/v1/nodes/result/"+work.ID, out, nil)
 		done()
 		if err != nil {
-			r.Logger.Error("could not submit result", "job", work.ID, "error", err)
+			r.Logger.Error("could not submit result", "job_id", work.ID, "error", err)
 		}
 	}
 	return nil

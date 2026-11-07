@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Real TLS pairing -> native Guest -> distributed tiny GGUF -> OpenAI SSE.
+Requires NODEXLM_RPC_DIR (matching native runtime), NODEXLM_TEST_MODEL and built CLI.
+No model or runtime download is performed implicitly by this script.
+"""
+import json
+import os
+import pathlib
+import re
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+CLI = ROOT / 'nodexlm'
+
+
+def port():
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def wait_for(check, seconds=30):
+    deadline = time.monotonic() + seconds
+    last = None
+    while time.monotonic() < deadline:
+        try:
+            result = check()
+            if result:
+                return result
+        except (OSError, ValueError, KeyError) as exc:
+            last = exc
+        time.sleep(.1)
+    raise AssertionError(f'Timed out: {last}')
+
+
+def main():
+    runtime = pathlib.Path(os.environ['NODEXLM_RPC_DIR']).resolve()
+    model = pathlib.Path(os.environ['NODEXLM_TEST_MODEL']).resolve()
+    assert CLI.is_file() and model.is_file()
+    processes = []
+    with tempfile.TemporaryDirectory(prefix='nodexlm-e2e-') as tmp:
+        root = pathlib.Path(tmp)
+        host_dir, guest_dir = root/'host', root/'guest'
+        host_dir.mkdir(mode=0o700)
+        models = host_dir/'models'
+        models.mkdir()
+        shutil.copyfile(model, models/model.name)
+        env = {**os.environ, 'LD_LIBRARY_PATH':str(runtime/'bin'),
+               'NODEXLM_API_KEY':'inference-'+'c'*48}
+        # Prevent shell-local credentials overriding the generated Host identity.
+        env.pop('NODEXLM_ADMIN_TOKEN', None)
+        env.pop('NODEXLM_JOIN_TOKEN', None)
+        lan_port, web_port, discovery_port = port(), port(), port()
+        base = f'http://127.0.0.1:{web_port}'
+        log_path = root/'host.log'
+        log = log_path.open('w+')
+        guest_log = (root/'guest.log').open('w+')
+        try:
+            host = subprocess.Popen([str(CLI),'host','--dir',str(host_dir),
+                '--addr',f'127.0.0.1:{lan_port}','--web-addr',f'127.0.0.1:{web_port}',
+                '--discovery-port',str(discovery_port),'--llama-bin',str(runtime/'bin/llama-server')],
+                env=env,stdout=log,stderr=log)
+            processes.append(host)
+            code = wait_for(lambda: re.search(r'PAIRING CODE: ([A-Z0-9]{8})',log_path.read_text()))[1]
+            subprocess.run([str(CLI),'join','--dir',str(guest_dir),'--name','e2e-guest',
+                '--server',f'https://127.0.0.1:{lan_port}','--code',code],env=env,check=True,capture_output=True,timeout=20)
+            token = json.loads((host_dir/'secrets.json').read_text())['admin']
+
+            def api(path, method='GET', body=None, key=token):
+                data = None if body is None else json.dumps(body).encode()
+                request = urllib.request.Request(base+path,method=method,data=data,
+                    headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'})
+                return urllib.request.urlopen(request,timeout=120)
+
+            rpc = next(p for p in [runtime/'bin/ggml-rpc-server',runtime/'bin/rpc-server'] if p.exists())
+            guest = subprocess.Popen([str(CLI),'rpc-node','--dir',str(guest_dir),'--rpc-bin',str(rpc)],
+                env=env,stdout=guest_log,stderr=guest_log)
+            processes.append(guest)
+            nodes = wait_for(lambda: [n for n in json.load(api('/v1/nodes')) if n['runtime']['rpc_ready']])
+            # Exercise the benchmark marker through a genuine enrolled TLS tunnel.
+            measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
+            assert measurement['mib_per_second'] > 0
+            settings = json.load(api('/api/status'))['settings']
+            settings.update(model=model.name,distributed=True,context_tokens=256,threads=2)
+            api('/api/settings','PUT',settings).close()
+            api('/api/load','POST',{}).close()
+            def loaded():
+                state = json.load(api('/api/status'))['runtime']
+                if state.get('error'):
+                    raise AssertionError(state['error'])
+                return state['loaded']
+            wait_for(loaded,120)
+            listed = json.load(api('/v1/models',key=env['NODEXLM_API_KEY']))
+            assert listed['data'][0]['id'] == model.name
+            chunks = []
+            with api('/v1/chat/completions','POST',{'model':model.name,'messages':[
+                    {'role':'user','content':'Once upon a time'}],'max_tokens':8,'stream':True},key=env['NODEXLM_API_KEY']) as stream:
+                assert stream.headers['Content-Type'].startswith('text/event-stream')
+                done = False
+                for line in stream:
+                    if line.startswith(b'data: '):
+                        payload = line[6:].strip()
+                        if payload == b'[DONE]':
+                            done = True
+                            break
+                        data = json.loads(payload)
+                        assert 'error' not in data, data
+                        chunks.append(data)
+            assert done and chunks, 'Missing token stream or DONE'
+            # An inference key must not access administrative resources.
+            try:
+                api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])
+                raise AssertionError('inference key allowed administration')
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 401
+            if os.environ.get('NODEXLM_UI_CHECK'):
+                subprocess.run(['node',os.environ['NODEXLM_UI_CHECK'],base,token],check=True,timeout=90)
+            print('PASS: real pairing, TLS benchmark, native RPC placement, tiny GGUF, OpenAI SSE and restricted API key')
+        finally:
+            for process in reversed(processes):
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            log.close()
+            guest_log.close()
+            if any(p.returncode not in (0,-15) for p in processes):
+                print(log_path.read_text()[-12000:])
+                print((root/'guest.log').read_text()[-6000:])
+
+
+if __name__ == '__main__':
+    main()

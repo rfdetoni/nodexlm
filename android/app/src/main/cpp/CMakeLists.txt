@@ -60,9 +60,11 @@ if(ANDROID_ABI STREQUAL "armeabi-v7a")
     set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 endif()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/revision.json" NODEXLM_LLAMA_REVISION)
+string(JSON NODEXLM_LLAMA_COMMIT GET "${NODEXLM_LLAMA_REVISION}" commit)
 FetchContent_Declare(llamacpp
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
-    GIT_TAG 2bc46baa9207d098d03741ac394e7faaf1a955b6
+    GIT_TAG ${NODEXLM_LLAMA_COMMIT}
     GIT_SHALLOW FALSE
 )
 FetchContent_MakeAvailable(llamacpp)

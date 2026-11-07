@@ -196,7 +196,7 @@ func FetchUntrustedOffer(ctx context.Context, endpoint string) (Offer, []byte, e
 	}
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: 3 * time.Second},
-		Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}, // #nosec G402 -- no secrets; authenticated by VerifyOffer before use.
+		Config:    &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}, // #nosec G402 -- no secrets; authenticated by VerifyOffer before use.
 	}
 	conn, err := dialer.DialContext(ctx, "tcp", u.Host)
 	if err != nil {

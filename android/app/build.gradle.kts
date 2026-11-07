@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+val llamaRevision = groovy.json.JsonSlurper().parse(file("../../internal/llamaruntime/revision.json")) as Map<*, *>
 val releaseKeystore = System.getenv("NODEXLM_ANDROID_KEYSTORE_FILE")
 val releaseStorePassword = System.getenv("NODEXLM_ANDROID_STORE_PASSWORD")
 val releaseKeyAlias = System.getenv("NODEXLM_ANDROID_KEY_ALIAS")
@@ -11,10 +12,12 @@ val hasReleaseSigning = listOf(
 ).all { !it.isNullOrBlank() }
 
 android {
+    buildFeatures { buildConfig = true }
     namespace = "dev.nodexlm.app"
     compileSdk = 35
     ndkVersion = "27.2.12479018"
     defaultConfig {
+        buildConfigField("String", "LLAMA_VERSION", "\"${llamaRevision["version"]}\"")
         applicationId = "dev.nodexlm.app"
         minSdk = 29 // Android 10 (API 29) and newer
         targetSdk = 35
@@ -23,7 +26,7 @@ android {
         // Both common smartphone ABIs: 32-bit Android 10 and 64-bit Android 10+.
         // Android loads only its matching library from the universal APK.
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
-        externalNativeBuild { cmake { cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden") } }
+        externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"; cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden") } }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
     signingConfigs {

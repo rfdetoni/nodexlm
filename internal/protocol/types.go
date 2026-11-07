@@ -15,7 +15,10 @@ type ChatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
 	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Temperature float64   `json:"temperature,omitempty"`
+	Temperature float64   `json:"temperature"`
+	TopP        *float64  `json:"top_p,omitempty"`
+	Stop        Stop      `json:"stop,omitempty"`
+	Priority    int       `json:"priority,omitempty"`
 	Stream      bool      `json:"stream,omitempty"`
 	TargetNode  string    `json:"target_node,omitempty"`
 }
@@ -28,6 +31,7 @@ type GPUDevice struct {
 }
 
 type RuntimeCapability struct {
+	Benchmark bool   `json:"benchmark,omitempty"`
 	Engine    string `json:"engine,omitempty"`
 	Version   string `json:"version,omitempty"`
 	Installed bool   `json:"installed"`

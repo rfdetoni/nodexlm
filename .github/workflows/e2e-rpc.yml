@@ -1,0 +1,46 @@
+name: Real RPC end-to-end
+
+# Explicit dispatch keeps native model tests out of routine PR/build minutes.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nodexlm-real-rpc-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  distributed:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Download pinned native runtime and tiny test model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib,urllib.request
+          revision=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())
+          downloads=[
+              ('rpc.tar.gz',f'https://github.com/rfdetoni/nodexlm/releases/download/{revision["rpc_release"]}/nodexlm-rpc_{revision["version"]}_linux_amd64_cpu.tar.gz',revision['published']['linux/amd64/cpu']),
+              ('tiny.gguf','https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf','270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d')]
+          for name,url,digest in downloads:
+              with urllib.request.urlopen(url,timeout=60) as response:
+                  data=response.read(64*1024*1024+1)
+              assert len(data)<=64*1024*1024 and hashlib.sha256(data).hexdigest()==digest,name
+              pathlib.Path(name).write_bytes(data)
+          PY
+          mkdir native
+          tar --no-same-owner -xzf rpc.tar.gz -C native
+          go build -o nodexlm ./cmd/nodexlm
+      - name: Pair real Guest, place model layers and stream tokens
+        env:
+          NODEXLM_RPC_DIR: ${{ github.workspace }}/native
+          NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
+        run: python3 scripts/e2e-rpc.py

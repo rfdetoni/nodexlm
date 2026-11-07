@@ -8,7 +8,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"github.com/rfdetoni/nodexlm/internal/catalog"
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
@@ -22,15 +22,18 @@ import (
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/requestlog"
 )
 
 //go:embed static/*
 var static embed.FS
 
 type Dashboard struct {
-	Manager *Manager
-	Cluster *coordinator.Server
-	admin   [32]byte
+	Manager    *Manager
+	Cluster    *coordinator.Server
+	admin      [32]byte
+	apiKey     [32]byte
+	apiEnabled bool
 }
 
 func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dashboard {
@@ -38,6 +41,7 @@ func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dash
 }
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w) }))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -65,6 +69,14 @@ func (d *Dashboard) Handler() http.Handler {
 		b, _ := static.ReadFile("static/styles.css")
 		_, _ = w.Write(b)
 	})
+	mux.HandleFunc("GET /api/plan", d.api(func(w http.ResponseWriter, r *http.Request) {
+		plan, err := d.Manager.Plan()
+		if err != nil {
+			failure(w, 400, err)
+			return
+		}
+		reply(w, 200, plan)
+	}))
 	mux.HandleFunc("GET /api/status", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"runtime": d.Manager.State(), "settings": d.Manager.Settings(), "download": d.Manager.DownloadState()})
 	}))
@@ -105,6 +117,10 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, items)
 	}))
+	mux.HandleFunc("DELETE /api/download", d.api(func(w http.ResponseWriter, r *http.Request) {
+		d.Manager.CancelDownload()
+		reply(w, 202, map[string]string{"status": "cancelling"})
+	}))
 	mux.HandleFunc("GET /api/download", d.api(func(w http.ResponseWriter, r *http.Request) { reply(w, 200, d.Manager.DownloadState()) }))
 	mux.HandleFunc("POST /api/download", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -139,31 +155,18 @@ func (d *Dashboard) Handler() http.Handler {
 		reply(w, 202, d.Manager.State())
 	}))
 	mux.HandleFunc("POST /api/unload", d.api(func(w http.ResponseWriter, r *http.Request) { d.Manager.Unload(); reply(w, 200, d.Manager.State()) }))
-	mux.HandleFunc("POST /api/chat", d.api(func(w http.ResponseWriter, r *http.Request) {
-		var in protocol.ChatRequest
-		if !decode(w, r, &in) {
-			return
+
+	mux.HandleFunc("POST /api/chat", d.api(d.chat))
+	mux.HandleFunc("POST /v1/chat/completions", d.inference(d.chat))
+	mux.HandleFunc("GET /v1/models", d.inference(func(w http.ResponseWriter, r *http.Request) {
+		models := []any{}
+		if name, ok := d.Manager.State()["model"].(string); ok && name != "" {
+			models = append(models, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "nodexlm"})
 		}
-		if len(in.Messages) < 1 || len(in.Messages) > 64 || in.MaxTokens < 0 || in.MaxTokens > 4096 || in.Stream {
-			failure(w, 400, errors.New("invalid chat request"))
-			return
-		}
-		for _, m := range in.Messages {
-			if m.Role != "user" && m.Role != "assistant" && m.Role != "system" || len(m.Content) > 65536 {
-				failure(w, 400, errors.New("invalid chat message"))
-				return
-			}
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
-		defer cancel()
-		out, err := d.Manager.Generate(ctx, in)
-		if err != nil {
-			failure(w, 502, err)
-			return
-		}
-		reply(w, 200, map[string]string{"answer": out})
+		reply(w, 200, map[string]any{"object": "list", "data": models})
 	}))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	return requestlog.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dashboard access is exclusively via loopback; use an SSH tunnel for remote management.
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
@@ -186,12 +189,12 @@ func (d *Dashboard) Handler() http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		if strings.HasPrefix(r.URL.Path, "/v1/") {
+		if strings.HasPrefix(r.URL.Path, "/v1/") && r.URL.Path != "/v1/models" && r.URL.Path != "/v1/chat/completions" {
 			d.Cluster.Handler().ServeHTTP(w, r)
 			return
 		}
 		mux.ServeHTTP(w, r)
-	})
+	}))
 }
 func (d *Dashboard) api(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -233,4 +236,29 @@ func reply(w http.ResponseWriter, code int, v any) {
 }
 func failure(w http.ResponseWriter, code int, err error) {
 	reply(w, code, map[string]string{"error": err.Error()})
+}
+
+// SetAPIKey configures a credential restricted to inference endpoints. Call before serving.
+func (d *Dashboard) SetAPIKey(key string) error {
+	if len(key) < 32 {
+		return fmt.Errorf("API key must contain at least 32 characters")
+	}
+	digest := sha256.Sum256([]byte(key))
+	if subtle.ConstantTimeCompare(digest[:], d.admin[:]) == 1 {
+		return fmt.Errorf("API key must differ from admin token")
+	}
+	d.apiKey = digest
+	d.apiEnabled = true
+	return nil
+}
+func (d *Dashboard) inference(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		value := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		hash := sha256.Sum256([]byte(value))
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || (subtle.ConstantTimeCompare(hash[:], d.admin[:]) != 1 && !(d.apiEnabled && subtle.ConstantTimeCompare(hash[:], d.apiKey[:]) == 1)) {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		next(w, r)
+	}
 }

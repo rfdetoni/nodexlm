@@ -1,0 +1,8 @@
+{
+  "version": "b12143",
+  "commit": "2bc46baa9207d098d03741ac394e7faaf1a955b6",
+  "rpc_release": "nodexlm-rpc-b12143-r2",
+  "published": {
+    "linux/amd64/cpu": "17d10d9ac1864c86c5f6378a072ea7a38c2171e88ffe4639669c9688ca951bd9"
+  }
+}

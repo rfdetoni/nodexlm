@@ -33,7 +33,7 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	if !ok {
 		return ErrTunnelUnavailable
 	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: u.Hostname()}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: u.Hostname()}
 	if transport.TLSClientConfig != nil {
 		cfg = transport.TLSClientConfig.Clone()
 		cfg.ServerName = u.Hostname()
@@ -102,6 +102,10 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	marker, err := reader.ReadByte()
 	if err != nil {
 		return err
+	}
+	if marker == 2 {
+		_ = secured.SetDeadline(time.Now().Add(15 * time.Second))
+		return echoBenchmark(reader, secured)
 	}
 	if marker != 1 {
 		return errors.New("invalid RPC relay handshake")

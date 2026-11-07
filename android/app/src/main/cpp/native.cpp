@@ -190,7 +190,8 @@ Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
 // Mode: auto = GPU + CPU when available else CPU; cpu = CPU only;
 // gpu = Vulkan only; hybrid = Vulkan + CPU (requires Vulkan).
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue) {
+Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jint port) {
+    if(port < 1024 || port > 65535) return env->NewStringUTF("Invalid RPC port");
     if(threads < 1 || threads > 8)
         return env->NewStringUTF("RPC CPU threads must be between 1 and 8");
     const std::string mode = utf(env, modeValue);
@@ -223,9 +224,10 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
         devices.size(),gpu?"yes":"no",cpu?"yes":"no");
     try {
-        std::thread([threads, devices] {
+        std::thread([threads, devices, port] {
             try {
-                ggml_backend_rpc_start_server("127.0.0.1:50052", nullptr,
+                const std::string address = "127.0.0.1:" + std::to_string(port);
+                ggml_backend_rpc_start_server(address.c_str(), nullptr,
                     static_cast<size_t>(threads), devices.size(),
                     const_cast<ggml_backend_dev_t*>(devices.data()));
             } catch(const std::exception& e) {

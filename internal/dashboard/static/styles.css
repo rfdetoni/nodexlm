@@ -39,3 +39,12 @@
 .download-bar{border-radius:10px;overflow:hidden}
 .download-bar::-webkit-progress-value{background:#63b9eb}
 .download-bar::-moz-progress-bar{background:#63b9eb}
+
+:root{--scrollbar-thumb:#53677d;--scrollbar-track:#121820}
+*{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track)}
+*::-webkit-scrollbar{width:10px;height:10px}*::-webkit-scrollbar-track{background:var(--scrollbar-track)}*::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:5px}*::-webkit-scrollbar-thumb:hover{background:#8294aa}
+button:focus-visible{outline:2px solid #8bc8ff;outline-offset:3px}button:active{filter:brightness(.9)}button:disabled{cursor:not-allowed}
+dialog{max-width:min(480px,calc(100vw - 28px));color:#e1e6ed;background:#191f27;border:1px solid #53677d;border-radius:15px;padding:24px}dialog::backdrop{background:#0009}
+#chatOutput{max-height:480px;overflow-y:auto;scrollbar-gutter:stable}#chatMetrics{min-height:1.6em}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media(forced-colors:active){*{scrollbar-color:auto}button:focus-visible{outline-color:Highlight}}

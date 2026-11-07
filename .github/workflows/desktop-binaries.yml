@@ -15,6 +15,7 @@ on:
       - 'go.sum'
       - 'scripts/test-dashboard-models.cjs'
       - 'scripts/test-install.sh'
+      - 'scripts/sbom.py'
       - 'install.sh'
     tags:
       - 'v*'
@@ -100,6 +101,7 @@ jobs:
           (cd dist && sha256sum nodexlm_* > SHA256SUMS.txt)
           test "$(find dist -name 'nodexlm_*.tar.gz' -o -name 'nodexlm_*.zip' | wc -l)" -eq 7
           cat dist/SHA256SUMS.txt
+          python3 scripts/sbom.py --directory dist --version "$version" --commit "$GITHUB_SHA" --go-version "$(go env GOVERSION)"
       - name: Attest release binaries (SLSA provenance)
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:

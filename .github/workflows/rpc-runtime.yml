@@ -21,6 +21,18 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 70
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Load pinned upstream revision
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib
+          revision=json.loads(pathlib.Path("internal/llamaruntime/revision.json").read_text())
+          with open(os.environ["GITHUB_ENV"],"a") as env:
+              for key,value in {"LLAMA_VERSION":revision["version"],"LLAMA_COMMIT":revision["commit"],"RPC_RELEASE":revision["rpc_release"]}.items():
+                  env.write(f"{key}={value}\n")
+          PY
       - name: Toolchain
         run: |
           set -euo pipefail
@@ -29,8 +41,8 @@ jobs:
       - name: Fetch and verify pinned upstream source
         run: |
           set -euo pipefail
-          git clone --quiet --depth=1 --branch b12143 https://github.com/ggml-org/llama.cpp.git llama-source
-          test "$(git -C llama-source rev-parse HEAD)" = "2bc46baa9207d098d03741ac394e7faaf1a955b6"
+          git clone --quiet --depth=1 --branch "$LLAMA_VERSION" https://github.com/ggml-org/llama.cpp.git llama-source
+          test "$(git -C llama-source rev-parse HEAD)" = "$LLAMA_COMMIT"
       - name: Build matched static CPU RPC pair
         shell: bash
         run: |
@@ -39,6 +51,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_RPC=ON \
             -DGGML_NATIVE=OFF \
+            -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF \
             -DGGML_OPENMP=OFF \
             -DBUILD_SHARED_LIBS=OFF \
             -DLLAMA_CURL=OFF \
@@ -82,7 +95,7 @@ jobs:
           done
           cp llama-source/LICENSE staging/LICENSE.llama.cpp
           chmod 755 staging/bin/llama-server "staging/bin/$rpc"
-          archive='nodexlm-rpc_b12143_linux_amd64_cpu.tar.gz'
+          archive="nodexlm-rpc_${LLAMA_VERSION}_linux_amd64_cpu.tar.gz"
           tar -czf "dist/$archive" -C staging bin LICENSE.llama.cpp
           (cd dist && sha256sum "$archive" > SHA256SUMS.txt)
           cat dist/SHA256SUMS.txt
@@ -93,7 +106,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag=nodexlm-rpc-b12143-r2
+          tag="$RPC_RELEASE"
           # New immutable release fixes GGML SONAME packaging in the first build.
           # Do not overwrite a pinned runtime release with an unreviewed build.
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then

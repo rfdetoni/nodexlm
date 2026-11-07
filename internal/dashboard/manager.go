@@ -4,18 +4,16 @@ package dashboard
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
 	urlpath "path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,16 +41,18 @@ type Settings struct {
 }
 
 type Download struct {
-	Name     string `json:"name"`
-	Received int64  `json:"received"`
-	Total    int64  `json:"total"`
-	Status   string `json:"status"`
-	Error    string `json:"error,omitempty"`
+	ShardCount int    `json:"shard_count,omitempty"`
+	Name       string `json:"name"`
+	Received   int64  `json:"received"`
+	Total      int64  `json:"total"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
 }
 
 type Manager struct {
 	mu                    sync.Mutex
 	chatMu                sync.Mutex
+	admission             chan struct{}
 	dir, modelDir, binary string
 	settings              Settings
 	engine                *local.Managed
@@ -66,6 +66,7 @@ type Manager struct {
 	generationCancel      context.CancelFunc
 	download              *Download
 	cancel                context.CancelFunc
+	downloadDone          chan struct{}
 	httpClient            *http.Client
 	rpcEndpoints          func() []RPCGuest
 }
@@ -77,7 +78,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err := os.MkdirAll(modelDir, 0700); err != nil {
 		return nil, err
 	}
-	m := &Manager{dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: max(1, runtime.NumCPU()-1), ContextTokens: 2048, GPULayers: "auto"}}
+	m := &Manager{admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, runtime.NumCPU()-1)), ContextTokens: 2048, GPULayers: "auto"}}
 	b, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
 	if err == nil {
 		if err = json.Unmarshal(b, &m.settings); err != nil {
@@ -132,8 +133,7 @@ func (m *Manager) validate(s Settings) error {
 		return errors.New("invalid runtime limits or conflicting MoE settings")
 	}
 	if s.GPULayers != "auto" && s.GPULayers != "all" {
-		var n int
-		if _, err := fmt.Sscanf(s.GPULayers, "%d", &n); err != nil || n < 0 || n > 1024 || fmt.Sprint(n) != s.GPULayers {
+		if parsed, err := strconv.Atoi(s.GPULayers); err != nil || parsed < 0 || parsed > 1024 || fmt.Sprint(parsed) != s.GPULayers {
 			return errors.New("invalid gpu_layers")
 		}
 	}
@@ -201,6 +201,7 @@ func modelPath(dir, name string) (string, error) {
 	}
 	return path, nil
 }
+
 // StartLoad starts an expensive model preparation outside the HTTP request.
 // The dashboard polls /api/status for its phase and any failure.
 func (m *Manager) StartLoad() error {
@@ -388,33 +389,25 @@ func (m *Manager) Unload() {
 	}
 }
 func (m *Manager) Generate(ctx context.Context, req protocol.ChatRequest) (string, error) {
-	m.chatMu.Lock()
-	defer m.chatMu.Unlock()
-	m.mu.Lock()
-	engine := m.engine
-	model := m.current
-	if engine == nil {
-		m.mu.Unlock()
-		return "", errors.New("no model loaded")
-	}
-	generationCtx, cancel := context.WithCancel(ctx)
-	m.generationCancel = cancel
-	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		m.generationCancel = nil
-		m.mu.Unlock()
-		cancel()
-	}()
-	req.Model = model
-	return engine.Generate(generationCtx, req)
+
+	var answer string
+	err := m.withGeneration(ctx, req, func(ctx context.Context, engine *local.Managed, req protocol.ChatRequest) error {
+		var err error
+		answer, err = engine.Generate(ctx, req)
+		return err
+	})
+	return answer, err
 }
 func (m *Manager) Close() {
 	m.mu.Lock()
+	done := m.downloadDone
 	if m.cancel != nil {
 		m.cancel()
 	}
 	m.mu.Unlock()
+	if done != nil {
+		<-done
+	}
 	m.Unload()
 }
 func (m *Manager) StartDownload(urlText, name string) error {
@@ -456,10 +449,12 @@ func (m *Manager) StartDownload(urlText, name string) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	m.download = &Download{Name: name, Status: "downloading"}
+	m.downloadDone = make(chan struct{})
+	m.download = &Download{Name: name, Status: "downloading", ShardCount: len(parts)}
 	go m.downloadModel(ctx, u.String(), path, name)
 	return nil
 }
+
 // downloadModel stages every shard before publishing anything to the models
 // directory. If a part fails, no incomplete model can become selectable.
 func (m *Manager) downloadModel(ctx context.Context, source, destination, name string) {
@@ -467,11 +462,22 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 	errorText := ""
 	defer func() {
 		m.mu.Lock()
+		if ctx.Err() != nil {
+			status = "cancelled"
+		}
 		m.download.Status = status
 		m.download.Error = errorText
 		m.cancel = nil
+		close(m.downloadDone)
+		m.downloadDone = nil
 		m.mu.Unlock()
 	}()
+	release, err := safedownload.LockTransfer(safedownload.StagePath(m.modelDir, source) + ".lock")
+	if err != nil {
+		errorText = err.Error()
+		return
+	}
+	defer release()
 	sourceURL, err := url.Parse(source)
 	if err != nil {
 		errorText = err.Error()
@@ -482,12 +488,12 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 		errorText = err.Error()
 		return
 	}
-	stage, err := os.MkdirTemp(m.modelDir, ".nodexlm-model-")
+	stage := safedownload.StagePath(m.modelDir, source) + ".d"
+	err = os.MkdirAll(stage, 0700)
 	if err != nil {
 		errorText = err.Error()
 		return
 	}
-	defer os.RemoveAll(stage)
 	const limit int64 = 150 << 30
 	var received int64
 	for _, shard := range shards {
@@ -534,118 +540,32 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 	m.download.Total = received
 	m.mu.Unlock()
 	status = "completed"
+	_ = os.RemoveAll(stage)
 }
 
 // fetchModelPart streams one bounded shard to a private staging file. A
 // Hugging Face LFS SHA-256 header is verified whenever it is provided.
 func (m *Manager) fetchModelPart(ctx context.Context, source, target string, offset, limit int64) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
-	if err != nil {
-		return 0, err
-	}
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("download HTTP %d", resp.StatusCode)
-	}
-	if resp.ContentLength > limit-offset {
-		return 0, errors.New("model exceeds 150 GiB limit")
-	}
-	if offset == 0 && resp.ContentLength > 0 {
-		m.mu.Lock()
-		m.download.Total = resp.ContentLength
-		m.mu.Unlock()
-	}
-	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return 0, err
-	}
-	defer file.Close()
-	sum := sha256.New()
-	writer := &countWriter{w: io.MultiWriter(file, sum), update: func(n int64) {
+	return safedownload.Fetch(ctx, m.httpClient, source, target, limit-offset, func(n, total int64) {
 		m.mu.Lock()
 		m.download.Received = offset + n
+		if total > 0 && m.download.ShardCount <= 1 {
+			m.download.Total = offset + total
+		} else {
+			m.download.Total = 0
+		}
 		m.mu.Unlock()
-	}}
-	_, err = io.Copy(writer, io.LimitReader(resp.Body, limit-offset+1))
-	if err != nil {
-		return 0, err
-	}
-	if writer.n > limit-offset || resp.ContentLength >= 0 && writer.n != resp.ContentLength {
-		return 0, errors.New("incomplete or oversized GGUF part")
-	}
-	if expected, ok := safedownload.ExpectedSHA256(resp.Header); ok &&
-		subtle.ConstantTimeCompare(sum.Sum(nil), expected) != 1 {
-		return 0, errors.New("GGUF LFS SHA-256 mismatch")
-	}
-	if err = file.Sync(); err != nil {
-		return 0, err
-	}
-	var magic [4]byte
-	if err = file.Close(); err != nil {
-		return 0, err
-	}
-	opened, err := os.Open(target)
-	if err != nil {
-		return 0, err
-	}
-	_, err = io.ReadFull(opened, magic[:])
-	_ = opened.Close()
-	if err != nil || string(magic[:]) != "GGUF" {
-		return 0, errors.New("invalid GGUF shard header")
-	}
-	return writer.n, nil
+	})
 }
 
 // publishModelPart is exclusive even on filesystems that do not implement
 // hard links. O_EXCL prevents overwriting a concurrently created model.
-func publishModelPart(stage, target string) error {
-	if err := os.Link(stage, target); err == nil {
-		return nil
-	} else if errors.Is(err, os.ErrExist) {
-		return err
-	}
-	source, err := os.Open(stage)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	dest, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(dest, source)
-	if copyErr == nil {
-		copyErr = dest.Sync()
-	}
-	closeErr := dest.Close()
-	if copyErr != nil || closeErr != nil {
-		_ = os.Remove(target)
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	}
-	return nil
-}
+func publishModelPart(stage, target string) error { return catalog.PublishFile(stage, target) }
 
-type countWriter struct {
-	w      io.Writer
-	n      int64
-	update func(int64)
-	last   time.Time
-}
-
-func (c *countWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	if time.Since(c.last) >= 250*time.Millisecond {
-		c.update(c.n)
-		c.last = time.Now()
+func (m *Manager) CancelDownload() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cancel != nil {
+		m.cancel()
 	}
-	return n, err
 }
-

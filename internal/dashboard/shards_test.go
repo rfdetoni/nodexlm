@@ -24,7 +24,7 @@ func (t modelTestTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 func TestDashboardDownloadsCompleteGGUFShards(t *testing.T) {
 	testCases := []struct {
-		name string
+		name       string
 		failSecond bool
 	}{
 		{name: "complete"},
@@ -100,4 +100,3 @@ func TestShardDownloadRejectsCustomName(t *testing.T) {
 		t.Fatal("custom first shard name would break llama.cpp automatic part discovery")
 	}
 }
-

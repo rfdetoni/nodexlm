@@ -8,16 +8,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"strings"
 	"errors"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"time"
 )
 
 var excluded = []netip.Prefix{
+	netip.MustParsePrefix("64:ff9b::/96"), // NAT64 may embed a private IPv4 address
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2001::/32"), // Teredo
+	netip.MustParsePrefix("2002::/16"), // 6to4
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT / private overlays
 	netip.MustParsePrefix("192.0.0.0/24"),

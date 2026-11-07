@@ -42,6 +42,8 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	if err != nil {
 		return fmt.Errorf("native RPC listen address unavailable: %w", err)
 	}
+	listen = probe.Addr().String()
+	_, port, _ = net.SplitHostPort(listen)
 	_ = probe.Close()
 	// The native GGML RPC server is always restricted to loopback.
 	cmd := exec.CommandContext(ctx, executable, "--host", host, "--port", port)

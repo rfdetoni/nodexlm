@@ -11,6 +11,7 @@ on:
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/**'
+      - 'internal/llamaruntime/revision.json'
     tags:
       - 'v*'
 

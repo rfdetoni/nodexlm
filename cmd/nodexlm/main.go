@@ -5,8 +5,8 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -42,6 +42,9 @@ import (
 var version = "0.1.0-alpha"
 
 func main() {
+	if os.Getenv("NODEXLM_LOG_FORMAT") == "json" {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	}
 	if err := run(os.Args[1:]); err != nil {
 		slog.Error("nodexlm", "error", err)
 		os.Exit(1)
@@ -56,6 +59,10 @@ func run(args []string) error {
 	case "version":
 		fmt.Println("nodexlm", version)
 		return nil
+	case "doctor":
+		return doctor(args[1:])
+	case "bench":
+		return bench(args[1:])
 	case "cert":
 		return cert(args[1:])
 	case "web-token":
@@ -96,6 +103,8 @@ func run(args []string) error {
 
 const usage = `NodexLM — privacy-first distributed local inference
 
+  nodexlm doctor [--json]            # diagnose local configuration and runtime
+  nodexlm bench --node NODE_ID       # benchmark an idle authenticated Guest tunnel
   nodexlm cert --hosts 127.0.0.1,localhost,192.168.1.10
   nodexlm host                       # HTTPS host + LAN discovery + Web UI on localhost:8787
   nodexlm host --web-addr off        # headless without the Web UI
@@ -225,7 +234,7 @@ func serve(args []string) error {
 		}
 		fmt.Printf("\nNODEXLM PAIRING CODE: %s\nAvailable for 10 minutes on the same local network.\n\n", code)
 	}
-	srv := &http.Server{Addr: *addr, Handler: s.LANHandler(), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	srv := &http.Server{Addr: *addr, Handler: s.LANHandler(), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	var webServer *http.Server
 	var manager *dashboard.Manager
 	var webListener net.Listener
@@ -264,25 +273,36 @@ func serve(args []string) error {
 			return fmt.Errorf("Web UI listen: %w", err)
 		}
 		defer webListener.Close()
-		webServer = &http.Server{Handler: dashboard.New(manager, s, adminToken).Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+		webUI := dashboard.New(manager, s, adminToken)
+		if key := os.Getenv("NODEXLM_API_KEY"); key != "" {
+			if key == joinToken {
+				return errors.New("API key must differ from join token")
+			}
+			if err := webUI.SetAPIKey(key); err != nil {
+				return err
+			}
+		}
+		webServer = &http.Server{Handler: webUI.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 		go func() {
 			if err := webServer.Serve(webListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("Web UI failed", "error", err)
 			}
 		}()
 		slog.Info("Web management ready", "url", "http://"+webListener.Addr().String(), "auth", "run nodexlm web-token on host")
-        _, webPort, _ := net.SplitHostPort(webListener.Addr().String())
-        fmt.Printf("\n  Painel Web (somente neste computador): http://localhost:%s\n  Token de acesso: nodexlm web-token\n\n", webPort)
+		_, webPort, _ := net.SplitHostPort(webListener.Addr().String())
+		fmt.Printf("\n  Painel Web (somente neste computador): http://localhost:%s\n  Token de acesso: nodexlm web-token\n\n", webPort)
 	}
 	c, cancel := ctx()
 	defer cancel()
 	go s.Cleanup(c)
 	endpoints := pairing.LocalEndpoints(*addr)
-    if len(endpoints)>0 {
-        fmt.Println("  Endereços HTTPS do Host para os Guests:")
-        for _, address := range endpoints { fmt.Println("   ", address) }
-        fmt.Println()
-    }
+	if len(endpoints) > 0 {
+		fmt.Println("  Endereços HTTPS do Host para os Guests:")
+		for _, address := range endpoints {
+			fmt.Println("   ", address)
+		}
+		fmt.Println()
+	}
 	go func() {
 		if err := pairing.ListenDiscovery(c, *discoveryPort, func() []pairing.Offer { return s.Offers(endpoints) }); err != nil && c.Err() == nil {
 			slog.Error("LAN discovery unavailable", "error", err)
@@ -349,8 +369,8 @@ func join(args []string) error {
 		nodeName, _ = os.Hostname()
 	}
 	d := hardware.Collect(nodeName, nil)
-    // Record measured Ubuntu RAM/VRAM on initial enrollment, not only after
-    // the first RPC heartbeat. Runtime availability is still checked at use.
+	// Record measured Ubuntu RAM/VRAM on initial enrollment, not only after
+	// the first RPC heartbeat. Runtime availability is still checked at use.
 	if *model != "" {
 		d.Models = []string{*model}
 	}
@@ -457,51 +477,70 @@ func join(args []string) error {
 // guest discovers and securely pairs with the Host before starting a native
 // distributed RPC Guest. The code proves TLS identity; no admin token is used.
 func guest(args []string) error {
-    f := fs("guest")
-    server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
-    name := f.String("name", "", "display name of this Guest")
-    code := f.String("code", "", "8-character pairing code; prompted when absent")
-    dir := f.String("dir", config.DefaultDir(), "Guest configuration directory")
-    backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
-    bin := f.String("rpc-bin", "", "matching rpc-server executable")
-    address := f.String("rpc-addr", "127.0.0.1:50052", "loopback RPC address")
-    tunnels := f.Int("tunnels", 8, "concurrent secured tunnels (1-8)")
-    discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "LAN UDP discovery port")
-    if err := f.Parse(args); err != nil { return err }
-    if f.NArg() != 0 { return errors.New("unexpected Guest arguments") }
-    if _, err := config.ReadAgent(*dir); err != nil {
-        if !errors.Is(err, os.ErrNotExist) { return fmt.Errorf("Guest credentials: %w", err) }
-        if *server == "" {
-            fmt.Println("Procurando Hosts na rede local...")
-            discoveryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-            offers, e := pairing.Discover(discoveryCtx, *discoveryPort, 3*time.Second)
-            cancel()
-            if e == nil && len(offers)>0 {
-                fmt.Println("Hosts encontrados (a identidade será verificada pelo código):")
-                seen:=map[string]bool{}
-                for _,offer:=range offers {
-                    if !seen[offer.Endpoint] { fmt.Println("  "+offer.Endpoint);seen[offer.Endpoint]=true }
-                }
-            } else {
-                fmt.Println("Nenhum Host detectado; use --server https://IP:8443 se necessário.")
-            }
-        }
-        options:=[]string{"--dir",*dir,"--discovery-port",fmt.Sprint(*discoveryPort)}
-        if *server!="" {options=append(options,"--server",*server)}
-        if *name!="" {options=append(options,"--name",*name)}
-        if *code!="" {options=append(options,"--code",*code)}
-        if err := join(options); err != nil { return err }
-    } else {
-        fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
-    }
-    fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
-    options:=[]string{"--dir",*dir,"--backend",*backend,"--rpc-addr",*address,"--tunnels",fmt.Sprint(*tunnels)}
-    if *bin!="" {options=append(options,"--rpc-bin",*bin)}
-    return rpcNode(options)
+	f := fs("guest")
+	server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
+	name := f.String("name", "", "display name of this Guest")
+	code := f.String("code", "", "8-character pairing code; prompted when absent")
+	dir := f.String("dir", config.DefaultDir(), "Guest configuration directory")
+	backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
+	bin := f.String("rpc-bin", "", "matching rpc-server executable")
+	address := f.String("rpc-addr", "127.0.0.1:0", "loopback RPC address (random port by default)")
+	tunnels := f.Int("tunnels", 8, "concurrent secured tunnels (1-8)")
+	discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "LAN UDP discovery port")
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	if f.NArg() != 0 {
+		return errors.New("unexpected Guest arguments")
+	}
+	if _, err := config.ReadAgent(*dir); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("Guest credentials: %w", err)
+		}
+		if *server == "" {
+			fmt.Println("Procurando Hosts na rede local...")
+			discoveryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			offers, e := pairing.Discover(discoveryCtx, *discoveryPort, 3*time.Second)
+			cancel()
+			if e == nil && len(offers) > 0 {
+				fmt.Println("Hosts encontrados (a identidade será verificada pelo código):")
+				seen := map[string]bool{}
+				for _, offer := range offers {
+					if !seen[offer.Endpoint] {
+						fmt.Println("  " + offer.Endpoint)
+						seen[offer.Endpoint] = true
+					}
+				}
+			} else {
+				fmt.Println("Nenhum Host detectado; use --server https://IP:8443 se necessário.")
+			}
+		}
+		options := []string{"--dir", *dir, "--discovery-port", fmt.Sprint(*discoveryPort)}
+		if *server != "" {
+			options = append(options, "--server", *server)
+		}
+		if *name != "" {
+			options = append(options, "--name", *name)
+		}
+		if *code != "" {
+			options = append(options, "--code", *code)
+		}
+		if err := join(options); err != nil {
+			return err
+		}
+	} else {
+		fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
+	}
+	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
+	options := []string{"--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels)}
+	if *bin != "" {
+		options = append(options, "--rpc-bin", *bin)
+	}
+	return rpcNode(options)
 }
 func newPairing(args []string) error {
 	f := fs("pairing")
-	server := f.String("server", "https://127.0.0.1:8443", "host coordinator")
+	server := f.String("server", "http://127.0.0.1:8787", "loopback management API")
 	ca := f.String("ca", "", "trusted certificate (optional)")
 	dir := f.String("dir", config.DefaultDir(), "local coordinator configuration directory")
 	if err := f.Parse(args); err != nil {
@@ -515,7 +554,7 @@ func newPairing(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *ca == "" {
+	if *ca == "" && strings.HasPrefix(*server, "https://") {
 		pem, err := os.ReadFile(filepath.Join(*dir, "server.crt"))
 		if err != nil {
 			return errors.New("--ca is required when renewing a remote coordinator")
@@ -609,7 +648,7 @@ func node(args []string) error {
 }
 func nodes(args []string) error {
 	f := fs("nodes")
-	server := f.String("server", "https://127.0.0.1:8443", "coordinator")
+	server := f.String("server", "http://127.0.0.1:8787", "loopback management API")
 	ca := f.String("ca", "", "certificate")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -630,7 +669,7 @@ func nodes(args []string) error {
 }
 func revoke(args []string) error {
 	f := fs("revoke")
-	server := f.String("server", "https://127.0.0.1:8443", "coordinator")
+	server := f.String("server", "http://127.0.0.1:8787", "loopback management API")
 	ca := f.String("ca", "", "trusted certificate")
 	id := f.String("id", "", "node ID to revoke")
 	if err := f.Parse(args); err != nil {
@@ -654,7 +693,7 @@ func revoke(args []string) error {
 
 func chat(args []string) error {
 	f := fs("chat")
-	server := f.String("server", "https://127.0.0.1:8443", "coordinator")
+	server := f.String("server", "http://127.0.0.1:8787", "loopback management API")
 	ca := f.String("ca", "", "certificate")
 	model := f.String("model", "", "model")
 	prompt := f.String("prompt", "", "prompt")
@@ -762,7 +801,7 @@ func rpcNode(args []string) error {
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
-	addr := f.String("rpc-addr", "127.0.0.1:50052", "native RPC loopback address")
+	addr := f.String("rpc-addr", "127.0.0.1:0", "native RPC loopback address (random port by default)")
 	slots := f.Int("tunnels", 8, "simultaneous secured RPC tunnels (1-8)")
 	ca := f.String("ca", "", "Host certificate for legacy enrollment")
 	if err := f.Parse(args); err != nil {
@@ -806,32 +845,35 @@ func rpcNode(args []string) error {
 	defer cancel()
 	// A lightweight heartbeat informs the Host of real hardware availability.
 	name, _ := os.Hostname()
-    heartbeat := func() {
-        profile := hardware.Collect(name, nil)
-        profile.Runtime.Installed = true
-        profile.Runtime.Version = llamaruntime.Version
-        beatCtx, stop := context.WithTimeout(c, 8*time.Second)
-        defer stop()
-        _, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
-        if err != nil {
-            slog.Warn("Guest RAM/VRAM heartbeat failed", "error", err,
-                "ram_bytes", profile.RAMBytes, "available_ram_bytes", profile.AvailableRAMBytes,
-                "gpus", len(profile.GPUs))
-        } else if profile.RAMBytes == 0 {
-            slog.Warn("Ubuntu Guest RAM could not be measured; check /proc/meminfo access")
-        }
-    }
-    // Report immediately, before the first RPC tunnel begins serving layers.
-    heartbeat()
-    go func() {
-        tick := time.NewTicker(30 * time.Second)
-        defer tick.Stop()
-        for {
-            select {
-            case <-c.Done(): return
-            case <-tick.C: heartbeat()
-            }
-        }
-    }()
+	heartbeat := func() {
+		profile := hardware.Collect(name, nil)
+		profile.Runtime.Installed = true
+		profile.Runtime.Benchmark = true
+		profile.Runtime.Version = llamaruntime.Version
+		beatCtx, stop := context.WithTimeout(c, 8*time.Second)
+		defer stop()
+		_, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+		if err != nil {
+			slog.Warn("Guest RAM/VRAM heartbeat failed", "error", err,
+				"ram_bytes", profile.RAMBytes, "available_ram_bytes", profile.AvailableRAMBytes,
+				"gpus", len(profile.GPUs))
+		} else if profile.RAMBytes == 0 {
+			slog.Warn("Ubuntu Guest RAM could not be measured; check /proc/meminfo access")
+		}
+	}
+	// Report immediately, before the first RPC tunnel begins serving layers.
+	heartbeat()
+	go func() {
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-c.Done():
+				return
+			case <-tick.C:
+				heartbeat()
+			}
+		}
+	}()
 	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots)
 }

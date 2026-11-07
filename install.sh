@@ -69,6 +69,10 @@ else
   fail 'sha256sum, shasum or openssl is required for checksum verification'
 fi
 [ "$expected" = "$actual" ] || fail 'SHA-256 mismatch: download rejected'
+if [ "${NODEXLM_VERIFY_PROVENANCE:-0}" = 1 ]; then
+  command -v gh >/dev/null 2>&1 || fail 'GitHub CLI is required to verify release provenance'
+  gh attestation verify "$tmp_dir/$archive" --repo rfdetoni/nodexlm || fail 'release provenance verification failed'
+fi
 
 # Release packages always contain a top-level nodexlm executable.
 # Inspect paths to avoid extracting unexpected files or traversal entries.

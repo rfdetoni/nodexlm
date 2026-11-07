@@ -52,10 +52,12 @@ class RpcGuestService : Service() {
         const val EXTRA_MODE = "mode"
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
-        private const val PORT = 50052
+
         private const val TUNNELS = 8
     }
 
+    private var rpcPort = 0
+    private lateinit var energyPolicy: EnergyPolicy
     private val running = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
@@ -74,6 +76,8 @@ class RpcGuestService : Service() {
             return START_NOT_STICKY
         }
         if (!running.compareAndSet(false, true)) return START_NOT_STICKY
+        val energy = getSharedPreferences("nodexlm", MODE_PRIVATE)
+        energyPolicy = EnergyPolicy(energy.getBoolean("rpc_only_charging", false),energy.getInt("rpc_min_battery",15),energy.getInt("rpc_start_hour",0),energy.getInt("rpc_end_hour",0))
         val endpoint = intent.getStringExtra(EXTRA_ENDPOINT) ?: ""
         val node = intent.getStringExtra(EXTRA_NODE) ?: ""
         val token = try { NodeSecrets.read(this) } catch (e: Exception) {
@@ -105,7 +109,9 @@ class RpcGuestService : Service() {
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
                 val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
-                val message = NativeRpc.start(threads, mode)
+                checkThermalsAndBattery()
+                rpcPort = java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { it.localPort }
+                val message = NativeRpc.start(threads, mode, rpcPort)
                 check(message.isEmpty()) { message }
                 awaitNativeRPC()
                 val sslContext = pinnedSSLContext()
@@ -144,7 +150,12 @@ class RpcGuestService : Service() {
                 }
             } catch (e: Throwable) {
                 Log.e(LOG, "RPC Guest cannot start", e)
+                val reason = e.message ?: "Falha ao iniciar Guest RPC"
                 shutdown()
+                getSystemService(NotificationManager::class.java).notify(44,
+                    Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_notify_error)
+                        .setContentTitle("NodexLM · Guest RPC interrompido")
+                        .setContentText(reason).setStyle(Notification.BigTextStyle().bigText(reason)).build())
             }
         }
         return START_NOT_STICKY
@@ -190,13 +201,12 @@ class RpcGuestService : Service() {
         }
         val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
         val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        if (percent in 1..15) {
-            val state = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-            val charging = state == BatteryManager.BATTERY_STATUS_CHARGING ||
-                state == BatteryManager.BATTERY_STATUS_FULL
-            check(charging) { "Battery low; stopping background RPC Guest" }
-        }
+        val state = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = state == BatteryManager.BATTERY_STATUS_CHARGING || state == BatteryManager.BATTERY_STATUS_FULL
+        val reason = energyPolicy.pauseReason(percent, charging, java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
+        check(reason == null) { reason ?: "Energy policy requires stopping the Guest" }
+
     }
 
     private fun sleepWhileRunning(duration: Long) {
@@ -212,7 +222,7 @@ class RpcGuestService : Service() {
         repeat(60) {
             if (!running.get()) error("Guest stopped")
             try {
-                Socket().use { it.connect(InetSocketAddress("127.0.0.1", PORT), 250) }
+                Socket().use { it.connect(InetSocketAddress("127.0.0.1", rpcPort), 250) }
                 return
             } catch (_: Exception) { sleepWhileRunning(200) }
         }
@@ -253,6 +263,7 @@ class RpcGuestService : Service() {
                 })
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
+                .put("benchmark", true)
                 .put("rpc_ready", false))
         val connection = java.net.URL(endpoint.trimEnd('/') + "/v1/nodes/heartbeat")
             .openConnection() as HttpsURLConnection
@@ -329,11 +340,30 @@ class RpcGuestService : Service() {
                 "Host denied RPC tunnel: ${status.take(120)}"
             }
             remote.soTimeout = 0
-            check(remote.inputStream.read() == 1) { "Missing Host RPC relay marker" }
+            val marker = remote.inputStream.read()
+            if (marker == 2) {
+                remote.soTimeout = 15_000
+                val input = java.io.DataInputStream(remote.inputStream)
+                repeat(2) {
+                    val length = input.readInt()
+                    require(length in 1..(1 shl 20)) { "Invalid benchmark length" }
+                    val buffer = ByteArray(16 * 1024)
+                    var remaining = length
+                    while (remaining > 0) {
+                        val n = input.read(buffer, 0, minOf(remaining, buffer.size))
+                        check(n > 0) { "Incomplete benchmark" }
+                        remote.outputStream.write(buffer, 0, n)
+                        remaining -= n
+                    }
+                    remote.outputStream.flush()
+                }
+                return
+            }
+            check(marker == 1) { "Missing Host RPC relay marker" }
             val local = track(Socket())
             try {
                 local.keepAlive = true
-                local.connect(InetSocketAddress("127.0.0.1", PORT), 3000)
+                local.connect(InetSocketAddress("127.0.0.1", rpcPort), 3000)
                 // The two copy loops do not parse or modify the llama.cpp RPC
                 // protocol. The TLS session is pinned to the previously paired Host.
                 val sender = thread(name = "nodexlm-rpc-stream-up", isDaemon = true) {

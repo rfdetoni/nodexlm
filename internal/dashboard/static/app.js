@@ -47,7 +47,7 @@ function renderDownload(download) {
  for(const id of ['downloadProgress','catalogDownloadProgress']) {
   const area=$(id); if(!area)continue; area.replaceChildren();
   if(!download)continue;
-  const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':'Falhou';
+  const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':download.status==='cancelled'?'Interrompido':'Falhou';
   area.append(el('div','download-label',label+' · '+download.name));
   if(download.status==='downloading') {
    const bar=el('progress','download-bar');
@@ -56,6 +56,7 @@ function renderDownload(download) {
    bar.setAttribute('aria-label','Progresso do download de '+download.name);
    area.append(bar);
    const percent=download.total>0?Math.min(100,Math.floor(download.received*100/download.total))+'%':'Tamanho desconhecido';
+   area.append(action('Interromper download','secondary',()=>api('/api/download','DELETE')));
    area.append(el('small','muted',fmt(download.received)+(download.total>0?' / '+fmt(download.total):'')+' · '+percent));
   }else if(download.error) area.append(el('small','muted',download.error));
  }
@@ -67,7 +68,7 @@ async function applyModel(name) {
   const status=await api('/api/status');
   const s=status.settings;
   if(status.runtime.loaded && s.model===name){notice('Este modelo já está carregado.');return;}
-  if(status.runtime.loaded && !confirm('Descarregar o modelo atual para aplicar '+name+'?'))return;
+  if(status.runtime.loaded && !await confirmAction('Descarregar o modelo atual para aplicar '+name+'?','Descarregar'))return;
   notice('Aplicando '+name+'...');
   if(status.runtime.loaded)await api('/api/unload','POST',{});
   const config=settingsInitialized?settingsFromForm(name):{...s,model:name};
@@ -184,7 +185,7 @@ async function refresh(){
  const gpus=Array.isArray(n.gpus)?n.gpus:[];
  const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
  const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
- const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');const btn=document.createElement('button');btn.className='secondary';btn.textContent='Revogar';btn.addEventListener('click',async()=>{if(!confirm('Revogar acesso de '+n.name+'?'))return;try{await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh();}catch(e){notice(e.message)}});td.append(btn);tr.append(td);tbody.append(tr)}
+ const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');const btn=document.createElement('button');btn.className='secondary';btn.textContent='Revogar';btn.addEventListener('click',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;try{await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh();}catch(e){notice(e.message)}});td.append(btn);tr.append(td);tbody.append(tr)}
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -193,15 +194,78 @@ async function refresh(){
  }
 }
 async function guard(action){try{await action();}catch(e){notice(e.message)}}
-$('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').value.trim();guard(async()=>{await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();await refresh();notice('Conectado')})});
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';setupAuth()});
+
+let chatController=null;
+let chatHistory=[];
+try {if(typeof localStorage!=='undefined'){
+ const saved=JSON.parse(localStorage.getItem('nodexlm-chat')||'[]');
+ if(Array.isArray(saved))chatHistory=saved.filter(m=>m&&['user','assistant'].includes(m.role)&&typeof m.content==='string'&&m.content.length<=65536).slice(-62);
+}}catch { /* Unavailable or damaged browser storage must not break chat. */ }
+function saveChat(){try{localStorage.setItem('nodexlm-chat',JSON.stringify(chatHistory))}catch{notice('Não foi possível salvar o histórico neste navegador.')}}
+function renderChat(){const output=$('chatOutput');output.replaceChildren();for(const message of chatHistory){output.append(el('strong','',message.role==='user'?'Você':'NodexLM'),el('p','',message.content))}}
+function confirmAction(text,label){
+ const dialog=$('confirmation');$('confirmationText').textContent=text;$('confirmAction').textContent=label;
+ return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.returnValue='cancel';dialog.showModal()});
+}
+async function sendChat(){
+ if(chatController)return;
+ const prompt=$('prompt').value.trim();if(!prompt)return;
+ const model=latestStatus?.runtime?.model;if(!model)throw Error('Carregue um modelo antes de conversar.');
+ const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
+ const start=performance.now();let first=null;let answer='';let usage=null;let done=false;let reader;
+ renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');output.append(reply);
+ try{
+  const response=await fetch('/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({model,messages:[...chatHistory.slice(-62),{role:'user',content:prompt}],temperature:+$('chatTemperature').value,max_tokens:+$('chatTokens').value,stream:true})});
+  if(!response.ok){const text=await response.text();let message=text;try{message=JSON.parse(text).error||text}catch{}throw Error(message)}
+  reader=response.body.getReader();const decoder=new TextDecoder();let pending='';
+  while(!done){
+   const part=await reader.read();pending+=decoder.decode(part.value||new Uint8Array(),{stream:!part.done}).replace(/\r\n/g,'\n');
+   if(pending.length>1048576)throw Error('Resposta do modelo excede o limite.');
+   let boundary;
+   while((boundary=pending.indexOf('\n\n'))>=0){
+    const frame=pending.slice(0,boundary);pending=pending.slice(boundary+2);
+    const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
+    if(!data)continue;if(data==='[DONE]'){done=true;break}
+    const event=JSON.parse(data);if(event.error)throw Error(event.error.message||event.error);
+    if(event.usage)usage=event.usage;
+    const text=event.choices?.[0]?.delta?.content||'';
+    if(text){if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer}
+   }
+   if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
+  }
+  if(controller.signal.aborted)return;
+  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();$('prompt').value='';
+  if(!answer)reply.textContent='Resposta vazia.';
+  const elapsed=(performance.now()-start)/1000;
+  $('chatMetrics').textContent='Tempo: '+elapsed.toFixed(2)+' s'+(first!==null?' · Primeiro token: '+((first-start)/1000).toFixed(2)+' s':'')+(usage?.completion_tokens?' · '+(usage.completion_tokens/elapsed).toFixed(1)+' tokens/s':'');
+ }catch(error){
+  const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;
+  if(!answer)reply.textContent=message;if(!controller.signal.aborted)notice(message);
+ }finally{
+  if(reader)await reader.cancel().catch(()=>{});
+  if(chatController===controller)chatController=null;$('sendChat').disabled=false;$('stopChat').disabled=true;
+ }
+}
+$('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').value.trim();guard(async()=>{await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await refresh();notice('Conectado')})});
+$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';chatController?.abort();chatHistory=[];$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',{model:$('modelSelect').value,threads:+$('threads').value,context_tokens:+$('contextTokens').value,gpu_layers:$('gpuLayers').value,moe_cpu:$('moeCPU').checked,distributed:$('distributed').checked,moe_cpu_layers:+$('moeCPULayers').value,moe_cache_mib:+$('moeCache').value});notice('Configuração salva');settingsInitialized=false;await refresh()})});
 $('load').addEventListener('click',()=>guard(async()=>{await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
 $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
 $('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pairing/start','POST',{});$('pairCode').hidden=false;$('pairCode').textContent=p.code+' · válido por '+p.expires_in;notice('Código renovado')}));
-$('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{const prompt=$('prompt').value;$('chatOutput').textContent='Gerando resposta...';const result=await api('/api/chat','POST',{messages:[{role:'user',content:prompt}],max_tokens:512});$('chatOutput').textContent=result.answer})});
+$('previewPlan').addEventListener('click',()=>guard(async()=>{
+ const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas'));
+ for(const node of plan.nodes)area.append(el('p','',node.endpoint+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));
+ area.append(el('p','muted',plan.notice));
+}));
+$('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
+$('stopChat').addEventListener('click',()=>chatController?.abort());
+$('clearChat').addEventListener('click',()=>guard(async()=>{
+ if(!await confirmAction('Apagar o histórico de conversas salvo neste navegador?','Apagar histórico'))return;
+ chatController?.abort();chatHistory=[];saveChat();renderChat();$('chatMetrics').textContent='Histórico apagado.';
+}));
+
 setupAuth();if(token)guard(refresh);
 setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)},10000);
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.

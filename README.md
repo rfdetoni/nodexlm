@@ -1,5 +1,7 @@
 # NodexLM
 
+[English](README.en.md) · [Operação e API](docs/OPERATIONS.md)
+
 **Cluster local de inferência com GGUF, Host, Guests e distribuição de camadas por RPC.**
 
 O NodexLM usa o [llama.cpp](https://github.com/ggml-org/llama.cpp) para executar modelos de linguagem em uma rede local. Um Host coordena os dispositivos; Guests Linux, Windows, macOS e Android podem disponibilizar recursos computacionais, conforme a compatibilidade do backend.

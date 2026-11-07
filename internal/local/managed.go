@@ -19,8 +19,8 @@ import (
 
 	"github.com/rfdetoni/nodexlm/internal/config"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
-	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/process"
+	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
 
 // Managed is a lazy local llama-server owner. It keeps GGUF tensors out of
@@ -53,24 +53,10 @@ func (m *Managed) Load(ctx context.Context) error {
 }
 
 func (m *Managed) Generate(ctx context.Context, request protocol.ChatRequest) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.idleTimer != nil {
-		m.idleTimer.Stop()
-		m.idleTimer = nil
-	}
-	if err := m.ensure(ctx); err != nil {
-		return "", err
-	}
-	text, err := m.endpoint.Generate(ctx, request)
-	if m.KeepLoaded {
-		// Explicitly loaded by the dashboard; only /unload releases its memory.
-	} else if m.Idle <= 0 {
-		m.stopLocked()
-	} else {
-		m.idleTimer = time.AfterFunc(m.Idle, func() { m.mu.Lock(); defer m.mu.Unlock(); m.stopLocked() })
-	}
-	return text, err
+
+	var answer string
+	err := m.withEndpoint(ctx, func(engine *Engine) error { var err error; answer, err = engine.Generate(ctx, request); return err })
+	return answer, err
 }
 func (m *Managed) ensure(ctx context.Context) error {
 	if m.started != nil {

@@ -21,6 +21,7 @@ import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Spinner
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -186,6 +187,24 @@ class MainActivity : Activity() {
                     startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                 }
             } catch (e: Exception) { setStatus("Abra as configurações do sistema para permitir atividade em segundo plano") }
+        })
+        val onlyCharging = CheckBox(this).apply { text = "Guest RPC somente enquanto carrega"; isChecked = prefs.getBoolean("rpc_only_charging", false) }
+        settings.addView(onlyCharging)
+        val minimum = field(settings,"Bateria mínima (%)",prefs.getInt("rpc_min_battery",15).toString())
+        val startHour = field(settings,"Hora inicial (0–23)",prefs.getInt("rpc_start_hour",0).toString())
+        val endHour = field(settings,"Hora final (0–23; igual à inicial = dia inteiro)",prefs.getInt("rpc_end_hour",0).toString())
+        listOf(minimum,startHour,endHour).forEach { it.inputType = android.text.InputType.TYPE_CLASS_NUMBER }
+        settings.addView(action("Salvar perfil de energia") {
+            val min = minimum.text.toString().toIntOrNull()
+            val from = startHour.text.toString().toIntOrNull()
+            val until = endHour.text.toString().toIntOrNull()
+            if (min == null || min !in 5..95 || from == null || from !in 0..23 || until == null || until !in 0..23) {
+                setStatus("Informe bateria entre 5 e 95% e horas entre 0 e 23")
+            } else {
+                prefs.edit().putBoolean("rpc_only_charging",onlyCharging.isChecked).putInt("rpc_min_battery",min)
+                    .putInt("rpc_start_hour",from).putInt("rpc_end_hour",until).apply()
+                setStatus("Perfil salvo. Reinicie o Guest RPC para aplicar.")
+            }
         })
         settings.addView(action("Verificar atualizações") {updateManager.check(manual=true)})
         settings.addView(action("Licenças de terceiros") {

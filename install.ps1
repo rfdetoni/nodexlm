@@ -4,7 +4,8 @@
 param(
     [ValidateSet('edge','stable')]
     [string]$Channel = 'edge',
-    [string]$InstallDir = ''
+    [string]$InstallDir = '',
+    [switch]$VerifyProvenance
 )
 
 Set-StrictMode -Version Latest
@@ -45,6 +46,11 @@ try {
         $expected = $Matches[1].ToLowerInvariant()
         $actual = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -cne $expected) { throw 'SHA-256 mismatch: download rejected' }
+        if ($VerifyProvenance) {
+            if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'GitHub CLI is required to verify release provenance' }
+            & gh attestation verify $archivePath --repo rfdetoni/nodexlm
+            if ($LASTEXITCODE -ne 0) { throw 'Release provenance verification failed' }
+        }
         # Explicitly reject unexpected ZIP entries before extraction, including
         # absolute paths, traversals, nested directories and alternate streams.
         Add-Type -AssemblyName System.IO.Compression

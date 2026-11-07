@@ -1,0 +1,8 @@
+.git
+upload
+nodexlm
+models
+*.gguf
+*.log
+android
+desktop

@@ -60,7 +60,9 @@ def main():
         execute('cert', '--hosts', '127.0.0.1,localhost', env=env)
         coord_port = port()
         server = f'https://127.0.0.1:{coord_port}'
-        service = subprocess.Popen([str(CLI), 'coordinator', '--addr', f'127.0.0.1:{coord_port}'], env=env,
+        web_port = port()
+        admin_server = f'http://127.0.0.1:{web_port}'
+        service = subprocess.Popen([str(CLI), 'coordinator', '--addr', f'127.0.0.1:{coord_port}', '--web-addr', f'127.0.0.1:{web_port}'], env=env,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         node = None
         try:
@@ -68,7 +70,7 @@ def main():
                 if service.poll() is not None:
                     raise AssertionError('coordinator quit on startup')
                 try:
-                    execute('nodes','--server',server,'--ca',str(d/'server.crt'),env=env,timeout=2)
+                    execute('nodes','--server',admin_server,env=env,timeout=2)
                     break
                 except Exception:
                     time.sleep(.15)
@@ -77,7 +79,8 @@ def main():
             execute('join','--server',server,'--ca',str(d/'server.crt'),'--name','sample-linux', '--model','test.gguf',env=env)
             node = subprocess.Popen([str(CLI),'node','--model','test.gguf','--backend',f'http://127.0.0.1:{backend_port}',
                                      '--ca',str(d/'server.crt')],env=env, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            out = execute('chat','--server',server,'--ca',str(d/'server.crt'),'--model','test.gguf','--prompt','Hello Nodex',env=env,timeout=20)
+            node_id = json.loads((d/'agent.json').read_text())['node']['node_id']
+            out = execute('chat','--server',admin_server,'--node',node_id,'--model','test.gguf','--prompt','Hello Nodex',env=env,timeout=20)
             assert out.strip()=='READY FROM WORKER',out
             print('PASS: HTTPS -> enroll -> lease -> local backend -> job result -> chat')
         finally:

@@ -4,12 +4,9 @@ package catalog
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -61,12 +58,25 @@ func safeName(name string) bool {
 // DownloadFile imports the complete GGUF set when filename references the
 // first shard. It never leaves a partially published set after failure.
 func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, name string, progress func(int64, int64)) (string, error) {
+
+	remote, err := ModelURL(repository, filename)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return "", err
+	}
+	release, err := safedownload.LockTransfer(safedownload.StagePath(directory, remote) + ".lock")
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	parts, err := ShardNames(path.Base(filename))
 	if err != nil {
 		return "", err
 	}
 	if len(parts) == 1 {
-		return h.downloadSingle(ctx, repository, filename, directory, name, progress)
+		return h.downloadSingle(ctx, repository, filename, directory, name, 150<<30, progress)
 	}
 	if name != "" && name != parts[0] {
 		return "", errors.New("sharded GGUF destination must use the original first-shard filename")
@@ -82,7 +92,7 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 		if dir != "" {
 			location = path.Join(dir, shard)
 		}
-		target, err := h.downloadSingle(ctx, repository, location, directory, shard, func(n, total int64) {
+		target, err := h.downloadSingle(ctx, repository, location, directory, shard, (150<<30)-received, func(n, total int64) {
 			if progress != nil {
 				progress(received+n, -1)
 			}
@@ -110,7 +120,7 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 }
 
 // downloadSingle stages and checks one GGUF without buffering model weights.
-func (h Hub) downloadSingle(ctx context.Context, repository, filename, directory, name string, progress func(int64, int64)) (string, error) {
+func (h Hub) downloadSingle(ctx context.Context, repository, filename, directory, name string, limit int64, progress func(int64, int64)) (string, error) {
 	remote, err := ModelURL(repository, filename)
 	if err != nil {
 		return "", err
@@ -130,85 +140,16 @@ func (h Hub) downloadSingle(ctx context.Context, repository, filename, directory
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	file, err := os.CreateTemp(directory, ".nodexlm-hub-*.part")
-	if err != nil {
+
+	stage := safedownload.StagePath(directory, remote)
+	if _, err := safedownload.Fetch(ctx, h.Client, remote, stage, limit, progress); err != nil {
 		return "", err
 	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-	if err := file.Chmod(0600); err != nil {
+	if err := PublishFile(stage, destination); err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remote, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "NodexLM/0.1 (GGUF downloader)")
-	client := h.Client
-	if client == nil {
-		client = safedownload.Client()
-	}
-	res, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Hugging Face download HTTP %d", res.StatusCode)
-	}
-	const limit int64 = 150 << 30
-	if res.ContentLength > limit {
-		return "", errors.New("file exceeds 150 GiB")
-	}
-	var count int64
-	digest := sha256.New()
-	buf := make([]byte, 256<<10)
-	for {
-		n, readErr := res.Body.Read(buf)
-		if n > 0 {
-			count += int64(n)
-			if count > limit {
-				return "", errors.New("file exceeds 150 GiB")
-			}
-			if _, err = file.Write(buf[:n]); err != nil {
-				return "", err
-			}
-			if _, err = digest.Write(buf[:n]); err != nil {
-				return "", err
-			}
-			if progress != nil {
-				progress(count, res.ContentLength)
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return "", readErr
-		}
-		if err = ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-	if res.ContentLength >= 0 && count != res.ContentLength {
-		return "", errors.New("incomplete download")
-	}
-	if expected, ok := safedownload.ExpectedSHA256(res.Header); ok && subtle.ConstantTimeCompare(digest.Sum(nil), expected) != 1 {
-		return "", errors.New("download SHA-256 does not match repository metadata")
-	}
-	if err = verifyGGUF(file); err != nil {
-		return "", err
-	}
-	if err = file.Sync(); err != nil {
-		return "", err
-	}
-	if err = file.Close(); err != nil {
-		return "", err
-	}
-	// Do not overwrite a model that was created concurrently.
-	if err = publishFile(file.Name(), destination); err != nil {
-		return "", err
-	}
+	_ = os.Remove(stage)
+	_ = os.Remove(stage + ".json")
 	return destination, nil
 }
 
@@ -297,15 +238,15 @@ func importSingle(ctx context.Context, source, directory, name string) (string, 
 	if err = tmp.Close(); err != nil {
 		return "", err
 	}
-	if err = publishFile(tmp.Name(), destination); err != nil {
+	if err = PublishFile(tmp.Name(), destination); err != nil {
 		return "", err
 	}
 	return destination, nil
 }
 
-// publishFile prefers atomic hardlink publication; filesystems without links
+// PublishFile prefers atomic hardlink publication; filesystems without links
 // use a no-clobber O_EXCL copy and remove an incomplete destination on error.
-func publishFile(source, destination string) error {
+func PublishFile(source, destination string) error {
 	if err := os.Link(source, destination); err == nil {
 		return nil
 	} else if errors.Is(err, os.ErrExist) {

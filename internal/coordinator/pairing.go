@@ -120,6 +120,10 @@ func (s *Server) revokeNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(s.nodes, id)
+	select {
+	case n.signal <- struct{}{}:
+	default:
+	}
 	if err := s.saveLocked(); err != nil {
 		s.nodes[id] = n
 		fail(w, 500, "could not persist node revocation")
@@ -131,6 +135,7 @@ func (s *Server) revokeNode(w http.ResponseWriter, r *http.Request) {
 			j.Completed = &now
 			j.Status = "failed"
 			j.Error = "node authorization revoked"
+			s.notifyLocked(j.ID)
 		}
 	}
 	s.rpcHub.Remove(id)

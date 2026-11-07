@@ -13,7 +13,10 @@ import (
 )
 
 func TestPublicIPRejectsPrivateAndReservedRanges(t *testing.T) {
-	tests := []struct{ ip string; public bool }{
+	tests := []struct {
+		ip     string
+		public bool
+	}{
 		{"1.1.1.1", true},
 		{"2606:4700:4700::1111", true},
 		{"127.0.0.1", false},
@@ -50,7 +53,7 @@ func TestPublicRedirectRestrictions(t *testing.T) {
 
 func TestExpectedLFSChecksum(t *testing.T) {
 	h := http.Header{}
-	h.Set("X-Linked-Etag", "\"" + hex.EncodeToString(sha256.New().Sum(nil)) + "\"")
+	h.Set("X-Linked-Etag", "\""+hex.EncodeToString(sha256.New().Sum(nil))+"\"")
 	if b, ok := ExpectedSHA256(h); !ok || len(b) != sha256.Size {
 		t.Fatal("valid LFS hash not recognized")
 	}

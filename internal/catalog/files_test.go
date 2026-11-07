@@ -113,7 +113,6 @@ func TestCatalogIncludesOnlyCompleteShardSets(t *testing.T) {
 	}
 }
 
-
 func TestDownloadAndImportCompleteShardedSet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch filepath.Base(r.URL.Path) {

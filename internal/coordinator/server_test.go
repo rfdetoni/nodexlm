@@ -129,10 +129,10 @@ func TestRejections(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := s.Handler()
-	bad := protocol.ChatRequest{Model: "m", Messages: []protocol.Message{{Role: "user", Content: "x"}}, Stream: true}
+	bad := protocol.ChatRequest{Model: "m", Messages: []protocol.Message{{Role: "user", Content: "x"}}, Temperature: 3}
 	res := call(t, h, "POST", "/v1/jobs", adminSecret, "", bad)
 	if res.Code != 400 {
-		t.Fatalf("unimplemented stream accepted: %d", res.Code)
+		t.Fatalf("invalid temperature accepted: %d", res.Code)
 	}
 	if _, err := New("short", "short"); err == nil {
 		t.Fatal("weak secrets allowed")

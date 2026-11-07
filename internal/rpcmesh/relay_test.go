@@ -5,9 +5,9 @@ package rpcmesh
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"

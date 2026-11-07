@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/catalog"
+	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
 
 type Engine struct {
@@ -40,15 +40,15 @@ func New(backend string) (*Engine, error) {
 	return &Engine{BackendURL: strings.TrimRight(backend, "/"), HTTP: &http.Client{Timeout: 3 * time.Minute, Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConnsPerHost: 1}}}, nil
 }
 
-func (e *Engine) Generate(ctx context.Context, request protocol.ChatRequest) (string, error) {
+func (e *Engine) Complete(ctx context.Context, request protocol.ChatRequest) (json.RawMessage, error) {
 	request.Stream = false
 	data, err := json.Marshal(request)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	r, err := http.NewRequestWithContext(ctx, "POST", e.BackendURL+"/v1/chat/completions", bytes.NewReader(data))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	r.Header.Set("Content-Type", "application/json")
 	if e.APIKey != "" {
@@ -56,15 +56,34 @@ func (e *Engine) Generate(ctx context.Context, request protocol.ChatRequest) (st
 	}
 	resp, err := e.HTTP.Do(r)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("llama-server HTTP %d: %.200s", resp.StatusCode, raw)
+		return nil, fmt.Errorf("llama-server HTTP %d: %.200s", resp.StatusCode, raw)
+	}
+	var out struct {
+		Choices []struct {
+			Message protocol.Message `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	if len(out.Choices) == 0 {
+		return nil, errors.New("backend returned no choices")
+	}
+	return raw, nil
+}
+
+func (e *Engine) Generate(ctx context.Context, request protocol.ChatRequest) (string, error) {
+	raw, err := e.Complete(ctx, request)
+	if err != nil {
+		return "", err
 	}
 	var out struct {
 		Choices []struct {
@@ -73,9 +92,6 @@ func (e *Engine) Generate(ctx context.Context, request protocol.ChatRequest) (st
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return "", err
-	}
-	if len(out.Choices) == 0 {
-		return "", errors.New("backend returned no choices")
 	}
 	return out.Choices[0].Message.Content, nil
 }
@@ -122,6 +138,16 @@ func ModelSize(first string) (int64, error) {
 		}
 		if !info.Mode().IsRegular() || info.Size() < 4 || total > (1<<63-1)-info.Size() {
 			return 0, errors.New("invalid GGUF shard")
+		}
+		file, err := os.Open(filename)
+		if err != nil {
+			return 0, err
+		}
+		var magic [4]byte
+		_, readErr := io.ReadFull(file, magic[:])
+		_ = file.Close()
+		if readErr != nil || string(magic[:]) != "GGUF" {
+			return 0, errors.New("invalid GGUF shard header")
 		}
 		total += info.Size()
 	}

@@ -84,7 +84,7 @@ type ModelCandidate struct {
 	Filename   string `json:"filename"`
 	SizeBytes  uint64 `json:"size_bytes"`
 	URL        string `json:"url"`
-	ShardCount int `json:"shard_count,omitempty"`
+	ShardCount int    `json:"shard_count,omitempty"`
 }
 type Recommendation struct {
 	ModelCandidate
@@ -98,6 +98,10 @@ func Assess(s Summary, m ModelCandidate) Recommendation {
 		return result
 	}
 	// GGUF size is not the full memory footprint; leave headroom beyond model bytes.
+	if m.SizeBytes > ^uint64(0)/115 {
+		result.Reason = "Model size metadata exceeds supported range"
+		return result
+	}
 	required := m.SizeBytes * 115 / 100
 	if s.LargestNodeBudgetBytes >= required {
 		result.Placement = "single-node-candidate"
@@ -140,7 +144,11 @@ func LocalLayerCount(blocks uint32, modelBytes, hostBudget uint64, guests []uint
 	if uint64(blocks) > ^uint64(0)/max(hostBudget, uint64(1)) {
 		return 0, errors.New("layer calculation overflow")
 	}
-	local := int((uint64(blocks)*hostBudget + total/2) / total)
+	product := uint64(blocks) * hostBudget
+	local := int(product / total)
+	if product%total >= total/2+total%2 {
+		local++
+	}
 	// A distributed configuration must actually place a transformer block
 	// remotely; otherwise the Guest does no useful model computation.
 	if local >= int(blocks) {
