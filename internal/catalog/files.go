@@ -58,10 +58,59 @@ func safeName(name string) bool {
 	return safePart(name) && strings.EqualFold(filepath.Ext(name), ".gguf")
 }
 
-// DownloadFile writes a GGUF to a private staging file, validates its header,
-// and atomically renames it only after the download succeeds. It refuses to
-// replace existing models, and never holds weights in RAM.
+// DownloadFile imports the complete GGUF set when filename references the
+// first shard. It never leaves a partially published set after failure.
 func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, name string, progress func(int64, int64)) (string, error) {
+	parts, err := ShardNames(path.Base(filename))
+	if err != nil {
+		return "", err
+	}
+	if len(parts) == 1 {
+		return h.downloadSingle(ctx, repository, filename, directory, name, progress)
+	}
+	if name != "" && name != parts[0] {
+		return "", errors.New("sharded GGUF destination must use the original first-shard filename")
+	}
+	dir := path.Dir(filename)
+	if dir == "." {
+		dir = ""
+	}
+	created := make([]string, 0, len(parts))
+	var received int64
+	for _, shard := range parts {
+		location := shard
+		if dir != "" {
+			location = path.Join(dir, shard)
+		}
+		target, err := h.downloadSingle(ctx, repository, location, directory, shard, func(n, total int64) {
+			if progress != nil {
+				progress(received+n, -1)
+			}
+		})
+		if err != nil {
+			for _, previous := range created {
+				_ = os.Remove(previous)
+			}
+			return "", fmt.Errorf("shard %s: %w", shard, err)
+		}
+		created = append(created, target)
+		info, err := os.Stat(target)
+		if err != nil {
+			for _, previous := range created {
+				_ = os.Remove(previous)
+			}
+			return "", err
+		}
+		received += info.Size()
+	}
+	if progress != nil {
+		progress(received, received)
+	}
+	return created[0], nil
+}
+
+// downloadSingle stages and checks one GGUF without buffering model weights.
+func (h Hub) downloadSingle(ctx context.Context, repository, filename, directory, name string, progress func(int64, int64)) (string, error) {
 	remote, err := ModelURL(repository, filename)
 	if err != nil {
 		return "", err
@@ -156,9 +205,8 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 	if err = file.Close(); err != nil {
 		return "", err
 	}
-	// Link rather than rename, so concurrent writes cannot replace another
-	// model that appeared at destination while we were downloading.
-	if err = os.Link(file.Name(), destination); err != nil {
+	// Do not overwrite a model that was created concurrently.
+	if err = publishFile(file.Name(), destination); err != nil {
 		return "", err
 	}
 	return destination, nil
@@ -175,9 +223,35 @@ func verifyGGUF(f *os.File) error {
 	return nil
 }
 
-// ImportFile copies an existing GGUF from any manually selected location into
-// the managed model directory without following destination symlinks.
+// ImportFile accepts one GGUF or an entire complete shard set next to the
+// selected first shard. Partial imports are rolled back on failure.
 func ImportFile(ctx context.Context, source, directory, name string) (string, error) {
+	parts, err := ShardNames(filepath.Base(source))
+	if err != nil {
+		return "", err
+	}
+	if len(parts) == 1 {
+		return importSingle(ctx, source, directory, name)
+	}
+	if name != "" && name != parts[0] {
+		return "", errors.New("sharded import cannot rename individual shard files")
+	}
+	created := make([]string, 0, len(parts))
+	for _, shard := range parts {
+		location := filepath.Join(filepath.Dir(source), shard)
+		target, err := importSingle(ctx, location, directory, shard)
+		if err != nil {
+			for _, previous := range created {
+				_ = os.Remove(previous)
+			}
+			return "", fmt.Errorf("shard %s: %w", shard, err)
+		}
+		created = append(created, target)
+	}
+	return created[0], nil
+}
+
+func importSingle(ctx context.Context, source, directory, name string) (string, error) {
 	src, err := os.Open(source)
 	if err != nil {
 		return "", err
@@ -223,10 +297,42 @@ func ImportFile(ctx context.Context, source, directory, name string) (string, er
 	if err = tmp.Close(); err != nil {
 		return "", err
 	}
-	if err = os.Link(tmp.Name(), destination); err != nil {
+	if err = publishFile(tmp.Name(), destination); err != nil {
 		return "", err
 	}
 	return destination, nil
+}
+
+// publishFile prefers atomic hardlink publication; filesystems without links
+// use a no-clobber O_EXCL copy and remove an incomplete destination on error.
+func publishFile(source, destination string) error {
+	if err := os.Link(source, destination); err == nil {
+		return nil
+	} else if errors.Is(err, os.ErrExist) {
+		return err
+	}
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	if copyErr == nil {
+		copyErr = out.Sync()
+	}
+	closeErr := out.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = os.Remove(destination)
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	}
+	return nil
 }
 
 type readerWithContext struct {
