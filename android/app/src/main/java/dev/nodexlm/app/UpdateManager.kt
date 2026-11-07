@@ -194,8 +194,12 @@ class UpdateManager(private val activity: Activity) {
                 }
                 verifyAPKSigner(verified, prefs.getInt("version", -1))
 
+                // The callback (or its install worker) owns the staging
+                // file now; the verifier must not delete it before it runs.
+                staged = null
                 activity.runOnUiThread {
                     if (!activity.packageManager.canRequestPackageInstalls()) {
+                        verified.delete()
                         AlertDialog.Builder(activity)
                             .setTitle("Permitir atualização do NodexLM")
                             .setMessage("O Android exige autorização para instalar uma atualização assinada.")
@@ -217,7 +221,6 @@ class UpdateManager(private val activity: Activity) {
                                 verified.delete()
                             }
                         }
-                        staged = null // install thread now owns the verified copy
                     }
                 }
             } catch (e: Exception) {
