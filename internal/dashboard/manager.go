@@ -299,7 +299,7 @@ func (m *Manager) load(ctx context.Context) error {
 		if model.BlockCount == 0 {
 			return errors.New("model lacks GGUF block_count needed for distributed placement")
 		}
-		info, err := os.Stat(path)
+		size, err := local.ModelSize(path)
 		if err != nil {
 			return err
 		}
