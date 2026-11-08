@@ -117,4 +117,4 @@ vectors = client.embeddings.create(
 
 A aceitação exercita descoberta, autenticação, mensagens developer/partes textuais, amostragem, SSE/usage, ferramenta e retorno, argumentos incrementais, JSON Schema, clientes antigos, Responses/streaming acumulado, continuação, exclusão/store:false, agentes completos em ambos os adaptadores e embeddings em lote/base64. O E2E RPC existente continua validando o modelo distribuído e o pool.
 
-Evidência de CI da implementação: [RPC, navegador e aceitação dos SDKs aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42511231599). O fluxo usa inferência e ferramentas reais; não substitui testes em todos os modelos, clientes ou aparelhos.
+Evidência de CI da implementação: [RPC, navegador e aceitação dos SDKs aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42511723643). [Build e publicação dos sete destinos aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42511723599). O fluxo usa inferência e ferramentas reais; não substitui testes em todos os modelos, clientes ou aparelhos.
