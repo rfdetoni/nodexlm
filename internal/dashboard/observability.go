@@ -21,6 +21,8 @@ func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duratio
 	var out struct {
 		Usage struct {
 			Completion int `json:"completion_tokens"`
+			Output     int `json:"output_tokens"`
+			Input      int `json:"input_tokens"`
 			Prompt     int `json:"prompt_tokens"`
 			Details    struct {
 				Cached int `json:"cached_tokens"`
@@ -35,6 +37,12 @@ func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duratio
 		return
 	}
 	tokens := out.Usage.Completion
+	if tokens == 0 {
+		tokens = out.Usage.Output
+	}
+	if out.Usage.Prompt == 0 {
+		out.Usage.Prompt = out.Usage.Input
+	}
 	if tokens == 0 {
 		tokens = out.Timings.Tokens
 	}

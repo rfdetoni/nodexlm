@@ -14,6 +14,7 @@ import (
 // GGUFInfo describes model architecture without mapping or reading its weights.
 // Metadata is read sequentially, with bounded allocations even for tokenizer arrays.
 type GGUFInfo struct {
+	PoolingType     uint32 `json:"pooling_type,omitempty"`
 	Architecture    string `json:"architecture,omitempty"`
 	EmbeddingLength uint32 `json:"embedding_length,omitempty"`
 	HeadCount       uint32 `json:"head_count,omitempty"`
@@ -208,7 +209,7 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 		if err != nil {
 			return GGUFInfo{}, err
 		}
-		capture := key == "general.architecture" || strings.HasSuffix(key, ".expert_count") || strings.HasSuffix(key, ".expert_used_count") || strings.HasSuffix(key, ".block_count") || strings.HasSuffix(key, ".embedding_length") || strings.HasSuffix(key, ".attention.head_count") || strings.HasSuffix(key, ".attention.head_count_kv")
+		capture := strings.HasSuffix(key, ".pooling_type") || key == "general.architecture" || strings.HasSuffix(key, ".expert_count") || strings.HasSuffix(key, ".expert_used_count") || strings.HasSuffix(key, ".block_count") || strings.HasSuffix(key, ".embedding_length") || strings.HasSuffix(key, ".attention.head_count") || strings.HasSuffix(key, ".attention.head_count_kv")
 		value, text, err := g.value(kind, capture)
 		if err != nil {
 			return GGUFInfo{}, fmt.Errorf("GGUF metadata %s: %w", key, err)
@@ -237,6 +238,7 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 		}
 		result.IsMoE = result.ExpertCount > 1
 	}
+	result.PoolingType = values[result.Architecture+".pooling_type"]
 	result.EmbeddingLength = values[result.Architecture+".embedding_length"]
 	result.HeadCount = values[result.Architecture+".attention.head_count"]
 	result.KVHeadCount = values[result.Architecture+".attention.head_count_kv"]

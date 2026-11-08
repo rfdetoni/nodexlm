@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/dashboard/static/styles.css', 'internal/llamaruntime/revision.json', 'internal/local/managed.go', 'internal/pairing/**', 'scripts/hardware-acceptance.py']
+    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/dashboard/static/styles.css', 'internal/llamaruntime/revision.json', 'internal/local/managed.go', 'internal/pairing/**', 'scripts/hardware-acceptance.py', 'internal/openai/**', 'internal/dashboard/openai.go', 'internal/dashboard/handler.go', 'internal/local/openai.go', 'scripts/test-openai-sdk.py']
 permissions:
   contents: read
 concurrency:
@@ -55,6 +55,27 @@ jobs:
           NODE_PATH: ${{ runner.temp }}/browser/node_modules
           NODEXLM_UI_CHECK: ${{ github.workspace }}/scripts/test-console.cjs
         run: python3 scripts/e2e-rpc.py
+      - name: Official OpenAI SDK chat and agent acceptance
+        env:
+          NODEXLM_RPC_DIR: ${{ github.workspace }}/native
+          NODEXLM_TEST_MODEL: ${{ runner.temp }}/agent-acceptance.gguf
+          NODEXLM_TEST_EMBEDDING: ${{ runner.temp }}/embedding-acceptance.gguf
+        run: |
+          python3 -m pip install --quiet --target "$RUNNER_TEMP/openai-sdk" openai==3.46.0 openai-agents==0.24.0
+          python3 - <<'PYCODE'
+          import hashlib,os,pathlib,urllib.request
+          downloads=[
+              ('NODEXLM_TEST_MODEL','https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf','74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db'),
+              ('NODEXLM_TEST_EMBEDDING','https://huggingface.co/ggml-org/models/resolve/499bc8821c6b12b4e53c5bffcb21ec206f212d81/bert-bge-small/ggml-model-f16.gguf','f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999')]
+          for variable,url,expected in downloads:
+              path=pathlib.Path(os.environ[variable]);digest=hashlib.sha256()
+              with urllib.request.urlopen(url,timeout=90) as response,path.open('wb') as target:
+                  while data:=response.read(1024*1024):
+                      digest.update(data);target.write(data)
+                      assert target.tell()<=512*1024*1024
+              assert digest.hexdigest()==expected
+          PYCODE
+          PYTHONPATH="$RUNNER_TEMP/openai-sdk" python3 scripts/test-openai-sdk.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -2,6 +2,14 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Chat e agentes OpenAI — 2026-11-08
+
+- Contratos nativos preservados em Chat Completions, Responses, completions e embeddings: ferramentas, conteúdo textual em partes, developer, argumentos incrementais, JSON Schema e limites modernos de tokens.
+- Histórico Responses temporário isolado por credencial, continuação/consulta/exclusão e store:false; eventos nomeados e snapshot inicial compatível com acumuladores dos SDKs.
+- Tradução bidirecional de functions/function_call legados; erros estruturados e cancelamento nativo preservado.
+- Jinja explícito e ativação de modelos dedicados de embeddings por metadados de pooling. Aceitação real com SDK OpenAI 3.46.0/Agents 0.24.0, Qwen e BGE.
+- Escopo e limites documentados em docs/OPENAI_COMPATIBILITY.md; serviços hospedados OpenAI e multimodalidade não são simulados.
+
 ## Preparação de release — 2026-11-07
 
 - Identidade Android permanente com backup protegido e bootstrap de secrets sem senha nos argumentos; compilação release minificada verificada com chave de teste quando não há identidade configurada.

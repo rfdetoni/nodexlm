@@ -30,14 +30,14 @@ nodexlm bench --node NODE_ID --json
 
 ## OpenAI-compatible inference
 
-Set a distinct `NODEXLM_API_KEY` of at least 32 characters before starting the Host. This credential only accesses `/v1/models` and `/v1/chat/completions`; it cannot change configuration or pair/revoke nodes. The admin token also works. The API remains loopback-only.
+Set a distinct `NODEXLM_API_KEY` of at least 32 characters before starting the Host. This credential accesses model discovery, Chat Completions, Responses (including its own temporary history), completions, embeddings and token counting; it cannot change configuration or pair/revoke nodes. The admin token also works. The API remains loopback-only.
 
 ```sh
 export NODEXLM_API_KEY='<your-inference-key-at-least-32-characters>'
 nodexlm host
 ```
 
-Configure clients with base URL `http://127.0.0.1:8787/v1`, the inference key, and the loaded model ID. Text messages, SSE streaming, `temperature`, `top_p`, `max_tokens` and string/array `stop` are supported. Tools, images and arbitrary OpenAI fields are not supported. Disconnecting cancels the managed generation. The Web chat keeps deletable browser-local history.
+Configure clients with base URL `http://127.0.0.1:8787/v1`, the inference key, and the loaded model ID. Text chat, streamed tool calls/results, JSON Schema, Responses, token-limit aliases, sampling fields and native completion metadata are preserved. The official Python SDK and Agents SDK are exercised against real local models. Dedicated pooled GGUFs enable embeddings. Images/audio and OpenAI-hosted services are outside this local text/agent contract. See the [compatibility guide](docs/OPENAI_COMPATIBILITY.md) for limits and examples. Disconnecting cancels the managed generation. The Web chat keeps deletable browser-local history.
 
 ## Operations and validation
 

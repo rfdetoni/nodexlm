@@ -6,7 +6,7 @@ The Host serves HTTPS Guest traffic on `8443/tcp`, discovery on `46465/udp`, and
 
 `NODEXLM_HOME` selects the configuration directory. Protect it with owner-only permissions. The Host creates distinct admin and enrollment tokens in pairing mode. `nodexlm web-token` prints the local admin token. A shell's `NODEXLM_ADMIN_TOKEN` overrides the stored token; ensure it matches the running process. Do not place secrets in command-line flags or commit them.
 
-Set `NODEXLM_API_KEY` before startup to enable a separate inference-only credential (at least 32 characters, different from both admin and enrollment). It is restricted to `/v1/models` and `/v1/chat/completions`, including explicit standalone-worker targeting. This remains a loopback API; expose it only through an authenticated local tunnel. It supports text chat and the sampling fields listed in README.en.md, not the entire OpenAI API.
+Set `NODEXLM_API_KEY` before startup to enable a separate inference-only credential (at least 32 characters, different from both admin and enrollment). It is restricted to the OpenAI inference routes and response history created by the same credential. Explicit standalone-worker targeting remains text-only; Host-native inference can use RPC Guests for tools and agents. This remains a loopback API; expose it only through an authenticated local tunnel. See [OpenAI compatibility](OPENAI_COMPATIBILITY.md) for tool calls, Structured Outputs, Responses, embeddings, official SDK acceptance and explicit service/model limits.
 
 ## Downloads
 

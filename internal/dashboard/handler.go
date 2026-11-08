@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
+	compat "github.com/rfdetoni/nodexlm/internal/openai"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/requestlog"
 )
@@ -41,6 +42,8 @@ func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dash
 }
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
+	openAI := &compat.Handler{Forward: d.Manager.openAI, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference}
+	inferenceAPI := d.inference(openAI.ServeHTTP)
 	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
 	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
@@ -197,15 +200,6 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("POST /api/unload", d.api(func(w http.ResponseWriter, r *http.Request) { d.Manager.Unload(); reply(w, 200, d.Manager.State()) }))
 
 	mux.HandleFunc("POST /api/chat", d.api(d.chat))
-	mux.HandleFunc("POST /v1/chat/completions", d.inference(d.chat))
-	mux.HandleFunc("GET /v1/models", d.inference(func(w http.ResponseWriter, r *http.Request) {
-		models := []any{}
-		for _, name := range d.Manager.LoadedModels() {
-			models = append(models, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "nodexlm"})
-		}
-
-		reply(w, 200, map[string]any{"object": "list", "data": models})
-	}))
 
 	return requestlog.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dashboard access is exclusively via loopback; use an SSH tunnel for remote management.
@@ -215,13 +209,21 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		ip := net.ParseIP(host)
 		if !(strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())) {
-			http.Error(w, "localhost only", 403)
+			if compat.IsPath(r.URL.Path) {
+				compat.Error(w, 403, "API access requires loopback", "", "forbidden")
+			} else {
+				http.Error(w, "localhost only", 403)
+			}
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			if err != nil || u.Scheme != "http" || u.Host != r.Host {
-				http.Error(w, "origin rejected", 403)
+				if compat.IsPath(r.URL.Path) {
+					compat.Error(w, 403, "Origin rejected", "", "forbidden")
+				} else {
+					http.Error(w, "origin rejected", 403)
+				}
 				return
 			}
 		}
@@ -229,6 +231,10 @@ func (d *Dashboard) Handler() http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
+		if compat.IsPath(r.URL.Path) {
+			inferenceAPI(w, r)
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if strings.HasPrefix(r.URL.Path, "/v1/") && r.URL.Path != "/v1/models" && r.URL.Path != "/v1/chat/completions" {
 			d.Cluster.Handler().ServeHTTP(w, r)
@@ -246,7 +252,11 @@ func (d *Dashboard) api(next http.HandlerFunc) http.HandlerFunc {
 		}
 		digest := sha256.Sum256([]byte(strings.TrimPrefix(auth, "Bearer ")))
 		if subtle.ConstantTimeCompare(digest[:], d.admin[:]) != 1 {
-			http.Error(w, "unauthorized", 401)
+			if compat.IsPath(r.URL.Path) {
+				compat.Error(w, 401, "Invalid API key", "", "invalid_api_key")
+			} else {
+				http.Error(w, "unauthorized", 401)
+			}
 			return
 		}
 		next(w, r)
@@ -297,7 +307,11 @@ func (d *Dashboard) inference(next http.HandlerFunc) http.HandlerFunc {
 		value := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		hash := sha256.Sum256([]byte(value))
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || (subtle.ConstantTimeCompare(hash[:], d.admin[:]) != 1 && !(d.apiEnabled && subtle.ConstantTimeCompare(hash[:], d.apiKey[:]) == 1)) {
-			http.Error(w, "unauthorized", 401)
+			if compat.IsPath(r.URL.Path) {
+				compat.Error(w, 401, "Invalid API key", "", "invalid_api_key")
+			} else {
+				http.Error(w, "unauthorized", 401)
+			}
 			return
 		}
 		next(w, r)

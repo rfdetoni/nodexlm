@@ -124,6 +124,11 @@ func (m *Managed) ensure(ctx context.Context) error {
 		return fmt.Errorf("generate local inference credential: %w", err)
 	}
 	args := m.args(port, nctx, threads, gpu, meta.BlockCount)
+	// Dedicated embedding GGUFs advertise pooled output in their metadata.
+	// Each resident owns its process, so chat and embeddings can coexist.
+	if meta.PoolingType >= 1 && meta.PoolingType <= 4 {
+		args = append(args, "--embedding")
+	}
 	// Keep the native inference credential out of process argument listings.
 	cmd := exec.Command(m.Binary, args...)
 	cmd.Env = append(os.Environ(), "LLAMA_API_KEY="+apiKey)
@@ -204,7 +209,7 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 }
 
 func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []string {
-	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui"}
+	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui", "--jinja"}
 	switch {
 	case m.MoECPU:
 		args = append(args, "--cpu-moe")

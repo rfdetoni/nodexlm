@@ -46,6 +46,7 @@ O código de pareamento **não** é o token de administrador. O GGUF de um model
 - [Guia do Android: CPU e GPU](docs/GUIA_ANDROID.md)
 - [Modelos GGUF e Hugging Face](docs/GUIA_MODELOS.md)
 - [Diagnóstico e solução de problemas](docs/GUIA_DIAGNOSTICO.md)
+- [Clientes OpenAI, chat e agentes](docs/OPENAI_COMPATIBILITY.md)
 - [Pareamento e segurança](docs/PAIRING.md)
 - [Model Hub: detalhes técnicos](docs/MODEL_HUB.md)
 - [MoE e limitações](docs/MOE.md)
