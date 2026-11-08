@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func relayStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, path string, legacy bool, completed func([]byte), observe func([]byte)) (result error) {
+func relayStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, path string, legacy bool, previousResponse string, completed func([]byte), observe func([]byte)) (result error) {
 	sequence := 0
 	defer func() {
 		if result != nil && path == "/v1/responses" {
@@ -56,7 +56,7 @@ func relayStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, p
 			}
 
 			if nested := item["response"]; path == "/v1/responses" && len(nested) > 0 {
-				normalized, e := normalizeResponse(nested)
+				normalized, e := normalizeResponse(nested, previousResponse)
 				if e != nil {
 					return e
 				}

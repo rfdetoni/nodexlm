@@ -38,7 +38,8 @@ client = OpenAI(
     base_url="http://127.0.0.1:8787/v1",
     api_key=os.environ["NODEXLM_API_KEY"],
 )
-model = client.models.list().data[0].id
+print([item.id for item in client.models.list().data])
+model = "SEU_MODELO_CHAT.gguf"
 
 result = client.chat.completions.create(
     model=model,
@@ -115,3 +116,5 @@ vectors = client.embeddings.create(
 `go test -race ./...` cobre os contratos e as fronteiras; `go vet ./...` verifica o código Go. `scripts/test-openai-sdk.py` executa SDK OpenAI 3.46.0 e Agents SDK 0.24.0 contra o Host e GGUFs reais, sem chamar a nuvem OpenAI. O CI fixa revisão/SHA-256 dos modelos Qwen2.5-0.5B-Instruct e BGE e usa o bundle nativo já aprovado.
 
 A aceitação exercita descoberta, autenticação, mensagens developer/partes textuais, amostragem, SSE/usage, ferramenta e retorno, argumentos incrementais, JSON Schema, clientes antigos, Responses/streaming acumulado, continuação, exclusão/store:false, agentes completos em ambos os adaptadores e embeddings em lote/base64. O E2E RPC existente continua validando o modelo distribuído e o pool.
+
+Evidência de CI da implementação: [RPC, navegador e aceitação dos SDKs aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42511231599). O fluxo usa inferência e ferramentas reais; não substitui testes em todos os modelos, clientes ou aparelhos.

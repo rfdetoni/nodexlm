@@ -114,6 +114,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	previousResponse, _ := stringField(input, "previous_response_id")
 	var history []json.RawMessage
 	keep := false
 	if path == "/v1/responses" {
@@ -151,7 +152,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("X-Accel-Buffering", "no")
 			started = true
-			return relayStream(ctx, w, reader, path, legacy, func(body []byte) {
+			return relayStream(ctx, w, reader, path, legacy, previousResponse, func(body []byte) {
 				if keep {
 					h.remember(body, history, owner)
 				}
@@ -172,7 +173,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return errors.New("invalid or oversized runtime response")
 		}
 		if path == "/v1/responses" {
-			body, e = normalizeResponse(body)
+			body, e = normalizeResponse(body, previousResponse)
 			if e != nil {
 				return e
 			}

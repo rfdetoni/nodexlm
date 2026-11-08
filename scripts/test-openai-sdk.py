@@ -134,7 +134,7 @@ def main():
             assert client.responses.retrieve(response.id).id == response.id
             assert client.responses.input_items.list(response.id, limit=1).data
             continued = client.responses.create(model=name, previous_response_id=response.id, input='Continue.', max_output_tokens=8)
-            assert continued.output
+            assert continued.output and continued.previous_response_id == response.id
             events = list(client.responses.create(model=name, input='Once upon a time', max_output_tokens=8, stream=True))
             assert any(e.type == 'response.output_text.delta' for e in events)
             assert any(e.type in ('response.completed', 'response.incomplete') for e in events)

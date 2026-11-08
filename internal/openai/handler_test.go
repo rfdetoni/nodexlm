@@ -58,6 +58,9 @@ func TestResponsesContinuationStorageAndCredentialIsolation(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body)
 	}
+	if !strings.Contains(w.Body.String(), `"previous_response_id":"resp_1"`) {
+		t.Fatal("Response lost continuation metadata", w.Body)
+	}
 	var items []map[string]any
 	_ = json.Unmarshal(calls[1]["input"], &items)
 	if len(items) != 3 || items[1]["call_id"] != "call_1" || items[2]["output"] != "20C" {

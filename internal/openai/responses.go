@@ -171,7 +171,7 @@ func (h *Handler) savedResponse(w http.ResponseWriter, r *http.Request, owner st
 
 // Some native versions send output:null in response.created. SDK streaming
 // accumulators require an empty list before receiving output_item.added.
-func normalizeResponse(body []byte) ([]byte, error) {
+func normalizeResponse(body []byte, previousResponse string) ([]byte, error) {
 	var response map[string]json.RawMessage
 	if json.Unmarshal(body, &response) != nil || response == nil {
 		return nil, errors.New("Runtime returned an invalid response snapshot")
@@ -187,6 +187,11 @@ func normalizeResponse(body []byte) ([]byte, error) {
 		if json.Unmarshal(response["output"], &output) != nil {
 			return nil, errors.New("Runtime response output must be an array")
 		}
+	}
+	if previousResponse != "" {
+		response["previous_response_id"], _ = json.Marshal(previousResponse)
+	} else {
+		response["previous_response_id"] = json.RawMessage("null")
 	}
 	return json.Marshal(response)
 }
