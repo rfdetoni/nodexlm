@@ -134,3 +134,15 @@ func TestCancellationReachesRuntime(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(httptest.NewRecorder(), r)
 }
+
+func TestInvalidNativeResponseCannotPanicOrSucceed(t *testing.T) {
+	for _, raw := range []string{`null`, `{}`, `{"id":"resp_x","output":{}}`} {
+		h := &Handler{Forward: func(_ context.Context, _, _ string, _ []byte, receive func(int, http.Header, io.Reader) error) error {
+			return receive(200, http.Header{}, strings.NewReader(raw))
+		}}
+		w := request(h, "POST", "/v1/responses", "a", `{"model":"m","store":false,"input":"x"}`)
+		if w.Code != 502 || !strings.Contains(w.Body.String(), `"type":"server_error"`) {
+			t.Fatal(raw, w.Code, w.Body)
+		}
+	}
+}

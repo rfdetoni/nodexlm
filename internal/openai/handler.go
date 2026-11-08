@@ -172,7 +172,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return errors.New("invalid or oversized runtime response")
 		}
 		if path == "/v1/responses" {
-			body = normalizeResponse(body)
+			body, e = normalizeResponse(body)
+			if e != nil {
+				return e
+			}
 		}
 		if legacy {
 			body = legacyChatResponse(body, false)

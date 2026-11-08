@@ -56,7 +56,10 @@ func relayStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, p
 			}
 
 			if nested := item["response"]; path == "/v1/responses" && len(nested) > 0 {
-				normalized := normalizeResponse(nested)
+				normalized, e := normalizeResponse(nested)
+				if e != nil {
+					return e
+				}
 				item["response"] = normalized
 				encoded, _ := json.Marshal(item)
 				payload = string(encoded)

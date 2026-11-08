@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -170,17 +171,22 @@ func (h *Handler) savedResponse(w http.ResponseWriter, r *http.Request, owner st
 
 // Some native versions send output:null in response.created. SDK streaming
 // accumulators require an empty list before receiving output_item.added.
-func normalizeResponse(body []byte) []byte {
+func normalizeResponse(body []byte) ([]byte, error) {
 	var response map[string]json.RawMessage
-	if json.Unmarshal(body, &response) != nil {
-		return body
+	if json.Unmarshal(body, &response) != nil || response == nil {
+		return nil, errors.New("Runtime returned an invalid response snapshot")
+	}
+	id, e := stringField(response, "id")
+	if e != nil || id == "" {
+		return nil, errors.New("Runtime response is missing its ID")
 	}
 	if len(response["output"]) == 0 || string(response["output"]) == "null" {
 		response["output"] = json.RawMessage("[]")
+	} else {
+		var output []json.RawMessage
+		if json.Unmarshal(response["output"], &output) != nil {
+			return nil, errors.New("Runtime response output must be an array")
+		}
 	}
-	encoded, err := json.Marshal(response)
-	if err != nil {
-		return body
-	}
-	return encoded
+	return json.Marshal(response)
 }
