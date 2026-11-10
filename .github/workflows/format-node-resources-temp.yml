@@ -1,0 +1,33 @@
+name: Format live node resources (temporary)
+
+on:
+  push:
+    branches:
+      - feat/live-node-resources
+    paths:
+      - '.github/workflows/format-node-resources-temp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.repository == 'rfdetoni/nodexlm' && github.ref == 'refs/heads/feat/live-node-resources'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Go formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          gofmt -w internal/protocol/types.go internal/hardware/*.go             internal/coordinator/server.go internal/coordinator/guest_resources_test.go             internal/dashboard/handler.go cmd/nodexlm/main.go
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add internal/protocol/types.go internal/hardware               internal/coordinator/server.go internal/coordinator/guest_resources_test.go               internal/dashboard/handler.go cmd/nodexlm/main.go
+            git commit -m 'style: gofmt resource telemetry'
+            git push origin HEAD:feat/live-node-resources
+          fi
