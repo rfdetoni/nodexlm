@@ -49,3 +49,13 @@ Leia [Instalação](../INSTALL.md) e [diagnóstico](GUIA_DIAGNOSTICO.md).
 `nodexlm guest --rpc-device CPU` força execução CPU mesmo quando um bundle também inclui GPU. Isso é útil em VMs ou drivers que anunciam uma GPU sem suportar as operações do modelo. `--backend cpu` também seleciona CPU; em instalação automática Linux CPU, o heartbeat não oferece VRAM de uma GPU não utilizada como orçamento RPC.
 
 Em macOS, o bundle Metal inclui fallback CPU, mas a GPU paravirtual dos runners de CI não suporta todas as operações (como RMS_NORM). O teste automatizado desse bundle usa CPU e socket Unix; aceleração Metal exige hardware Apple/driver compatível.
+
+## Host rejeita heartbeat com HTTP 401
+
+O Guest possui um ID/token salvo, mas o Host atual não o reconhece (por exemplo, após revogação ou recriação do registro). Pare o Guest, gere um novo código no Host com `nodexlm pairing` e execute:
+
+```sh
+nodexlm guest --rejoin --server https://IP_DO_HOST:8443 --code CODIGO_NOVO --backend cpu
+```
+
+A opção `--rejoin` substitui `agent.json` somente depois de validar o código temporário, a identidade TLS do Host e receber novas credenciais. Uma tentativa inválida não substitui o pareamento existente. Sem `--rejoin`, credenciais existentes continuam protegidas. O comando `guest` agora verifica autorização com um heartbeat antes de baixar/iniciar o RPC, mostrando uma orientação específica se receber 401.
