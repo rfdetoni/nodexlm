@@ -21,7 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gofmt -w cmd/nodexlm/main.go internal/clusterplan/adaptive.go internal/clusterplan/adaptive_test.go internal/dashboard/manager.go internal/dashboard/plan.go internal/dashboard/selection.go internal/dashboard/selection_test.go internal/dashboard/benchmark.go internal/local/managed.go internal/local/tuning_test.go internal/rpcmesh/run.go internal/rpcmesh/run_test.go internal/rpcmesh/run_unix.go
+          gofmt -w cmd/nodexlm/main.go internal/clusterplan/adaptive.go internal/clusterplan/adaptive_test.go internal/dashboard/manager.go internal/dashboard/plan.go internal/dashboard/selection.go internal/dashboard/selection_test.go internal/dashboard/draft.go internal/dashboard/draft_test.go internal/dashboard/benchmark.go internal/local/managed.go internal/local/tuning_test.go internal/rpcmesh/run.go internal/rpcmesh/run_test.go internal/rpcmesh/run_unix.go
           if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
