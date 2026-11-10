@@ -11,6 +11,15 @@ on:
         type: boolean
         default: false
   push:
+    branches:
+      - main
+    # Only rebuild on launcher/package changes. Tag pushes are not path-filtered.
+    paths:
+      - 'android/app/src/main/res/drawable/ic_nodexlm_launcher_*.xml'
+      - 'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml'
+      - 'android/app/src/main/res/values/colors.xml'
+      - 'android/app/src/main/AndroidManifest.xml'
+      - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
 
@@ -119,7 +128,7 @@ jobs:
           fi
 
       - name: Build installable debug APK
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         working-directory: android
         shell: bash
         run: |
@@ -130,7 +139,7 @@ jobs:
             :app:assembleDebug
 
       - name: Verify debug APK and native library
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail
@@ -146,7 +155,7 @@ jobs:
           sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
 
       - name: Upload debug APK
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: nodexlm-android-debug

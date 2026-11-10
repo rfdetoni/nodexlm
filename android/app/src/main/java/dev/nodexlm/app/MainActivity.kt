@@ -8,6 +8,8 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -16,6 +18,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -24,6 +27,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -40,6 +44,10 @@ class MainActivity : Activity() {
     private lateinit var pairCode: EditText
     private lateinit var deviceName: EditText
     private lateinit var content: LinearLayout
+    private lateinit var contentScroll: ScrollView
+    private var coordinatorDraft: String? = null
+    private var pairingCodeDraft = ""
+    private var deviceNameDraft: String? = null
     private lateinit var navigation: LinearLayout
     private lateinit var library: ModelLibraryView
     private lateinit var toastStatus: TextView
@@ -49,27 +57,45 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = 0xff101720.toInt()
-        window.navigationBarColor = 0xff101720.toInt()
+        window.statusBarColor = 0xff202327.toInt()
+        window.navigationBarColor = 0xff202327.toInt()
         val base = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xff101720.toInt())
-            setPadding(dp(18),dp(18),dp(18),dp(8))
+            setBackgroundColor(0xff202327.toInt())
+            setPadding(dp(16), dp(18), dp(16), dp(16))
         }
-        base.addView(label(getString(R.string.ui_8792d2ba201f),29,true))
-        base.addView(label(getString(R.string.ui_37db6b658719),14,false))
-        space(base,14)
-        navigation=LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        base.addView(navigation)
-        space(base,12)
-        content=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL}
-        base.addView(content)
-        space(base,12)
-        toastStatus=label(getString(R.string.ui_5c8c7f7835eb),12,false)
+        val brand = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        brand.addView(ClusterMark(this), LinearLayout.LayoutParams(dp(38), dp(38)).apply { marginEnd = dp(12) })
+        val titleBlock = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titleBlock.addView(label(getString(R.string.ui_8792d2ba201f), 22, true))
+        titleBlock.addView(label(getString(R.string.ui_37db6b658719), 12, false))
+        brand.addView(titleBlock)
+        base.addView(brand)
+        space(base, 20)
+        navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val tabs = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = false
+            addView(navigation)
+        }
+        base.addView(tabs)
+        space(base, 16)
+        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        contentScroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = true
+            addView(content, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        base.addView(contentScroll, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        toastStatus = label(getString(R.string.ui_5c8c7f7835eb), 12, false)
+        toastStatus.setPadding(dp(4), dp(12), dp(4), dp(8))
         base.addView(toastStatus)
-        val scroll=ScrollView(this).apply {isFillViewport=true;isVerticalScrollBarEnabled=false;addView(base,
-            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))}
-        setContentView(scroll)
+        setContentView(base)
         library=ModelLibraryView(this,
             importPicker={
                 val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -83,27 +109,58 @@ class MainActivity : Activity() {
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
     }
 
-    private fun showTab(index:Int) {
-        tab=index
+    private fun showTab(index: Int) {
+        if (tab == 1 && index != 1 && ::coordinator.isInitialized &&
+            ::pairCode.isInitialized && ::deviceName.isInitialized) {
+            coordinatorDraft = coordinator.text.toString()
+            pairingCodeDraft = pairCode.text.toString()
+            deviceNameDraft = deviceName.text.toString()
+        }
+        tab = index
         navigation.removeAllViews()
-        listOf("Cluster",getString(R.string.models),getString(R.string.settings)).forEachIndexed {i,title ->
-            val button=Button(this).apply {
-                text=title;isAllCaps=false;textSize=13f
-                setTextColor(if(i==index)0xfff8fbff.toInt() else 0xffa9b7cb.toInt())
-                backgroundTintList=ColorStateList.valueOf(if(i==index)0xff365885.toInt() else 0xff202b3b.toInt())
-                setOnClickListener { if(tab!=i) showTab(i) }
+        val titles = listOf(
+            getString(R.string.tab_overview),
+            getString(R.string.tab_connection),
+            getString(R.string.tab_processing),
+            getString(R.string.models),
+            getString(R.string.settings)
+        )
+        titles.forEachIndexed { i, title ->
+            val active = i == index
+            val button = Button(this).apply {
+                text = title
+                isAllCaps = false
+                textSize = 13f
+                minWidth = 0
+                minHeight = 0
+                stateListAnimator = null
+                elevation = 0f
+                setPadding(dp(16), 0, dp(16), 0)
+                setTextColor(if (active) 0xffe3e8ed.toInt() else 0xffa8b0b8.toInt())
+                backgroundTintList = null
+                background = GradientDrawable().apply {
+                    setColor(if (active) 0xff38414b.toInt() else 0xff262a2f.toInt())
+                    cornerRadius = dp(9).toFloat()
+                    setStroke(dp(1), if (active) 0xff4a5661.toInt() else 0xff353a40.toInt())
+                }
+                contentDescription = title
+                setOnClickListener { if (tab != i) showTab(i) }
             }
-            navigation.addView(button,LinearLayout.LayoutParams(0,dp(48),1f).apply {marginEnd=dp(5)})
+            navigation.addView(button, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(42)).apply { marginEnd = dp(8) })
         }
         content.removeAllViews()
-        when(index) {
-            0 -> clusterScreen()
-            1 -> { (library.parent as? ViewGroup)?.removeView(library);content.addView(library) }
+        contentScroll.scrollTo(0, 0)
+        when (index) {
+            0 -> overviewScreen()
+            1 -> connectionScreen()
+            2 -> processingScreen()
+            3 -> { (library.parent as? ViewGroup)?.removeView(library); content.addView(library) }
             else -> settingsScreen()
         }
     }
 
-    private fun clusterScreen() {
+    private fun overviewScreen() {
         val overview=card()
         overview.addView(label(getString(R.string.ui_7681d877e8b1),18,true))
         val selected=ModelFiles.selected(this)
@@ -111,14 +168,27 @@ class MainActivity : Activity() {
         overview.addView(label(getString(R.string.model_optional,selected?.name ?: getString(R.string.none)),12,false))
         overview.addView(label(getString(R.string.system,Build.VERSION.RELEASE,Build.SUPPORTED_ABIS.firstOrNull() ?: "?"),12,false))
         overview.addView(label(getString(R.string.memory_budget,"%.2f".format(java.util.Locale.US,HuggingFaceHub(this).localBudgetBytes().toDouble()/(1L shl 30))),12,false))
-        overview.addView(action(getString(R.string.ui_87125eeb01cb)) {showTab(1)})
+        overview.addView(action(getString(R.string.ui_87125eeb01cb)) {showTab(3)})
+        overview.addView(label(
+            if (prefs.getString("node_id", "").isNullOrBlank())
+                getString(R.string.node_not_paired)
+            else getString(R.string.node_paired),
+            12, false
+        ))
+        overview.addView(action(getString(R.string.tab_connection)) { showTab(1) })
+        overview.addView(action(getString(R.string.tab_processing)) { showTab(2) })
         content.addView(overview)
+    }
+
+    private fun connectionScreen() {
         val pairing=card()
         pairing.addView(label(getString(R.string.ui_9220df143b25),18,true))
         pairing.addView(label(getString(R.string.ui_9ee19c2db1d5),13,false))
-        coordinator=field(pairing,getString(R.string.host_url),prefs.getString("coordinator","") ?: "")
-        pairCode=field(pairing,getString(R.string.pairing_code),"")
-        deviceName=field(pairing,getString(R.string.device_name),prefs.getString("name",Build.MODEL) ?: Build.MODEL)
+        coordinator=field(pairing,getString(R.string.host_url),
+            coordinatorDraft ?: (prefs.getString("coordinator","") ?: ""))
+        pairCode=field(pairing,getString(R.string.pairing_code),pairingCodeDraft)
+        deviceName=field(pairing,getString(R.string.device_name),
+            deviceNameDraft ?: (prefs.getString("name",Build.MODEL) ?: Build.MODEL))
         pairing.addView(action(getString(R.string.ui_c06cce69d22b)) {joinCluster()})
         pairing.addView(action(getString(R.string.ui_5701de13e132)) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -126,6 +196,9 @@ class MainActivity : Activity() {
             },pickCertificate)
         })
         content.addView(pairing)
+    }
+
+    private fun processingScreen() {
         val worker=card()
         worker.addView(label(getString(R.string.ui_5ac59a6efd23),18,true))
         worker.addView(label(getString(R.string.backend_help,NativeRpc.VERSION),13,false))
@@ -231,7 +304,9 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         setStatus(getString(R.string.connected,paired))
-                        if(tab==0) showTab(0)
+                        pairingCodeDraft = ""
+                        pairCode.setText("")
+                        if(tab==1) showTab(0)
                         offerRpcGuestAfterPairing()
                     }
                 }
@@ -298,7 +373,7 @@ class MainActivity : Activity() {
         val uris=data?.clipData?.let {clip -> (0 until clip.itemCount).map {clip.getItemAt(it).uri}} ?: listOfNotNull(data?.data)
         val uri=uris.firstOrNull()?:return
         when(requestCode) {
-            pickModel -> {showTab(1);library.importFromUris(uris)}
+            pickModel -> {showTab(3);library.importFromUris(uris)}
             pickCertificate -> thread(name="nodexlm-cert-import") {
                 try {
                     val bytes=contentResolver.openInputStream(uri)?.use { boundedPairingBytes(it, 65536) } ?: error("Certificate unreadable")
@@ -324,29 +399,88 @@ class MainActivity : Activity() {
         toastStatus.text=message
         Toast.makeText(this,message,Toast.LENGTH_SHORT).show()
     }
-    private fun field(parent:LinearLayout,hint:String,value:String):EditText = EditText(this).apply {
-        this.hint=hint;setSingleLine(true);setText(value);setTextColor(0xfff1f5fc.toInt());setHintTextColor(0xff8194aa.toInt())
-        parent.addView(this,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(58)))
-    }
-    private fun label(value:String,size:Int,bold:Boolean)=TextView(this).apply {
-        text=value;textSize=size.toFloat();setTextColor(if(bold)0xfff1f5ff.toInt() else 0xffadbccf.toInt())
-        if(bold) setTypeface(null,Typeface.BOLD)
-        setPadding(0,dp(5),0,dp(5))
-    }
-    private fun action(value:String,handler:()->Unit)=Button(this).apply {
-        text=value;isAllCaps=false;textSize=13f
-        setTextColor(0xffedf3fd.toInt())
-        backgroundTintList=ColorStateList.valueOf(0xff30527b.toInt())
-        setOnClickListener {handler()}
-    }
-    private fun card():LinearLayout=LinearLayout(this).apply {
-        orientation=LinearLayout.VERTICAL
-        val p=dp(16);setPadding(p,p,p,p)
-        background=GradientDrawable().apply {
-            setColor(0xff202b3a.toInt());cornerRadius=dp(18).toFloat();setStroke(dp(1),0xff384858.toInt())
+    private fun field(parent: LinearLayout, hint: String, value: String): EditText = EditText(this).apply {
+        this.hint = hint
+        setSingleLine(true)
+        setText(value)
+        textSize = 14f
+        setTextColor(0xffd7dce1.toInt())
+        setHintTextColor(0xff929ba5.toInt())
+        setPadding(dp(14), 0, dp(14), 0)
+        background = GradientDrawable().apply {
+            setColor(0xff23272b.toInt())
+            cornerRadius = dp(9).toFloat()
+            setStroke(dp(1), 0xff3c434a.toInt())
         }
-        layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT).apply {bottomMargin=dp(12)}
+        parent.addView(this, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(10) })
     }
-    private fun space(parent:LinearLayout,size:Int)=parent.addView(View(this),LinearLayout.LayoutParams(dp(1),dp(size)))
-    private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
+
+    private fun label(value: String, size: Int, bold: Boolean) = TextView(this).apply {
+        text = value
+        textSize = size.toFloat()
+        setTextColor(if (bold) 0xffd9dee3.toInt() else 0xffa2abb4.toInt())
+        if (bold) setTypeface(null, Typeface.BOLD)
+        setPadding(0, dp(5), 0, dp(5))
+    }
+
+    private fun action(value: String, handler: () -> Unit) = Button(this).apply {
+        text = value
+        isAllCaps = false
+        textSize = 13f
+        minHeight = dp(44)
+        stateListAnimator = null
+        elevation = 0f
+        setTextColor(0xffdce2e7.toInt())
+        backgroundTintList = ColorStateList.valueOf(0xff394550.toInt())
+        setOnClickListener { handler() }
+    }
+
+    private fun card(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        val p = dp(16)
+        setPadding(p, p, p, p)
+        background = GradientDrawable().apply {
+            setColor(0xff292d32.toInt())
+            cornerRadius = dp(12).toFloat()
+            setStroke(dp(1), 0xff3a4047.toInt())
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
+    }
+
+    private fun space(parent: LinearLayout, size: Int) =
+        parent.addView(View(this), LinearLayout.LayoutParams(dp(1), dp(size)))
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+}
+
+/** Flat network mark: connected nodes represent the Host and its Guests. */
+private class ClusterMark(context: android.content.Context) : View(context) {
+    private val ink = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        canvas.save()
+        canvas.scale(width / 100f, height / 100f)
+        ink.style = Paint.Style.STROKE
+        ink.strokeCap = Paint.Cap.ROUND
+        ink.strokeWidth = 5f
+        ink.color = 0xff8194a6.toInt()
+        for (segment in arrayOf(
+            floatArrayOf(18f, 18f, 18f, 82f),
+            floatArrayOf(18f, 18f, 50f, 50f),
+            floatArrayOf(50f, 50f, 82f, 82f),
+            floatArrayOf(82f, 18f, 82f, 82f)
+        )) canvas.drawLine(segment[0], segment[1], segment[2], segment[3], ink)
+        ink.style = Paint.Style.FILL
+        for ((x, y) in arrayOf(
+            18f to 18f, 18f to 82f, 50f to 50f, 82f to 18f, 82f to 82f
+        )) {
+            ink.color = if (x == 50f) 0xffa9b5c0.toInt() else 0xff8194a6.toInt()
+            canvas.drawCircle(x, y, 8f, ink)
+        }
+        canvas.restore()
+    }
 }

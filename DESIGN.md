@@ -1,53 +1,88 @@
 ---
 version: alpha
 colors:
-  background: "#101318"
-  surface: "#191f27"
-  primary: "#3477ad"
-  text: "#e1e6ed"
-  muted: "#98a7ba"
+  background: "#202327"
+  surface: "#292d32"
+  primary: "#8297aa"
+  text: "#d8dde2"
+  muted: "#a3adb7"
 typography:
   sans:
-    fontFamily: 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif'
+    fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif'
 rounded:
-  card: "15px"
+  card: "12px"
   control: "8px"
 omitted:
   - section: spacing
-    reason: "Existing console CSS remains the canonical spacing source."
+    reason: "The lightweight native Web and Android views own their runtime spacing."
   - section: components
-    reason: "Vanilla DOM helpers and native controls own the small console."
+    reason: "Vanilla DOM and Android platform widgets remain canonical."
 ---
-# NodexLM console
+# NodexLM — quiet graphite
 
-## Overview
+## Product and audience
 
-A Portuguese operational console for an experimental local inference cluster. Preserve its existing dark graphite panels, blue actions, readable resource lists and native controls. The product should feel like a local control panel, with actual connection/loading state taking precedence over decoration. Do not apply a marketing landing-page layout.
+NodexLM is an experimental local GGUF inference cluster built around a Host,
+authenticated Guests and llama.cpp RPC. It is an operational console, not an
+AI chat subscription service. The interface must prioritize real device state,
+model selection, capacity estimates, inference and troubleshooting.
 
-## Colors
+## Shared visual language
 
-The canonical runtime values live in `internal/dashboard/static/styles.css`; the frontmatter records the existing palette. Blue denotes the primary action, green a ready/completed state, and amber an advisory capacity estimate. Never present an estimate as measured model throughput. Scrollbar tokens `--scrollbar-thumb` and `--scrollbar-track` apply globally.
+- Matte charcoal canvas (`#202327`), neutral elevated surfaces (`#292d32`)
+  and subtle separators (`#3b4147`).
+- Text uses soft off-white and gray; actions and focus use muted steel-blue
+  (`#8297aa` and related shades). Avoid neon, green decorative accents,
+  bright gradients, glassmorphism, heavy shadows and marketing hero graphics.
+- Flat network mark: five connected nodes form a subtle N, representing
+  one Host coordinating multiple devices. Web uses inline SVG; Android uses
+  a small native Canvas view. Both must remain readable at compact sizes.
+- Android launcher uses the same five-node N: adaptive foreground (within
+  the 66dp circular safe zone), flat graphite background, round launcher icon
+  and a system-tinted monochrome variant on Android 13+. Manifest refers
+  explicitly to the regular and round mipmap resources.
+- Corners: 12px for panels, 8–9px for controls. Prefer borders to elevation.
+- Keep semantic statuses understandable by text and shape, never color alone.
+  Critical failure/confirmation states may use semantic warning colors when
+  required by accessibility.
 
-## Typography
+## Web console
 
-Use the existing system-font stack and Portuguese copy. Let long GGUF filenames wrap. Do not fetch remote fonts or add a web framework for one control.
+The canonical Web assets live in `internal/dashboard/static`. Keep vanilla
+HTML/CSS/JavaScript and existing authenticated API endpoints: no new frontend
+framework, remote fonts or client dependency for the redesign.
 
-## Layout
+The six existing workspaces are the source of truth:
+Visão geral, Modelos, Inferência, Dispositivos, Diagnóstico and Chat. The
+overview has working shortcuts and real Host/Guest/model state; never display
+invented session history, token rates or aggregate usable VRAM. Capacity
+and placement remain estimates until validated by the runtime.
 
-The operational Console uses a compact left navigation rail on desktop and horizontally scrollable menu on smaller screens. Each of six functional workspaces has its own short content; the active workspace and long data lists own bounded scrolling rather than stacking all functions into one long page. Tables still own horizontal overflow and chat owns the bounded conversation log. The existing runtime CSS is canonical for spacing and layout tokens.
+Navigation must keep keyboard arrow/Home/End support, visible focus and
+the active workspace in session state. Preserve the existing forms, model
+downloads, GGUF inspection, load/unload, pairing, measurements and chat
+stream/cancel behavior. Long lists and conversation history own bounded scroll.
 
-## Elevation & Depth
+## Android
 
-Preserve the existing subtle panel elevation and borders. Dialogs use the browser's native top layer and a dark backdrop.
+The Android 10+ interface stays native Kotlin views without WebView or a
+Flutter runtime. The Host, Guest RPC and standalone worker behaviors are
+unchanged. MainActivity separates five functions:
 
-## Shapes
+1. Visão geral — device summary and shortcuts.
+2. Conexão — Host URL, pairing code, device identity and trusted certificate.
+3. Processamento — backend choice, RPC Guest start/stop and standalone worker.
+4. Modelos — search, download/import, progress and local selection.
+5. Ajustes — energy limits, maintenance, update checks and notices.
 
-Panels use 15px corners; controls use 8px corners. Resource tags retain their established pill shape.
+Tabs use an accessible, horizontally scrollable rail on narrow screens.
+Keep real background services, notifications, authentication and file APIs;
+do not imitate capabilities the Android runtime does not provide.
 
-## Components
+## Interaction quality
 
-Shared DOM helpers `el`, `action` and `notice` in `app.js` own content, actions and feedback. Use textContent for external data. Native dialog owns modal focus/Escape behavior; the shared confirmAction function owns confirmation outcomes. Native labels, selects, number inputs and buttons remain canonical. Workspace navigation uses buttons, aria-current and arrow/Home/End keys, retaining the single-page state without introducing another UI framework.
-
-## Do's and Don'ts
-
-Keep visible focus indicators, operable scrollbars and reduced-motion support. Preserve typed messages on failure. Stop must cancel the real fetch. Show elapsed time and first-token time from browser measurements; show tokens/s only with a real completion-token count. Do not render model output as HTML.
+Preserve typed drafts after a failed request. Cancel actual in-flight work
+rather than hiding a spinner. Use native buttons, labels, keyboard navigation,
+text progress/error messages, local-only token storage and visible scrollbars.
+Respect reduced motion and avoid decorative animations. No text or activity
+metrics should claim an unmeasured result.

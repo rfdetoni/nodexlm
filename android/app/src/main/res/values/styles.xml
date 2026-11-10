@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="NodexTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#292d32</item>
+        <item name="android:colorPrimaryDark">#202327</item>
+        <item name="android:colorAccent">#8297aa</item>
+        <item name="android:colorControlActivated">#8297aa</item>
+        <item name="android:colorControlHighlight">#45525e</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:statusBarColor">#202327</item>
+        <item name="android:navigationBarColor">#202327</item>
+    </style>
+</resources>

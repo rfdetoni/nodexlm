@@ -45,6 +45,11 @@ vm.runInContext(script,sandbox,{filename:'app.js'});
 async function main(){
   assert.equal(get('view-overview').hidden,false,'overview should be visible at startup');
   assert.equal(get('view-models').hidden,true,'secondary workspaces should be hidden');
+  get('overviewPrompt').value='Explain Q4 quantization';
+  get('overviewOpenChat').handlers.click();
+  assert.equal(get('view-chat').hidden,false,'overview prompt should open Chat');
+  assert.equal(get('prompt').value,'Explain Q4 quantization','draft must reach Chat without sending');
+  get('nav-overview').handlers.click();
   get('quickModels').handlers.click();
   assert.equal(get('view-models').hidden,false,'model shortcut did not open workspace');
   assert.equal(get('view-overview').hidden,true,'previous workspace still visible');
