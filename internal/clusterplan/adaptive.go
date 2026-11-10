@@ -55,16 +55,18 @@ func Select(blocks uint32, modelBytes, hostBudget uint64, candidates []Candidate
 			a, b := ranked[i], ranked[j]
 			linkRank := func(n Candidate) int {
 				p := n.Performance
-				if p.NetworkMeasured && (p.RoundTripMS > 15 || p.MiBPerSecond < 25) {
-					return -1
-				}
 				if p.TokensPerSecond > 0 {
-					return 2
+					// Actual inference throughput is stronger evidence than
+					// a network-only heuristic, even on a slower link.
+					return 3
+				}
+				if p.NetworkMeasured && (p.RoundTripMS > 15 || p.MiBPerSecond < 25) {
+					return 0
 				}
 				if p.NetworkMeasured {
-					return 1
+					return 2
 				}
-				return 0
+				return 1
 			}
 			if linkRank(a) != linkRank(b) {
 				return linkRank(a) > linkRank(b)
