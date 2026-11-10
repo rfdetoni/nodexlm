@@ -26,10 +26,13 @@ type ChatRequest struct {
 }
 
 type GPUDevice struct {
-	Name          string `json:"name"`
-	Vendor        string `json:"vendor"`
-	VRAMBytes     uint64 `json:"vram_bytes,omitempty"`
-	FreeVRAMBytes uint64 `json:"free_vram_bytes,omitempty"`
+	Name          string   `json:"name"`
+	Vendor        string   `json:"vendor"`
+	VRAMBytes     uint64   `json:"vram_bytes,omitempty"`
+	FreeVRAMBytes uint64   `json:"free_vram_bytes,omitempty"`
+	// Nil means the driver cannot measure this value; 0 means measured idle/empty.
+	UsagePercent  *float64 `json:"usage_percent,omitempty"`
+	VRAMUsedBytes *uint64  `json:"vram_used_bytes,omitempty"`
 }
 
 type RuntimeCapability struct {
@@ -47,6 +50,8 @@ type Device struct {
 	Platform          string            `json:"platform"`
 	Architecture      string            `json:"architecture"`
 	CPUCount          int               `json:"cpu_count"`
+	CPUUsagePercent   *float64          `json:"cpu_usage_percent,omitempty"`
+	RAMUsedBytes      *uint64           `json:"ram_used_bytes,omitempty"`
 	RAMBytes          uint64            `json:"ram_bytes,omitempty"`
 	AvailableRAMBytes uint64            `json:"available_ram_bytes,omitempty"`
 	GPUs              []GPUDevice       `json:"gpus,omitempty"`
