@@ -36,6 +36,8 @@ type Managed struct {
 	MoECPU                   bool
 	MoECPULayers             int
 	MoECacheMiB              int
+	FlashAttention, KVCacheType, SpeculativeMode string
+	BatchSize, UBatchSize int
 	Idle                     time.Duration
 	KeepLoaded               bool
 	RPCServers               []string
@@ -275,6 +277,15 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 
 func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []string {
 	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui", "--jinja"}
+	if m.FlashAttention != "" && m.FlashAttention != "auto" {
+		args = append(args, "--flash-attn", m.FlashAttention)
+	}
+	if m.KVCacheType != "" && m.KVCacheType != "f16" {
+		args = append(args, "--cache-type-k", m.KVCacheType, "--cache-type-v", m.KVCacheType)
+	}
+	if m.BatchSize > 0 { args = append(args, "--batch-size", strconv.Itoa(m.BatchSize)) }
+	if m.UBatchSize > 0 { args = append(args, "--ubatch-size", strconv.Itoa(m.UBatchSize)) }
+	if m.SpeculativeMode == "ngram" { args = append(args, "--spec-type", "ngram-simple") }
 	switch {
 	case m.MoECPU:
 		args = append(args, "--cpu-moe")
