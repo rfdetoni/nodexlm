@@ -293,12 +293,12 @@ async function sendChat(){
   if(chatController===controller)chatController=null;$('sendChat').disabled=false;$('stopChat').disabled=true;
  }
 }
-$('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').value.trim();guard(async()=>{await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await refresh();notice('Conectado')})});
+$('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').value.trim();guard(async()=>{await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')})});
 $('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';chatController?.abort();chatHistory=[];$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',{model:$('modelSelect').value,threads:+$('threads').value,context_tokens:+$('contextTokens').value,gpu_layers:$('gpuLayers').value,moe_cpu:$('moeCPU').checked,distributed:$('distributed').checked,moe_cpu_layers:+$('moeCPULayers').value,moe_cache_mib:+$('moeCache').value});notice('Configuração salva');settingsInitialized=false;await refresh()})});
-$('load').addEventListener('click',()=>guard(async()=>{await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
+$('load').addEventListener('click',()=>guard(async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
 $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
 $('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pairing/start','POST',{});$('pairCode').hidden=false;$('pairCode').textContent=p.code+' · válido por '+p.expires_in;notice('Código renovado')}));
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
@@ -343,6 +343,7 @@ $('catalogForm').addEventListener('submit',e=>{e.preventDefault();if(catalogSear
 })});
 
 function renderResidentModels(models){
+ residentModelNames=models;
  const list=$('residentModels');list.replaceChildren();const selector=$('chatModel');const prior=selector.value;selector.replaceChildren();
  for(const model of models){const option=el('option','',model);option.value=model;selector.append(option);const row=el('div','model-item');row.append(el('strong','',model),action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));list.append(row)}
  selector.value=models.includes(prior)?prior:(models[0]||'');
@@ -372,4 +373,13 @@ async function refreshObservations(){
  if(!data.inference.length&&!data.nodes.length)area.append(el('p','muted','Nenhuma medição disponível.'));
 }
 
-setupAuth();if(token){renderChat();guard(refresh);}
+$('copyModelFolder').addEventListener('click',()=>guard(async()=>{
+ if(!modelFolderPath)throw Error('Caminho da pasta indisponível');
+ if(!navigator.clipboard?.writeText)throw Error('Cópia automática indisponível neste navegador');
+ await navigator.clipboard.writeText(modelFolderPath);notice('Caminho copiado');
+}));
+$('openModelFolder').addEventListener('click',()=>guard(async()=>{
+ await api('/api/models/folder/open','POST',{});
+ notice('Solicitada abertura da pasta no computador Host.');
+}));
+setupAuth();if(token){renderChat();guard(refresh);guard(loadModelFolder);}
