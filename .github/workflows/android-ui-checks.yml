@@ -1,0 +1,45 @@
+name: Android UI checks
+
+# Kotlin/resources validation on Android UI PRs only; avoid compiling native
+# llama.cpp and packaging both ABIs for a UI-only change.
+on:
+  pull_request:
+    paths:
+      - 'android/app/src/main/java/**/*.kt'
+      - 'android/app/src/main/res/**'
+      - 'android/app/src/main/AndroidManifest.xml'
+      - 'android/app/build.gradle.kts'
+      - '.github/workflows/android-ui-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nodexlm-android-ui-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+      - name: Install SDK for Kotlin UI/resources
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-read-only: true
+      - name: Compile UI and run unit tests (no native APK package)
+        working-directory: android
+        run: gradle --no-daemon --max-workers=2 :app:compileDebugKotlin :app:testDebugUnitTest
