@@ -142,4 +142,7 @@
     <string name="rpc_guest_offer_message">Deseja ativar o Guest RPC agora? O celular compartilhará CPU/GPU e memória disponíveis com o Host para processar camadas do modelo. O GGUF permanece no Host. O Guest consome bateria e pode aquecer o aparelho. Você pode alterar o modo de processamento na aba Cluster.</string>
     <string name="rpc_guest_offer_accept">Ativar Guest RPC</string>
     <string name="rpc_guest_offer_later">Agora não</string>
+    <string name="pair_host_certificate_changed">O certificado do Host mudou. Importe o novo certificado do Host na aba Cluster antes de parear novamente.</string>
+    <string name="pair_clock_or_code_expired">O código de pareamento expirou ou a data/hora do celular está incorreta.</string>
+    <string name="pair_code_mismatch">O código de pareamento não corresponde a este Host.</string>
 </resources>
