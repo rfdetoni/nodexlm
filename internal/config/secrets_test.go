@@ -10,7 +10,7 @@ import (
 )
 
 func TestEnsureSecretsPersistsAcrossRestarts(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), ".nodexlm")
 	first, err := EnsureSecrets(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestReadSecretsRejectsLooseUnixPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("NTFS ACL permissions are not represented by Unix mode bits")
 	}
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), ".nodexlm")
 	if _, err := EnsureSecrets(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestReadSecretsRejectsLooseUnixPermissions(t *testing.T) {
 }
 
 func TestAgentCredentialsStayPrivate(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), ".nodexlm")
 	first := Agent{Coordinator: "https://127.0.0.1:8443"}
 	first.Node.NodeID = "node"
 	first.Node.Token = "secret"
@@ -63,5 +63,31 @@ func TestAgentCredentialsStayPrivate(t *testing.T) {
 		if info.Mode().Perm()&0077 != 0 {
 			t.Fatal("agent credentials are accessible by other users")
 		}
+	}
+}
+
+func TestUnsafeExistingDirectoryIsNotChmodded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows credentials are protected with NTFS ACLs")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := securePrivateDir(dir); err == nil {
+		t.Fatal("accepted insecure pre-existing credentials directory")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("modified pre-existing directory permissions unexpectedly: %v", info.Mode().Perm())
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := securePrivateDir(dir); err != nil {
+		t.Fatalf("rejected valid private configuration directory: %v", err)
 	}
 }

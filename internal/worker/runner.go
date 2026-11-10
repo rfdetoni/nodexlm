@@ -136,17 +136,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		stop()
 		<-monitorDone
-		if len(answer) > 1<<19 {
-			answer = ""
-			generateErr = errors.New("generation result exceeds coordinator limit")
-		}
-		out := protocol.JobResult{Result: answer}
-		if generateErr != nil {
-			out.Error = generateErr.Error()
-			if len(out.Error) > 1000 {
-				out.Error = out.Error[:1000]
-			}
-		}
+		out := boundedResult(answer, generateErr)
 		resultCtx, done := context.WithTimeout(ctx, 15*time.Second)
 		_, err = r.Client.Request(resultCtx, http.MethodPost, "/v1/nodes/result/"+work.ID, out, nil)
 		done()
@@ -155,4 +145,25 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// boundedResult enforces BOTH the coordinator's 512 KiB text ceiling and
+// its 1 MiB HTTP JSON body limit. Escape-heavy text can be much larger on
+// the wire; check its actual encoding without reducing valid ASCII limits.
+func boundedResult(answer string, generateErr error) protocol.JobResult {
+	if generateErr != nil {
+		message := generateErr.Error()
+		if len(message) > 1000 {
+			message = message[:1000]
+		}
+		return protocol.JobResult{Error: message}
+	}
+	const maxResultBytes = 1 << 19
+	result := protocol.JobResult{Result: answer}
+	if len(answer) <= maxResultBytes {
+		if encoded, err := json.Marshal(result); err == nil && len(encoded) <= 1<<20 {
+			return result
+		}
+	}
+	return protocol.JobResult{Error: "inference result exceeds coordinator limit; reduce max_tokens"}
 }

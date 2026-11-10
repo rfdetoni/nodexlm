@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,5 +100,34 @@ func TestWorkerStreamsAndCancelsThroughCoordinator(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("worker did not stop")
+	}
+}
+
+func TestBoundedResultRespectsCoordinatorJSONBodyLimit(t *testing.T) {
+	// JSON escapes control bytes as \u0000. The historical 512 KiB text
+	// threshold would expand to more than the 1 MiB request limit.
+	result := boundedResult(strings.Repeat("\x00", 128<<10), nil)
+	body, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "" || len(body) > 1<<20 || len(result.Result) > (1<<20)/2 {
+		t.Fatalf("valid result cannot be submitted safely: error=%q serialized=%d", result.Error, len(body))
+	}
+	ascii := boundedResult(strings.Repeat("x", 256<<10), nil)
+	if ascii.Error != "" || len(ascii.Result) != 256<<10 {
+		t.Fatal("valid 256 KiB ASCII result rejected unnecessarily")
+	}
+	tooLarge := boundedResult(strings.Repeat("x", (1<<19)+1), nil)
+	if tooLarge.Error == "" || tooLarge.Result != "" {
+		t.Fatal("oversized result must be reported as a bounded job failure")
+	}
+	escaped := boundedResult(strings.Repeat("\x00", (1<<20)/6+1), nil)
+	if escaped.Error == "" || escaped.Result != "" {
+		t.Fatal("JSON-escaped result over 1 MiB must be rejected before submission")
+	}
+	generationFailure := boundedResult(strings.Repeat("ignored", 40000), fmt.Errorf("%s", strings.Repeat("e", 2000)))
+	if generationFailure.Result != "" || len(generationFailure.Error) != 1000 {
+		t.Fatalf("generator error was not preserved and bounded: %+v", generationFailure)
 	}
 }
