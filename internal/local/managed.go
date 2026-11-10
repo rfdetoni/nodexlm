@@ -29,18 +29,18 @@ import (
 // the resident NodexLM process and returns RAM to the OS after idle timeout.
 // One active inference at a time in the alpha runtime.
 type Managed struct {
-	mu                       sync.Mutex
-	Binary, ModelPath, Alias string
-	Threads, ContextTokens   int
-	GPULayers                string
-	MoECPU                   bool
-	MoECPULayers             int
-	MoECacheMiB              int
+	mu                                           sync.Mutex
+	Binary, ModelPath, Alias                     string
+	Threads, ContextTokens                       int
+	GPULayers                                    string
+	MoECPU                                       bool
+	MoECPULayers                                 int
+	MoECacheMiB                                  int
 	FlashAttention, KVCacheType, SpeculativeMode string
-	BatchSize, UBatchSize int
-	Idle                     time.Duration
-	KeepLoaded               bool
-	RPCServers               []string
+	BatchSize, UBatchSize                        int
+	Idle                                         time.Duration
+	KeepLoaded                                   bool
+	RPCServers                                   []string
 	// RPCLocalLayers keeps the first N transformer blocks on the host CPU;
 	// remaining blocks are placed on RPC devices using layer-split mode.
 	RPCLocalLayers int
@@ -283,9 +283,15 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 	if m.KVCacheType != "" && m.KVCacheType != "f16" {
 		args = append(args, "--cache-type-k", m.KVCacheType, "--cache-type-v", m.KVCacheType)
 	}
-	if m.BatchSize > 0 { args = append(args, "--batch-size", strconv.Itoa(m.BatchSize)) }
-	if m.UBatchSize > 0 { args = append(args, "--ubatch-size", strconv.Itoa(m.UBatchSize)) }
-	if m.SpeculativeMode == "ngram" { args = append(args, "--spec-type", "ngram-simple") }
+	if m.BatchSize > 0 {
+		args = append(args, "--batch-size", strconv.Itoa(m.BatchSize))
+	}
+	if m.UBatchSize > 0 {
+		args = append(args, "--ubatch-size", strconv.Itoa(m.UBatchSize))
+	}
+	if m.SpeculativeMode == "ngram" {
+		args = append(args, "--spec-type", "ngram-simple")
+	}
 	switch {
 	case m.MoECPU:
 		args = append(args, "--cpu-moe")

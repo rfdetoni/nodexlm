@@ -30,20 +30,20 @@ import (
 // Settings are persisted independently of the UI. The model weights live only
 // in the llama-server child process and can be unloaded without stopping NodexLM.
 type Settings struct {
-	Model         string `json:"model"`
-	Threads       int    `json:"threads"`
-	ContextTokens int    `json:"context_tokens"`
-	GPULayers     string `json:"gpu_layers"`
-	MoECPU        bool   `json:"moe_cpu"`
-	MoECPULayers  int    `json:"moe_cpu_layers"`
-	MoECacheMiB   int    `json:"moe_cache_mib"`
-	Distributed   bool   `json:"distributed"`
+	Model             string `json:"model"`
+	Threads           int    `json:"threads"`
+	ContextTokens     int    `json:"context_tokens"`
+	GPULayers         string `json:"gpu_layers"`
+	MoECPU            bool   `json:"moe_cpu"`
+	MoECPULayers      int    `json:"moe_cpu_layers"`
+	MoECacheMiB       int    `json:"moe_cache_mib"`
+	Distributed       bool   `json:"distributed"`
 	PlacementStrategy string `json:"placement_strategy,omitempty"`
-	FlashAttention string `json:"flash_attention,omitempty"`
-	KVCacheType string `json:"kv_cache_type,omitempty"`
-	BatchSize int `json:"batch_size,omitempty"`
-	UBatchSize int `json:"ubatch_size,omitempty"`
-	SpeculativeMode string `json:"speculative_mode,omitempty"`
+	FlashAttention    string `json:"flash_attention,omitempty"`
+	KVCacheType       string `json:"kv_cache_type,omitempty"`
+	BatchSize         int    `json:"batch_size,omitempty"`
+	UBatchSize        int    `json:"ubatch_size,omitempty"`
+	SpeculativeMode   string `json:"speculative_mode,omitempty"`
 }
 
 type Download struct {

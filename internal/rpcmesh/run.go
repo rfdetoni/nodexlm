@@ -68,7 +68,9 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	_ = probe.Close()
 	// The native GGML RPC server is always restricted to loopback.
 	args := []string{"--host", host, "--port", port}
-	if cache { args = append(args, "--cache") }
+	if cache {
+		args = append(args, "--cache")
+	}
 	if device != "" {
 		args = append(args, "--device", device)
 	}

@@ -614,7 +614,9 @@ func guest(args []string) error {
 	}
 	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
 	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels)}
-	if *rpcCache { options = append(options, "--rpc-cache") }
+	if *rpcCache {
+		options = append(options, "--rpc-cache")
+	}
 	if *bin != "" {
 		options = append(options, "--rpc-bin", *bin)
 	}

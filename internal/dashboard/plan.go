@@ -48,7 +48,9 @@ func (m *Manager) Plan() (map[string]any, error) {
 	nodes := []placement{}
 	localLayers := int(meta.BlockCount)
 	strategy := settings.PlacementStrategy
-	if strategy == "" { strategy = "capacity" }
+	if strategy == "" {
+		strategy = "capacity"
+	}
 	excluded := []string{}
 	selectionReason := "Local-only inference"
 	if settings.Distributed {

@@ -19,7 +19,9 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 		return err
 	}
 	args := []string{"--socket", strings.TrimPrefix(address, "unix:")}
-	if cache { args = append(args, "--cache") }
+	if cache {
+		args = append(args, "--cache")
+	}
 	if device != "" {
 		args = append(args, "--device", device)
 	}
