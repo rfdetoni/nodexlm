@@ -48,3 +48,14 @@ func TestAdaptiveSelectRejectsInvalidState(t *testing.T) {
 		}
 	}
 }
+
+func TestMeasuredThroughputOutranksNetworkHeuristic(t *testing.T) {
+    const gib = uint64(1 << 30)
+    nodes := []Candidate{
+        {ID:"measured", CapacityBytes:8*gib,Performance:Performance{TokensPerSecond:30,NetworkMeasured:true,RoundTripMS:18,MiBPerSecond:20}},
+        {ID:"unknown", CapacityBytes:8*gib,Performance:Performance{NetworkMeasured:true,RoundTripMS:1,MiBPerSecond:150}},
+    }
+    result, err := Select(40, 6*gib, gib, nodes, "speed")
+    if err != nil { t.Fatal(err) }
+    if result.Guests[0].ID != "measured" {t.Fatalf("observed inference throughput ignored: %+v",result)}
+}
