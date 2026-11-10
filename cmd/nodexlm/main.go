@@ -529,10 +529,8 @@ func join(args []string) error {
 	return nil
 }
 
-// guest discovers and securely pairs with the Host before starting a native
-// distributed RPC Guest. The code proves TLS identity; no admin token is used.
 // traceRoutes logs only route/method in debug mode, never the query string,
- // headers, bearer tokens or request/response bodies. Preserves Hijacker.
+// headers, bearer tokens or request/response bodies. Preserves Hijacker.
 func traceRoutes(next http.Handler, component string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("HTTP request", "component", component, "method", r.Method, "path", r.URL.Path)
@@ -540,6 +538,8 @@ func traceRoutes(next http.Handler, component string) http.Handler {
 	})
 }
 
+// guest discovers and securely pairs with the Host before starting a native
+// distributed RPC Guest. The code proves TLS identity; no admin token is used.
 func guest(args []string) error {
 	f := fs("guest")
 	fingerprint := f.String("fingerprint", "", "optional full Host certificate SHA-256 obtained out of band")
