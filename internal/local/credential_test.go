@@ -56,3 +56,32 @@ func TestNativeCredentialIsPrivateAndOverridesInheritedEnvironment(t *testing.T)
 		t.Fatal("native credential exposed in process arguments")
 	}
 }
+
+func TestNativeEarlyExitReportsActionableStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixture")
+	}
+	dir := t.TempDir()
+	model := filepath.Join(dir, "tiny.gguf")
+	if err := os.WriteFile(model, ggufTestFile("llama", 0, 0), 0600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "exit-fixture")
+	if err := os.WriteFile(binary, []byte(`#!/bin/sh
+printf 'RPC device disappeared\\n' >&2
+exit 42
+`), 0700); err != nil {
+		t.Fatal(err)
+	}
+	m := &Managed{Binary: binary, ModelPath: model, Alias: "tiny.gguf"}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	started := time.Now()
+	err := m.Load(ctx)
+	if err == nil || !strings.Contains(err.Error(), "RPC device disappeared") {
+		t.Fatalf("native exit not reported: %v", err)
+	}
+	if time.Since(started) > 3*time.Second {
+		t.Fatalf("native crash waited for readiness timeout: %s", time.Since(started))
+	}
+}

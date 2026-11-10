@@ -71,6 +71,7 @@ type Manager struct {
 	unloading             bool
 	loadPhase             string
 	loadError             string
+	loadStartedAt         time.Time
 	loadCancel            context.CancelFunc
 	loadDone              chan struct{}
 	generationCancel      context.CancelFunc
@@ -129,7 +130,13 @@ func (m *Manager) State() map[string]any {
 	if phase == "" {
 		phase = "idle"
 	}
-	return map[string]any{"model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
+	state := map[string]any{"model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
+	if m.loading {
+		state["started_at"] = m.loadStartedAt.UTC().Format(time.RFC3339)
+		state["elapsed_seconds"] = int(time.Since(m.loadStartedAt).Seconds())
+		state["progress_known"] = false // GGML does not report per-Guest tensor transfer progress.
+	}
+	return state
 }
 func (m *Manager) DownloadState() *Download {
 	m.mu.Lock()
@@ -217,7 +224,14 @@ func modelPath(dir, name string) (string, error) {
 // StartLoad starts an expensive model preparation outside the HTTP request.
 // The dashboard polls /api/status for its phase and any failure.
 func (m *Manager) StartLoad() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	m.mu.Lock()
+	distributed := m.settings.Distributed
+	m.mu.Unlock()
+	limit := 30 * time.Minute
+	if distributed {
+		limit = 90 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	if err := m.beginLoad(cancel); err != nil {
 		cancel()
 		return err
@@ -247,6 +261,7 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 		return err
 	}
 	m.loading = true
+	m.loadStartedAt = time.Now()
 	m.loadPhase = "preparing_runtime"
 	m.loadError = ""
 	m.loadCancel = cancel

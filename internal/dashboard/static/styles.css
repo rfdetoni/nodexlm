@@ -58,3 +58,15 @@ input,select,textarea{min-width:0;max-width:100%}
 #toast{max-width:min(400px,calc(100vw - 36px));overflow-wrap:anywhere}
 @media(max-width:540px){.inputs{grid-template-columns:minmax(0,1fr)}.topline{gap:12px}.hint{font-size:12px;text-align:right;max-width:45%}.metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .card{overflow-wrap:anywhere}
+
+/* Loading has no native per-tensor percentage: show indeterminate progress
+   separately from the estimated allocation share per device. */
+.folder-info{background:#121b25;border:1px solid #334357;border-radius:10px;padding:12px;margin-bottom:14px}
+.folder-info p{margin:0 0 8px}.folder-info code{overflow-wrap:anywhere}
+.folder-controls{display:flex;gap:8px;flex-wrap:wrap}
+.folder-controls button{font-size:12px;padding:8px 11px}
+.loading-status{margin-top:16px;padding:14px;background:#111b24;border:1px solid #33495b;border-radius:10px}
+.loading-status>strong{display:block;font-size:13px;margin-bottom:9px}
+.layer-allocation{margin-top:11px;padding-top:10px;border-top:1px solid #2b3c4e}
+.layer-allocation>strong{display:block;font-size:12px}
+.layer-allocation small{display:block;margin:4px 0 8px}
