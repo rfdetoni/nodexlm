@@ -20,6 +20,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/config"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/process"
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
@@ -171,7 +172,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	process.KillWithParent(cmd)
 	cmd.Stdout = io.Discard
 	stderr := &nativeLogTail{}
-	cmd.Stderr = io.MultiWriter(os.Stderr, stderr)
+	cmd.Stderr = io.MultiWriter(debuglog.NativeOutput(), stderr)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to launch llama-server: %w", err)
 	}
