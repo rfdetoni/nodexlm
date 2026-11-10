@@ -44,7 +44,7 @@ type Settings struct {
 	BatchSize         int    `json:"batch_size,omitempty"`
 	UBatchSize        int    `json:"ubatch_size,omitempty"`
 	SpeculativeMode   string `json:"speculative_mode,omitempty"`
-	DraftModel string `json:"draft_model,omitempty"`
+	DraftModel        string `json:"draft_model,omitempty"`
 }
 
 type Download struct {
@@ -172,10 +172,16 @@ func (m *Manager) validate(s Settings) error {
 		return errors.New("speculative_mode must be off, ngram or draft")
 	}
 	if s.SpeculativeMode == "draft" {
-		if s.DraftModel == "" || s.DraftModel == s.Model { return errors.New("draft mode needs a separate GGUF model") }
-		if _, err := modelPath(m.modelDir, s.DraftModel); err != nil { return err }
+		if s.DraftModel == "" || s.DraftModel == s.Model {
+			return errors.New("draft mode needs a separate GGUF model")
+		}
+		if _, err := modelPath(m.modelDir, s.DraftModel); err != nil {
+			return err
+		}
 	} else if s.DraftModel != "" {
-		if _, err := modelPath(m.modelDir, s.DraftModel); err != nil { return err }
+		if _, err := modelPath(m.modelDir, s.DraftModel); err != nil {
+			return err
+		}
 	}
 	if s.GPULayers != "auto" && s.GPULayers != "all" {
 		if parsed, err := strconv.Atoi(s.GPULayers); err != nil || parsed < 0 || parsed > 1024 || fmt.Sprint(parsed) != s.GPULayers {
@@ -397,7 +403,9 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
 	}
 	draftPath, err := m.resolveDraftModel(s)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	m.setPhase("loading_model")
 	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType, BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
 	if s.Distributed {

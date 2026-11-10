@@ -37,7 +37,7 @@ type Managed struct {
 	MoECPULayers                                 int
 	MoECacheMiB                                  int
 	FlashAttention, KVCacheType, SpeculativeMode string
-	DraftModelPath string
+	DraftModelPath                               string
 	BatchSize, UBatchSize                        int
 	Idle                                         time.Duration
 	KeepLoaded                                   bool
@@ -299,7 +299,7 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 	if m.UBatchSize > 0 {
 		args = append(args, "--ubatch-size", strconv.Itoa(m.UBatchSize))
 	}
-	
+
 	if m.SpeculativeMode == "ngram" {
 		args = append(args, "--spec-type", "ngram-simple")
 	} else if m.SpeculativeMode == "draft" && m.DraftModelPath != "" {

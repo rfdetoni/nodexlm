@@ -54,7 +54,9 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 		return InferenceSample{}, err
 	}
 	draftPath, err := m.resolveDraftModel(settings)
-	if err != nil { return InferenceSample{}, err }
+	if err != nil {
+		return InferenceSample{}, err
+	}
 	engine := &local.Managed{Binary: binary, ModelPath: path, Alias: model, Threads: settings.Threads, ContextTokens: 512, GPULayers: settings.GPULayers, FlashAttention: settings.FlashAttention, KVCacheType: settings.KVCacheType, BatchSize: settings.BatchSize, UBatchSize: settings.UBatchSize, SpeculativeMode: settings.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
 	if nodeID != "" {
 		if provider == nil {
