@@ -52,14 +52,20 @@ func TestSettingsRejectUnsupportedNativeOptions(t *testing.T) {
 }
 
 func TestUpdateInvalidatesMeasurementsAfterPerformanceSettingsChange(t *testing.T) {
-    root := t.TempDir()
-    m, err := NewManager(root, t.TempDir(), "")
-    if err != nil { t.Fatal(err) }
-    defer m.Close()
-    original := m.Settings()
-    m.samples["old-model@node"] = InferenceSample{Model:"old-model@node",TokensPerSecond:12,MeasuredAt:time.Now()}
-    modified := original
-    modified.BatchSize = 512
-    if err := m.Update(modified); err != nil { t.Fatal(err) }
-    if len(m.InferenceSamples()) != 0 { t.Fatal("stale benchmark was retained across tuning change") }
+	root := t.TempDir()
+	m, err := NewManager(root, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	original := m.Settings()
+	m.samples["old-model@node"] = InferenceSample{Model: "old-model@node", TokensPerSecond: 12, MeasuredAt: time.Now()}
+	modified := original
+	modified.BatchSize = 512
+	if err := m.Update(modified); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.InferenceSamples()) != 0 {
+		t.Fatal("stale benchmark was retained across tuning change")
+	}
 }
