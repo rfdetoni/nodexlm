@@ -229,11 +229,23 @@ class MainActivity : Activity() {
             try {
                 val paired=PairingClient(this).join(code,endpoint,name,model)
                 runOnUiThread {
-                    setStatus(getString(R.string.connected,paired))
-                    if(tab==0) showTab(0)
+                    if (!isFinishing && !isDestroyed) {
+                        setStatus(getString(R.string.connected,paired))
+                        if(tab==0) showTab(0)
+                        offerRpcGuestAfterPairing()
+                    }
                 }
             }catch(e:Exception) {runOnUiThread {setStatus(getString(R.string.pair_failed,e.message))}}
         }
+    }
+
+    private fun offerRpcGuestAfterPairing() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rpc_guest_offer_title)
+            .setMessage(R.string.rpc_guest_offer_message)
+            .setPositiveButton(R.string.rpc_guest_offer_accept) { _, _ -> startRpcGuest() }
+            .setNegativeButton(R.string.rpc_guest_offer_later, null)
+            .show()
     }
 
     private fun startRpcGuest() {
