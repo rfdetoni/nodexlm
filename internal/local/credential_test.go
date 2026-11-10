@@ -67,7 +67,10 @@ func TestNativeEarlyExitReportsActionableStderr(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(dir, "exit-fixture")
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\\nprintf 'RPC device disappeared\\n' >&2\\nexit 42\\n"), 0700); err != nil {
+	if err := os.WriteFile(binary, []byte(`#!/bin/sh
+printf 'RPC device disappeared\\n' >&2
+exit 42
+`), 0700); err != nil {
 		t.Fatal(err)
 	}
 	m := &Managed{Binary: binary, ModelPath: model, Alias: "tiny.gguf"}
