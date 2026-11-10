@@ -75,3 +75,7 @@ o conteúdo armazenado no disco dele. O Android não recebeu essa opção.
   Windows, macOS e Android (inclusive energia e térmica).
 - Mantenha a saída como **experimental**, não prometa melhoria de velocidade
   sem benchmark A/B sobre o mesmo hardware.
+
+## Atualização do motor nativo
+
+A revisão do llama.cpp fica fixada em `internal/llamaruntime/revision.json` e os arquivos oficiais SHA-256 em `internal/llamaruntime/install.go`. Ao mudar de revisão, os pares Host/Guest RPC devem ser recompilados juntos (inclusive o patch Unix) e os novos binários publicados e verificados antes de preencher `published`. Enquanto os novos hashes não forem publicados, `EnsureDistributed` tenta a compilação local da mesma revisão. **Não é permitido reutilizar bundles publicados de revisões antigas**. Android compila sua própria biblioteca C++ na revisão fixada e precisa de testes físicos específicos.

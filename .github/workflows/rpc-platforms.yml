@@ -1,14 +1,20 @@
 name: Portable RPC bundles
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'internal/llamaruntime/**'
+      - 'android/app/src/main/cpp/**'
+      - '.github/workflows/rpc-platforms.yml'
   push:
     branches: [main]
     paths:
+      - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
 permissions:
   contents: read
 concurrency:
-  group: nodexlm-rpc-platforms-r3
+  group: nodexlm-rpc-platforms-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   build:
@@ -88,10 +94,13 @@ jobs:
           path: dist/*
           retention-days: 14
   publish:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions: {contents: write}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: {path: dist, merge-multiple: true}
       - name: Publish immutable matching bundles
@@ -99,8 +108,9 @@ jobs:
         run: |
           set -euo pipefail
           cat dist/*.sha256 > dist/SHA256SUMS.txt
-          if gh release view nodexlm-rpc-b12143-r3 >/dev/null 2>&1; then
+          tag=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["rpc_release"])')
+          if gh release view "$tag" >/dev/null 2>&1; then
             echo 'Immutable release already exists; do not overwrite reviewed binaries.'
             exit 0
           fi
-          gh release create nodexlm-rpc-b12143-r3 dist/*.tar.gz dist/SHA256SUMS.txt --target main --title 'Pinned RPC b12143 with private Unix sockets' --notes "Matched native RPC pairs built from $GITHUB_SHA; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads." --prerelease --latest=false
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target main --title "Pinned RPC b12255 with private Unix sockets" --notes "Matched native RPC pairs built from $GITHUB_SHA; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads." --prerelease --latest=false

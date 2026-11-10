@@ -37,6 +37,7 @@ jobs:
               assert subprocess.check_output(['git','show',build['commit']+':'+file])==pathlib.Path(file).read_bytes()
           before=json.loads(subprocess.check_output(['git','show',build['commit']+':internal/llamaruntime/revision.json']))
           current=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())
+          assert current["rpc_release"] == build["tag"], "Old artifact tag cannot publish a new runtime revision"
           assert before['commit']==current['commit'] and before['version']==current['version']
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('run='+str(build['run_id'])+'\n')
           PY
