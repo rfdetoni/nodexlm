@@ -211,6 +211,17 @@ func (m *Manager) Update(s Settings) error {
 	if err := writePrivate(filepath.Join(m.dir, "runtime.json"), raw); err != nil {
 		return err
 	}
+	// Benchmarks are only comparable when the native inference configuration
+	// is unchanged. Do not allow stale tokens/s to drive placement decisions.
+	old := m.settings
+	if old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
+		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
+		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB ||
+		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
+		old.BatchSize != s.BatchSize || old.UBatchSize != s.UBatchSize ||
+		old.SpeculativeMode != s.SpeculativeMode || old.DraftModel != s.DraftModel {
+		m.samples = make(map[string]InferenceSample)
+	}
 	m.settings = s
 	return nil
 }
