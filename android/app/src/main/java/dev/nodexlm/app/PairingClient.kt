@@ -59,7 +59,7 @@ internal class PairingClient(private val context: Context) {
                 val certDER = fetchCertificate(remote)
                 stage = "Host certificate identity"
                 if (trusted != null && !MessageDigest.isEqual(trusted, certDER)) {
-                    val reason = "O certificado do Host mudou. Importe o novo certificado do Host na aba Cluster antes de parear novamente."
+                    val reason = context.getString(R.string.pair_host_certificate_changed)
                     failures.add(reason)
                     Log.w("NodexLM-Pairing", reason)
                     continue
@@ -69,7 +69,10 @@ internal class PairingClient(private val context: Context) {
                 if (offer.getString("endpoint") != endpoint) continue
                 val expires = java.time.Instant.parse(offer.getString("expires"))
                 val now = java.time.Instant.now()
-                if (expires.isBefore(now) || expires.isAfter(now.plusSeconds(31 * 60L))) continue
+                if (expires.isBefore(now) || expires.isAfter(now.plusSeconds(31 * 60L))) {
+                    failures.add(context.getString(R.string.pair_clock_or_code_expired))
+                    continue
+                }
                 val salt = Base64.getUrlDecoder().decode(offer.getString("salt"))
                 val nonce = Base64.getUrlDecoder().decode(offer.getString("nonce"))
                 if (salt.size != 16 || nonce.size != 16) continue
@@ -89,7 +92,7 @@ internal class PairingClient(private val context: Context) {
                 if (MessageDigest.isEqual(proof, expected)) {
                     if (matches.none { MessageDigest.isEqual(it.second, certDER) }) matches.add(Pair(endpoint, certDER))
                 } else {
-                    failures.add("Código de pareamento não corresponde ao Host")
+                    failures.add(context.getString(R.string.pair_code_mismatch))
                 }
             } catch (e: Exception) {
                 // No codes, tokens or certificate contents are written to logs.
