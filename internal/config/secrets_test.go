@@ -10,7 +10,7 @@ import (
 )
 
 func TestEnsureSecretsPersistsAcrossRestarts(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), ".nodexlm")
 	first, err := EnsureSecrets(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestReadSecretsRejectsLooseUnixPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("NTFS ACL permissions are not represented by Unix mode bits")
 	}
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), ".nodexlm")
 	if _, err := EnsureSecrets(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestReadSecretsRejectsLooseUnixPermissions(t *testing.T) {
 }
 
 func TestAgentCredentialsStayPrivate(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), ".nodexlm")
 	first := Agent{Coordinator: "https://127.0.0.1:8443"}
 	first.Node.NodeID = "node"
 	first.Node.Token = "secret"
