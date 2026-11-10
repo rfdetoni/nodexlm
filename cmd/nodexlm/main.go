@@ -115,6 +115,7 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm join                       # prompts for 8-character code
   nodexlm guest                      # discover Host, pair, start distributed RPC worker
   nodexlm guest --backend cpu        # CPU-only distributed Guest
+  nodexlm guest --rejoin --server https://host:8443 --code ABCD2345 # renew stale node credentials
   nodexlm join --code ABCD2345 --name worker-1
   nodexlm pairing # issue a fresh 8-character code
   nodexlm join --server https://host:8443 --name worker-1 --model model.gguf --ca ./server.crt
@@ -378,6 +379,7 @@ func join(args []string) error {
 	fingerprint := f.String("fingerprint", "", "optional full Host certificate SHA-256 obtained out of band")
 	server := f.String("server", "", "HTTPS coordinator; optional when using --code on LAN")
 	code := f.String("code", "", "8-character pairing code displayed by the host")
+	rejoin := f.Bool("rejoin", false, "replace existing node credentials after authenticated code pairing")
 	discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "UDP discovery port")
 	ca := f.String("ca", "", "legacy trusted coordinator certificate")
 	name := f.String("name", "", "node display name")
@@ -386,8 +388,15 @@ func join(args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(*dir, "agent.json")); err == nil {
-		return errors.New("node already enrolled; refusing to overwrite credentials")
+	if _, err := os.Lstat(filepath.Join(*dir, "agent.json")); err == nil {
+		if !*rejoin {
+			return errors.New("node already enrolled; use --rejoin with a fresh pairing code to replace stale credentials")
+		}
+		if _, err := config.ReadAgent(*dir); err != nil {
+			return fmt.Errorf("cannot replace unsafe or invalid stored Guest credentials: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect stored Guest credentials: %w", err)
 	}
 	nodeName := *name
 	if nodeName == "" {
@@ -401,7 +410,7 @@ func join(args []string) error {
 	}
 	c, cancel := context.WithTimeout(context.Background(), 18*time.Second)
 	defer cancel()
-	if *code == "-" || (*code == "" && (*server == "" || os.Getenv("NODEXLM_JOIN_TOKEN") == "" || *model == "")) {
+	if *code == "-" || (*code == "" && (*rejoin || *server == "" || os.Getenv("NODEXLM_JOIN_TOKEN") == "" || *model == "")) {
 		if *code == "" {
 			fmt.Fprint(os.Stderr, "Enter host pairing code: ")
 		}
@@ -479,6 +488,9 @@ func join(args []string) error {
 		fmt.Println("Node paired securely:", nodeName, "ID", cred.NodeID)
 		return nil
 	}
+	if *rejoin {
+		return errors.New("--rejoin requires authenticated pairing via --code")
+	}
 	if *fingerprint != "" {
 		return errors.New("--fingerprint requires pairing by code")
 	}
@@ -514,6 +526,7 @@ func guest(args []string) error {
 	server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
 	name := f.String("name", "", "display name of this Guest")
 	code := f.String("code", "", "8-character pairing code; prompted when absent")
+	rejoin := f.Bool("rejoin", false, "renew stale credentials using a new Host pairing code")
 	dir := f.String("dir", config.DefaultDir(), "Guest configuration directory")
 	backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
 	bin := f.String("rpc-bin", "", "matching rpc-server executable")
@@ -526,8 +539,8 @@ func guest(args []string) error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected Guest arguments")
 	}
-	if _, err := config.ReadAgent(*dir); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+	if _, err := config.ReadAgent(*dir); err != nil || *rejoin {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("Guest credentials: %w", err)
 		}
 		if *server == "" {
@@ -559,6 +572,9 @@ func guest(args []string) error {
 			options = append(options, "--code", *code)
 		}
 		options = append(options, "--fingerprint", *fingerprint)
+		if *rejoin {
+			options = append(options, "--rejoin")
+		}
 		if err := join(options); err != nil {
 			return err
 		}
