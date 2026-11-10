@@ -47,28 +47,40 @@ func (m *Manager) Plan() (map[string]any, error) {
 	host := clusterplan.Budget(hardware.Collect("Host", nil))
 	nodes := []placement{}
 	localLayers := int(meta.BlockCount)
+	strategy := settings.PlacementStrategy
+	if strategy == "" { strategy = "capacity" }
+	excluded := []string{}
+	selectionReason := "Local-only inference"
 	if settings.Distributed {
 		if provider == nil {
 			return nil, errors.New("RPC provider unavailable")
 		}
 		guests := provider()
-		budgets := []uint64{}
+		selection, selectErr := m.chooseRPC(settings, meta.BlockCount, uint64(size), host, guests)
+		if selectErr != nil {
+			return nil, selectErr
+		}
+		localLayers = selection.LocalLayers
+		excluded = selection.Excluded
+		selectionReason = selection.Reason
 		var total uint64
-		for _, guest := range guests {
-			budgets = append(budgets, guest.CapacityBytes)
+		for _, guest := range selection.Guests {
 			total += guest.CapacityBytes
 		}
-		localLayers, err = clusterplan.LocalLayerCount(meta.BlockCount, uint64(size), host, budgets)
-		if err != nil {
-			return nil, err
-		}
 		remaining := int(meta.BlockCount) - localLayers
-		for i, guest := range guests {
+		for i, guest := range selection.Guests {
 			layers := remaining
-			if i < len(guests)-1 {
+			if i < len(selection.Guests)-1 {
 				layers = int(uint64(remaining) * guest.CapacityBytes / total)
 			}
-			nodes = append(nodes, placement{NodeID: guest.ID, Name: guest.Name, Network: m.networkSample(guest.ID), Endpoint: guest.Endpoint, Layers: layers, WeightBytes: uint64(size) * uint64(layers) / uint64(meta.BlockCount), Budget: guest.CapacityBytes})
+			name, endpoint := guest.ID, ""
+			for _, original := range guests {
+				if original.ID == guest.ID {
+					name, endpoint = original.Name, original.Endpoint
+					break
+				}
+			}
+			nodes = append(nodes, placement{NodeID: guest.ID, Name: name, Network: m.networkSample(guest.ID), Endpoint: endpoint, Layers: layers, WeightBytes: uint64(size) * uint64(layers) / uint64(meta.BlockCount), Budget: guest.CapacityBytes})
 			remaining -= layers
 			total -= guest.CapacityBytes
 		}
@@ -113,7 +125,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if !settings.Distributed && uint64(size) > host {
 		bottleneck = "host-memory"
 	}
-	return map[string]any{"model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and F16 KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
+	return map[string]any{"strategy": strategy, "excluded_guests": excluded, "selection_reason": selectionReason, "model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and F16 KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
 }
 func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 	if len(id) != 64 {
