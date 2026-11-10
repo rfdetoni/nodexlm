@@ -44,6 +44,10 @@ class MainActivity : Activity() {
     private lateinit var pairCode: EditText
     private lateinit var deviceName: EditText
     private lateinit var content: LinearLayout
+    private lateinit var contentScroll: ScrollView
+    private var coordinatorDraft: String? = null
+    private var pairingCodeDraft = ""
+    private var deviceNameDraft: String? = null
     private lateinit var navigation: LinearLayout
     private lateinit var library: ModelLibraryView
     private lateinit var toastStatus: TextView
@@ -80,18 +84,18 @@ class MainActivity : Activity() {
         base.addView(tabs)
         space(base, 16)
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        base.addView(content)
-        space(base, 12)
+        contentScroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = true
+            addView(content, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        base.addView(contentScroll, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         toastStatus = label(getString(R.string.ui_5c8c7f7835eb), 12, false)
         toastStatus.setPadding(dp(4), dp(12), dp(4), dp(8))
         base.addView(toastStatus)
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            isVerticalScrollBarEnabled = true
-            addView(base, ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        setContentView(scroll)
+        setContentView(base)
         library=ModelLibraryView(this,
             importPicker={
                 val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -106,6 +110,12 @@ class MainActivity : Activity() {
     }
 
     private fun showTab(index: Int) {
+        if (tab == 1 && index != 1 && ::coordinator.isInitialized &&
+            ::pairCode.isInitialized && ::deviceName.isInitialized) {
+            coordinatorDraft = coordinator.text.toString()
+            pairingCodeDraft = pairCode.text.toString()
+            deviceNameDraft = deviceName.text.toString()
+        }
         tab = index
         navigation.removeAllViews()
         val titles = listOf(
@@ -140,6 +150,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT, dp(42)).apply { marginEnd = dp(8) })
         }
         content.removeAllViews()
+        contentScroll.scrollTo(0, 0)
         when (index) {
             0 -> overviewScreen()
             1 -> connectionScreen()
@@ -173,9 +184,11 @@ class MainActivity : Activity() {
         val pairing=card()
         pairing.addView(label(getString(R.string.ui_9220df143b25),18,true))
         pairing.addView(label(getString(R.string.ui_9ee19c2db1d5),13,false))
-        coordinator=field(pairing,getString(R.string.host_url),prefs.getString("coordinator","") ?: "")
-        pairCode=field(pairing,getString(R.string.pairing_code),"")
-        deviceName=field(pairing,getString(R.string.device_name),prefs.getString("name",Build.MODEL) ?: Build.MODEL)
+        coordinator=field(pairing,getString(R.string.host_url),
+            coordinatorDraft ?: (prefs.getString("coordinator","") ?: ""))
+        pairCode=field(pairing,getString(R.string.pairing_code),pairingCodeDraft)
+        deviceName=field(pairing,getString(R.string.device_name),
+            deviceNameDraft ?: (prefs.getString("name",Build.MODEL) ?: Build.MODEL))
         pairing.addView(action(getString(R.string.ui_c06cce69d22b)) {joinCluster()})
         pairing.addView(action(getString(R.string.ui_5701de13e132)) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -291,6 +304,8 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         setStatus(getString(R.string.connected,paired))
+                        pairingCodeDraft = ""
+                        pairCode.setText("")
                         if(tab==1) showTab(0)
                         offerRpcGuestAfterPairing()
                     }
