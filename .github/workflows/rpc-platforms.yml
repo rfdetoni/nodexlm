@@ -15,7 +15,24 @@ concurrency:
   group: nodexlm-rpc-platforms-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.native.outputs.changed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false, fetch-depth: 2}
+      - id: native
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
+          fi
   build:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
