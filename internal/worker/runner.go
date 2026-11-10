@@ -147,9 +147,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	return nil
 }
 
-// boundedResult keeps the serialized job result below the coordinator's
-// 1 MiB JSON request limit. JSON escaping can expand each input byte up to
-// six bytes, so allowing 512 KiB of unescaped text is not safe.
+// boundedResult enforces BOTH the coordinator's 512 KiB text ceiling and
+// its 1 MiB HTTP JSON body limit. Escape-heavy text can be much larger on
+// the wire; check its actual encoding without reducing valid ASCII limits.
 func boundedResult(answer string, generateErr error) protocol.JobResult {
 	if generateErr != nil {
 		message := generateErr.Error()
@@ -158,9 +158,12 @@ func boundedResult(answer string, generateErr error) protocol.JobResult {
 		}
 		return protocol.JobResult{Error: message}
 	}
-	const maxResultBytes = 128 << 10
-	if len(answer) > maxResultBytes {
-		return protocol.JobResult{Error: "inference result exceeds coordinator limit; reduce max_tokens"}
+	const maxResultBytes = 1 << 19
+	result := protocol.JobResult{Result: answer}
+	if len(answer) <= maxResultBytes {
+		if encoded, err := json.Marshal(result); err == nil && len(encoded) <= 1<<20 {
+			return result
+		}
 	}
-	return protocol.JobResult{Result: answer}
+	return protocol.JobResult{Error: "inference result exceeds coordinator limit; reduce max_tokens"}
 }
