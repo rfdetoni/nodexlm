@@ -64,4 +64,4 @@ jobs:
           fi
           # GitHub restricts GITHUB_TOKEN tag creation at non-head commits.
           # The native source equality above and provenance retain build identity.
-          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt dist/BUILD.json --target main --title 'Pinned RPC b12143 with private Unix sockets' --notes "Native artifacts built from $build; source revision and Unix patch verified unchanged. Five platform builds and Linux native Unix E2E passed. Artifact attestations bind each binary to its build." --prerelease --latest=false
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt dist/BUILD.json --target main --title "Pinned RPC ${tag} with private Unix sockets" --notes "Native artifacts built from $build; source revision and Unix patch verified unchanged. Five platform builds and Linux native Unix E2E passed. Artifact attestations bind each binary to its build." --prerelease --latest=false
