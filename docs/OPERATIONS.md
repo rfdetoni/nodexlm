@@ -57,3 +57,14 @@ Desktop workflows build `.deb` and `.rpm` for Linux amd64/arm64/armhf. Their ded
 Stable `vX.Y.Z` releases generate a Homebrew formula and winget manifests using the actual release digests. These are reviewable release artifacts; availability in the public Homebrew/winget indexes requires a separate accepted upstream submission. Do not claim that generating a manifest publishes it to those indexes.
 
 DNS-SD advertises `nodexlm.local` and `_nodexlm._tcp.local` on private IPv4 multicast networks. UDP discovery remains available when multicast is blocked or another Host advertises the same alias. Discovery results never replace code/certificate verification.
+
+## Captura de diagnósticos com --debug
+
+```sh
+nodexlm host --debug --web-addr 127.0.0.1:8788
+nodexlm guest --backend cpu --debug
+```
+
+Host e Guest gravam em `${NODEXLM_HOME:-$HOME/.nodexlm}/logs/host.log` e `guest.log`, respectivamente. Os arquivos são privados (0600 no Linux/macOS) e mantêm até dois segmentos rotativos de aproximadamente 8 MiB cada. Por padrão, somente mensagens normais aparecem no terminal. No modo debug, registram-se eventos, rotas HTTP sem query/headers/corpos e saídas do runtime nativo GGML. **Logs podem conter nomes de modelos, paths, IPs e diagnósticos sensíveis.** Revise-os antes de compartilhar e desative --debug depois de investigar.
+
+O Console agora separa Visão geral, Modelos, Inferência, Dispositivos, Diagnóstico e Chat; no desktop, o menu fica na lateral e os conteúdos extensos têm rolagem delimitada.
