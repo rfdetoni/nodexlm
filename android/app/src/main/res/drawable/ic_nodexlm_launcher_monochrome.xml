@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NodexLM: network-of-five N, placed inside the adaptive icon's circular safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="@android:color/transparent"
+          android:strokeColor="#FFFFFFFF" android:strokeWidth="4.5"
+          android:strokeLineCap="round" android:strokeLineJoin="round"
+          android:pathData="M36,33 L36,75 M36,33 L54,54 L72,75 M72,33 L72,75"/>
+    <path android:fillColor="#FFFFFFFF"
+          android:pathData="M36,29 A4,4 0 1,1 36,37 A4,4 0 1,1 36,29 Z
+             M36,71 A4,4 0 1,1 36,79 A4,4 0 1,1 36,71 Z
+             M72,29 A4,4 0 1,1 72,37 A4,4 0 1,1 72,29 Z
+             M72,71 A4,4 0 1,1 72,79 A4,4 0 1,1 72,71 Z M54,49 A5,5 0 1,1 54,59 A5,5 0 1,1 54,49 Z"/>
+    
+</vector>

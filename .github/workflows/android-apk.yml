@@ -1,7 +1,7 @@
 name: Android APK
 
 # Native JNI builds are costly: auto-build debug APKs only when the pinned
-# llama.cpp source/patch changes on main. Other builds remain manual or tagged.
+# llama.cpp source/patch or launcher resources change on main. Other builds remain manual or tagged.
 # A successful main build is reused by android-public-download.yml.
 on:
   workflow_dispatch:
@@ -15,6 +15,11 @@ on:
     paths:
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
+      - 'android/app/src/main/res/drawable/ic_nodexlm_launcher_*.xml'
+      - 'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml'
+      - 'android/app/src/main/res/values/colors.xml'
+      - 'android/app/src/main/AndroidManifest.xml'
+      - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
 
@@ -39,7 +44,13 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" == refs/tags/* ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
+            native="$(python3 scripts/native-revision-changed.py)"
+            launcher="$(git diff --name-only HEAD^ HEAD -- android/app/src/main/res/drawable android/app/src/main/res/mipmap-anydpi-v26 android/app/src/main/res/values/colors.xml android/app/src/main/AndroidManifest.xml .github/workflows/android-apk.yml)"
+            if [[ "$native" == "true" || -n "$launcher" ]]; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
   build:
     needs: detect

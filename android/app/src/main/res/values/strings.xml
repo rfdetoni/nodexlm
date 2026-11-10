@@ -145,4 +145,9 @@
     <string name="pair_host_certificate_changed">The Host certificate has changed. Import the new Host certificate from Cluster before pairing again.</string>
     <string name="pair_clock_or_code_expired">Pairing code expired or the phone date/time is incorrect.</string>
     <string name="pair_code_mismatch">Pairing code does not match this Host.</string>
+    <string name="tab_overview">Overview</string>
+    <string name="tab_connection">Connection</string>
+    <string name="tab_processing">Processing</string>
+    <string name="node_not_paired">Not paired with a Host</string>
+    <string name="node_paired">Paired with a Host</string>
 </resources>

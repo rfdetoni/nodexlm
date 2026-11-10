@@ -1,5 +1,9 @@
 <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>NodexLM · Console</title><link rel="stylesheet" href="/styles.css"></head><body>
-<header><div class="brand"><div class="mark">NX</div><div><strong>NodexLM</strong><small>LOCAL INTELLIGENCE · CLUSTER</small></div></div><span class="hint"><span class="pulse"></span> Console local</span></header>
+<header><div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+<g fill="none" stroke="#8294a5" stroke-width="6" stroke-linecap="round">
+<path d="M18 18V82 M18 18L50 50L82 82 M82 18V82"/>
+</g><g fill="#8294a5"><circle cx="18" cy="18" r="8"/><circle cx="18" cy="82" r="8"/><circle cx="82" cy="18" r="8"/><circle cx="82" cy="82" r="8"/></g><circle cx="50" cy="50" r="9" fill="#a9b6c2"/>
+</svg><div><strong>NodexLM</strong><small>INFERÊNCIA LOCAL DISTRIBUÍDA</small></div></div><span class="hint"><span class="pulse"></span> Console do Host</span></header>
 <main>
 <section id="auth" class="card auth"><h1>Acessar painel</h1><p>Informe a credencial administrativa do host. Ela fica armazenada somente nesta aba do navegador.</p><form id="login"><label>Credencial administrativa<input id="secret" type="password" required placeholder="NODEXLM_ADMIN_TOKEN" autocomplete="off"></label><button>Entrar no painel</button></form><p class="muted">No host, execute <code>nodexlm web-token</code> para consultar a credencial.</p></section>
 <div id="app" hidden>
@@ -17,9 +21,45 @@
 <div class="console-main" id="consoleMain">
 <div class="topline"><div><p class="workspace-eyebrow">NODEXLM / CONSOLE</p><h1 id="workspaceTitle">Visão geral</h1><p id="workspaceDescription" class="muted">Estado do cluster e modelos disponíveis.</p></div><button class="ghost" id="logout">Sair</button></div>
 <section class="console-view" id="view-overview" aria-labelledby="nav-overview">
-<div class="grid metrics"><div class="card"><div class="muted">Nós registrados</div><strong id="nodeCount">—</strong></div><div class="card"><div class="muted">Nós online</div><strong id="onlineCount">—</strong></div><div class="card"><div class="muted">Modelo local</div><strong id="modelState">—</strong></div></div>
-<div class="overview-panel card"><div><span class="overview-kicker">DISTRIBUIÇÃO DE INFERÊNCIA</span><h2>Seu cluster em um só lugar.</h2><p class="muted">Escolha uma área no menu para gerenciar os modelos, ajustar a inferência ou acompanhar os dispositivos. Os dados continuam atualizando sem trocar de página.</p></div>
-<div class="quick-links"><button type="button" class="secondary" id="quickModels">Gerenciar modelos</button><button type="button" class="secondary" id="quickCluster">Ver dispositivos</button><button type="button" class="secondary" id="quickInference">Carregar modelo</button></div></div></section>
+<div class="overview-layout">
+<div class="overview-primary">
+<div class="overview-intro">
+<div><p class="overview-kicker">NODEXLM / CLUSTER LOCAL</p><h2>Seu cluster em um só lugar.</h2>
+<p>Gerencie modelos GGUF, dispositivos pareados e a inferência distribuída com llama.cpp.</p></div>
+<svg class="overview-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+<g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round">
+<path d="M17 17V83 M17 17L50 50L83 83 M83 17V83"/>
+</g><g fill="currentColor"><circle cx="17" cy="17" r="7"/><circle cx="17" cy="83" r="7"/><circle cx="50" cy="50" r="7"/><circle cx="83" cy="17" r="7"/><circle cx="83" cy="83" r="7"/></g>
+</svg>
+</div>
+<div class="overview-shortcuts" aria-label="Ações rápidas">
+<button type="button" id="quickModels" class="shortcut"><span class="shortcut-icon" aria-hidden="true">◇</span><span><strong>Modelos</strong><small>Biblioteca e downloads</small></span></button>
+<button type="button" id="quickCluster" class="shortcut"><span class="shortcut-icon" aria-hidden="true">⌘</span><span><strong>Dispositivos</strong><small>Host e Guests RPC</small></span></button>
+<button type="button" id="quickInference" class="shortcut"><span class="shortcut-icon" aria-hidden="true">▷</span><span><strong>Inferência</strong><small>Camadas e runtime</small></span></button>
+<button type="button" id="quickChat" class="shortcut"><span class="shortcut-icon" aria-hidden="true">▤</span><span><strong>Chat</strong><small>Modelo residente</small></span></button>
+</div>
+<div class="grid metrics">
+<div class="card"><div class="muted">Dispositivos registrados</div><strong id="nodeCount">—</strong></div>
+<div class="card"><div class="muted">Dispositivos online</div><strong id="onlineCount">—</strong></div>
+<div class="card"><div class="muted">Estado do modelo</div><strong id="modelState">—</strong></div>
+<div class="card"><div class="muted">Capacidade estimada</div><strong id="overviewCapacity">—</strong></div>
+</div>
+<section class="card overview-compose">
+<h3>Converse com um modelo local</h3>
+<p class="muted">Escreva uma mensagem para continuar no chat com um modelo carregado.</p>
+<label for="overviewPrompt">Mensagem</label><textarea id="overviewPrompt" rows="2" placeholder="Pergunte algo ao seu modelo..."></textarea>
+<div class="compose-footer"><span class="muted">A mensagem não será enviada automaticamente.</span><button type="button" id="overviewOpenChat">Abrir no chat</button></div>
+</section>
+</div>
+<aside class="card overview-side" aria-label="Resumo da operação">
+<h2>Operação local</h2>
+<p class="muted">Este painel administra o Host local. Os Guests comunicam com ele usando uma conexão autenticada.</p>
+<div class="side-stat"><span>Guests online</span><strong id="sideOnline">—</strong></div>
+<div class="side-stat"><span>Modelos residentes</span><strong id="residentCount">—</strong></div>
+<div class="side-stat"><span>Orçamento de memória estimado</span><strong id="sideCapacity">—</strong></div>
+<div class="side-note"><h3>Sobre a distribuição</h3><p>RAM e VRAM anunciadas não são automaticamente somadas. A alocação depende do backend, do modelo e da rede.</p></div>
+</aside>
+</div></section>
 <section class="console-view" id="view-models" aria-labelledby="nav-models" hidden><div class="grid models-workspace">
 <section class="card"><h2>Modelos GGUF</h2><p class="muted">Arquivos são mantidos em disco, sem carregar pesos na RAM durante a listagem.</p><div class="folder-info"><p class="muted">Pasta dos modelos no Host: <code id="modelFolder">Consultando…</code></p><div class="folder-controls"><button type="button" class="secondary" id="copyModelFolder">Copiar caminho</button><button type="button" class="secondary" id="openModelFolder">Abrir pasta no Host</button></div></div><div id="models" class="model-list" aria-live="polite"></div><hr><h3>Baixar modelo</h3><form id="downloadForm"><label>URL do arquivo GGUF no Hugging Face<input id="downloadUrl" required type="url" placeholder="https://huggingface.co/autor/repositorio/resolve/main/model.gguf"></label><label>Nome do arquivo<input id="downloadName" required placeholder="model.gguf"></label><button>Iniciar download</button></form><div id="downloadProgress" class="download-status" role="status" aria-live="polite"></div></section>
 <section class="card wide"><h2>Capacidade do cluster e modelos compatíveis</h2><p class="muted">As estimativas não garantem execução: dependem do runtime RPC, quantização, contexto e velocidade da rede.</p><div id="capacity" class="capacity-summary">Carregando capacidades...</div>

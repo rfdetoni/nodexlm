@@ -60,9 +60,15 @@ function setupConsoleNavigation(){
    $('nav-'+consoleViews[next].id).focus();
   });
  }
- for(const [id,view] of [['quickModels','models'],['quickCluster','cluster'],['quickInference','inference']]){
+ for(const [id,view] of [['quickModels','models'],['quickCluster','cluster'],['quickInference','inference'],['quickChat','chat']]){
   $(id).addEventListener('click',()=>activateConsoleView(view));
  }
+ $('overviewOpenChat').addEventListener('click',()=>{
+  const draft=$('overviewPrompt').value;
+  if(draft.trim())$('prompt').value=draft;
+  activateConsoleView('chat');
+  $('prompt').focus();
+ });
  let stored='overview';
  try{stored=sessionStorage.getItem('nodexlm-console-view')||'overview'}catch{}
  activateConsoleView(stored);
@@ -262,11 +268,15 @@ function renderCatalog() {
 async function refresh(){
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
  renderResidentModels(resident);
+ $('residentCount').textContent=resident.length;
  latestStatus=status;localModels=models;
  renderLoadStatus(status);
  await updateLoadingPlan(status);
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
+ $('sideOnline').textContent=nodes.filter(n=>n.status==='online').length;
+ $('overviewCapacity').textContent=fmt(c.aggregate_budget_bytes);
+ $('sideCapacity').textContent=fmt(c.aggregate_budget_bytes);
  $('modelState').textContent=status.runtime.loading
   ? 'Carregando · '+String(status.runtime.phase||'preparando').replace(/_/g,' ')
   : status.runtime.error ? 'Falha · '+status.runtime.error
