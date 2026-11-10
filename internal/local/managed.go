@@ -42,8 +42,44 @@ type Managed struct {
 	// remaining blocks are placed on RPC devices using layer-split mode.
 	RPCLocalLayers int
 	started        *exec.Cmd
+	processExit    *nativeProcessExit
 	endpoint       *Engine
 	idleTimer      *time.Timer
+}
+
+// nativeProcessExit ensures the child is reaped exactly once, even if it exits
+// during initialization or the user cancels a long distributed model load.
+type nativeProcessExit struct {
+	done chan struct{}
+	err  error
+}
+
+// nativeLogTail retains only the latest stderr bytes for actionable errors.
+type nativeLogTail struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (l *nativeLogTail) Write(p []byte) (int, error) {
+	n := len(p)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	const limit = 4096
+	if len(p) >= limit {
+		l.data = append(l.data[:0], p[len(p)-limit:]...)
+		return n, nil
+	}
+	if excess := len(l.data) + len(p) - limit; excess > 0 {
+		l.data = append([]byte(nil), l.data[excess:]...)
+	}
+	l.data = append(l.data, p...)
+	return n, nil
+}
+
+func (l *nativeLogTail) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.TrimSpace(string(l.data))
 }
 
 // Load starts a resident llama-server only when explicitly requested.
@@ -134,43 +170,68 @@ func (m *Managed) ensure(ctx context.Context) error {
 	cmd.Env = append(os.Environ(), "LLAMA_API_KEY="+apiKey)
 	process.KillWithParent(cmd)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = os.Stderr
+	stderr := &nativeLogTail{}
+	cmd.Stderr = io.MultiWriter(os.Stderr, stderr)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to launch llama-server: %w", err)
 	}
+	exit := &nativeProcessExit{done: make(chan struct{})}
+	go func() {
+		exit.err = cmd.Wait()
+		close(exit.done)
+	}()
+	stopProcess := func() {
+		_ = cmd.Process.Kill()
+		<-exit.done
+	}
 	endpoint, err := New("http://127.0.0.1:" + strconv.Itoa(port))
 	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		stopProcess()
 		return err
 	}
 	endpoint.APIKey = apiKey
-	startup, stop := context.WithTimeout(ctx, 90*time.Second)
+	timeout := 90 * time.Second
+	if len(m.RPCServers) > 0 {
+		// Slow RPC links may take many minutes just to transfer model tensors.
+		// A caller can still cancel at any point.
+		timeout = 75 * time.Minute
+	}
+	startup, stop := context.WithTimeout(ctx, timeout)
 	defer stop()
 	for {
+		select {
+		case <-exit.done:
+			return fmt.Errorf("llama-server exited while loading the model: %v; recent stderr: %s", exit.err, stderr.String())
+		default:
+		}
 		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+"/health", nil)
 		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
-			res, err := endpoint.HTTP.Do(req)
-			if err == nil {
+			res, requestErr := endpoint.HTTP.Do(req)
+			if requestErr == nil {
 				res.Body.Close()
-				if res.StatusCode == 200 {
+				if res.StatusCode == http.StatusOK {
+					select {
+					case <-exit.done:
+						return fmt.Errorf("llama-server exited before becoming ready: %v; recent stderr: %s", exit.err, stderr.String())
+					default:
+					}
 					m.started = cmd
+					m.processExit = exit
 					m.endpoint = endpoint
 					return nil
 				}
 			}
 		}
-		if startup.Err() != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-			return errors.New("llama-server did not become ready before deadline")
-		}
 		select {
+		case <-exit.done:
+			return fmt.Errorf("llama-server exited while loading the model: %v; recent stderr: %s", exit.err, stderr.String())
 		case <-startup.Done():
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-			return errors.New("llama-server startup cancelled")
+			stopProcess()
+			if errors.Is(startup.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("llama-server was not ready after %s; for RPC check Guest connectivity and native stderr: %s", timeout, stderr.String())
+			}
+			return fmt.Errorf("llama-server startup cancelled: %w", startup.Err())
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
@@ -178,8 +239,11 @@ func (m *Managed) ensure(ctx context.Context) error {
 func (m *Managed) stopLocked() {
 	if m.started != nil {
 		_ = m.started.Process.Kill()
-		_ = m.started.Wait()
+		if m.processExit != nil {
+			<-m.processExit.done
+		}
 		m.started = nil
+		m.processExit = nil
 		m.endpoint = nil
 	}
 }
