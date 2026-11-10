@@ -27,5 +27,11 @@ func securePrivateDir(path string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("configuration path must be a real directory")
 	}
-	return os.Chmod(path, 0700)
+	// Do not chmod an arbitrary configured directory: NODEXLM_HOME may
+	// point to an existing shared tree. The operator must explicitly
+	// restrict that directory before secrets may be written.
+	if info.Mode().Perm()&0077 != 0 {
+		return errors.New("configuration directory must be private (0700); fix its permissions before starting NodexLM")
+	}
+	return nil
 }
