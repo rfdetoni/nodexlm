@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,5 +100,26 @@ func TestWorkerStreamsAndCancelsThroughCoordinator(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("worker did not stop")
+	}
+}
+
+func TestBoundedResultRespectsCoordinatorJSONBodyLimit(t *testing.T) {
+	// JSON escapes control bytes as \u0000. The historical 512 KiB text
+	// threshold would expand to more than the 1 MiB request limit.
+	result := boundedResult(strings.Repeat("\x00", 128<<10), nil)
+	body, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "" || len(body) > 1<<20 || len(result.Result) > (1<<20)/2 {
+		t.Fatalf("valid result cannot be submitted safely: error=%q serialized=%d", result.Error, len(body))
+	}
+	tooLarge := boundedResult(strings.Repeat("x", (128<<10)+1), nil)
+	if tooLarge.Error == "" || tooLarge.Result != "" {
+		t.Fatal("oversized result must be reported as a bounded job failure")
+	}
+	generationFailure := boundedResult(strings.Repeat("ignored", 40000), fmt.Errorf("%s", strings.Repeat("e", 2000)))
+	if generationFailure.Result != "" || len(generationFailure.Error) != 1000 {
+		t.Fatalf("generator error was not preserved and bounded: %+v", generationFailure)
 	}
 }
