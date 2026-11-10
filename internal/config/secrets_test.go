@@ -65,3 +65,29 @@ func TestAgentCredentialsStayPrivate(t *testing.T) {
 		}
 	}
 }
+
+func TestUnsafeExistingDirectoryIsNotChmodded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows credentials are protected with NTFS ACLs")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := securePrivateDir(dir); err == nil {
+		t.Fatal("accepted insecure pre-existing credentials directory")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("modified pre-existing directory permissions unexpectedly: %v", info.Mode().Perm())
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := securePrivateDir(dir); err != nil {
+		t.Fatalf("rejected valid private configuration directory: %v", err)
+	}
+}
