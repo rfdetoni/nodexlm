@@ -37,6 +37,7 @@ type Managed struct {
 	MoECPULayers                                 int
 	MoECacheMiB                                  int
 	FlashAttention, KVCacheType, SpeculativeMode string
+	DraftModelPath string
 	BatchSize, UBatchSize                        int
 	Idle                                         time.Duration
 	KeepLoaded                                   bool
@@ -117,6 +118,15 @@ func (m *Managed) ensure(ctx context.Context) error {
 	}
 	if _, err := ModelSize(m.ModelPath); err != nil {
 		return fmt.Errorf("missing GGUF shards: %w", err)
+	}
+
+	if m.SpeculativeMode == "draft" {
+		if m.DraftModelPath == "" || m.DraftModelPath == m.ModelPath {
+			return errors.New("draft speculative decoding requires another GGUF")
+		}
+		if _, err := ModelSize(m.DraftModelPath); err != nil {
+			return fmt.Errorf("draft GGUF unavailable: %w", err)
+		}
 	}
 	meta, err := InspectGGUF(m.ModelPath)
 	if err != nil {
@@ -289,8 +299,13 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 	if m.UBatchSize > 0 {
 		args = append(args, "--ubatch-size", strconv.Itoa(m.UBatchSize))
 	}
+	
 	if m.SpeculativeMode == "ngram" {
 		args = append(args, "--spec-type", "ngram-simple")
+	} else if m.SpeculativeMode == "draft" && m.DraftModelPath != "" {
+		// Draft stays on Host CPU to avoid allocating another model on the
+		// active RPC Guest backends. GGML validates vocabulary compatibility.
+		args = append(args, "--spec-type", "draft-simple", "--spec-draft-model", m.DraftModelPath, "--spec-draft-ngl", "0")
 	}
 	switch {
 	case m.MoECPU:
