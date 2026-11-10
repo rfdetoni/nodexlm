@@ -160,6 +160,23 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, items)
 	}))
+	mux.HandleFunc("GET /api/models/folder", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, map[string]string{"path": d.Manager.ModelFolder()})
+	}))
+	mux.HandleFunc("POST /api/models/folder/open", d.api(func(w http.ResponseWriter, r *http.Request) {
+		if err := d.Manager.OpenModelFolder(); err != nil {
+			failure(w, 500, err)
+			return
+		}
+		reply(w, 200, map[string]string{"status": "opened"})
+	}))
+	mux.HandleFunc("DELETE /api/models/{name}", d.api(func(w http.ResponseWriter, r *http.Request) {
+		if err := d.Manager.DeleteModel(r.PathValue("name")); err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, map[string]string{"status": "deleted"})
+	}))
 	mux.HandleFunc("DELETE /api/download", d.api(func(w http.ResponseWriter, r *http.Request) {
 		d.Manager.CancelDownload()
 		reply(w, 202, map[string]string{"status": "cancelling"})
