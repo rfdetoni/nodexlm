@@ -54,3 +54,17 @@ Na importação de GGUF dividido, selecione todas as partes do mesmo modelo. A b
 Em Ajustes, configure operação somente carregando, bateria mínima e intervalo de horas (inclusive atravessando meia-noite). Temperatura SEVERE interrompe o serviço. A notificação informa o motivo; reiniciar exige ação do usuário. O modo independente suporta texto incremental UTF-8, amostragem, stop e cancelamento de lease; mantém os limites de contexto/saída documentados no código nativo.
 
 As telas e notificações possuem recursos em inglês e português do Brasil, escolhidos pelo idioma do Android. Erros retornados pelo sistema/runtime podem manter sua língua original.
+
+## Android 11/12 não pareia ou aparece offline após conectar
+
+Informe a URL HTTPS do Host (por exemplo, `https://192.168.100.30:8443`) em vez de depender somente da descoberta UDP. Confira hora automática no Android e use um código novo do Host. Se o dispositivo foi pareado com um Host anterior e o certificado mudou, o app agora apresenta uma mensagem específica: importe o certificado `server.crt` do Host pelo botão **Importar certificado do Host** na aba Cluster. O certificado é fixado por SHA-256 e a validação criptográfica do código permanece obrigatória.
+
+Para registrar a etapa exata onde a conexão falha:
+
+```sh
+adb logcat -v time -s NodexLM-Pairing:* NodexLM-RpcGuest:* NodexLM-RPC:* AndroidRuntime:E
+```
+
+O app registra a etapa de URL, handshake TLS, certificado conhecido, oferta e prova criptográfica; **não registra códigos nem tokens**. Em dispositivos com provedores TLS OEM mais antigos, o túnel RPC aceita ausência do suporte a ALPN e continua exigindo HTTPS autenticado e HTTP/1.1. Não rebaixamos a versão mínima TLS do Host.
+
+Se o pareamento funciona mas o Guest cai offline, escolha **Somente CPU** para isolar problemas Vulkan/driver e confirme a notificação de serviço foreground e permissões de bateria. O teste de compatibilidade física Android 11/12 ainda depende de logs de aparelhos reais.
