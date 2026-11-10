@@ -12,6 +12,7 @@ import (
 
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/process"
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 )
 
 func runUnixGuest(ctx context.Context, client *netclient.Client, executable, address string, slots int, device string) error {
@@ -25,8 +26,8 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 	cmd := exec.CommandContext(ctx, executable, args...)
 	process.KillWithParent(cmd)
 	cmd.Env = nativeRPCEnvironment(executable)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = debuglog.NativeOutput()
+	cmd.Stderr = debuglog.NativeOutput()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
