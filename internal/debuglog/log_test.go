@@ -72,20 +72,26 @@ func TestStartRejectsUnsafeDirectoryAndSymlink(t *testing.T) {
 
 func TestRotationBoundsFileAndPreservesBackup(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nodexlm")
+	logs := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logs, 0700); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(logs, "host.log")
+	file, err := os.OpenFile(log, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxLogBytes-1); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
 	stop, err := Start(dir, "host")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stop()
-	payload := strings.Repeat("x", int(maxLogBytes)-2048)
-	if _, err := NativeOutput().Write([]byte(payload)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NativeOutput().Write([]byte("new segment\n")); err != nil {
-		t.Fatal(err)
-	}
-	// NativeOutput sends diagnostics to stderr too; check the durable log.
-	log := filepath.Join(dir, "logs", "host.log")
 	info, err := os.Stat(log)
 	if err != nil {
 		t.Fatal(err)
