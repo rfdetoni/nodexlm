@@ -319,17 +319,23 @@ class RpcGuestService : Service() {
             remote.keepAlive = true
             remote.connect(InetSocketAddress(host, port), 7000)
             remote.soTimeout = 10_000
-            remote.sslParameters = remote.sslParameters.apply {
-                // Paired certificate pin is verified in PinnedHostTls.
-                // Do not require the original IP in the self-signed SAN.
-                endpointIdentificationAlgorithm = null
-                // The native GGML relay uses a raw HTTP/1.1 CONNECT that is
-                // hijacked by Go. HTTP/2 ALPN would return binary SETTINGS,
-                // which looks like a malformed HTTP response.
-                applicationProtocols = arrayOf("http/1.1")
+            val params = remote.sslParameters
+            // Paired certificate pin is verified in PinnedHostTls.
+            // Do not require the original IP in the self-signed SAN.
+            params.endpointIdentificationAlgorithm = null
+            try {
+                // The native relay uses HTTP/1.1 CONNECT. Some older OEM
+                // TLS providers lack ALPN; with no ALPN HTTP/1.1 is the fallback.
+                params.applicationProtocols = arrayOf("http/1.1")
+            } catch (e: UnsupportedOperationException) {
+                Log.w(LOG, "TLS provider has no ALPN support; using HTTP/1.1 without ALPN", e)
             }
+            remote.sslParameters = params
             remote.startHandshake()
-            val negotiated = remote.applicationProtocol
+            val negotiated = try { remote.applicationProtocol } catch (e: UnsupportedOperationException) {
+                Log.w(LOG, "TLS provider cannot report ALPN protocol; using HTTP/1.1", e)
+                null
+            }
             check(negotiated.isNullOrEmpty() || negotiated == "http/1.1") {
                 "RPC requires HTTP/1.1; Host negotiated $negotiated"
             }
