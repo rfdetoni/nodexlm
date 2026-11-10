@@ -136,17 +136,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		stop()
 		<-monitorDone
-		if len(answer) > 1<<19 {
-			answer = ""
-			generateErr = errors.New("generation result exceeds coordinator limit")
-		}
-		out := protocol.JobResult{Result: answer}
-		if generateErr != nil {
-			out.Error = generateErr.Error()
-			if len(out.Error) > 1000 {
-				out.Error = out.Error[:1000]
-			}
-		}
+		out := boundedResult(answer, generateErr)
 		resultCtx, done := context.WithTimeout(ctx, 15*time.Second)
 		_, err = r.Client.Request(resultCtx, http.MethodPost, "/v1/nodes/result/"+work.ID, out, nil)
 		done()
@@ -155,4 +145,22 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// boundedResult keeps the serialized job result below the coordinator's
+// 1 MiB JSON request limit. JSON escaping can expand each input byte up to
+// six bytes, so allowing 512 KiB of unescaped text is not safe.
+func boundedResult(answer string, generateErr error) protocol.JobResult {
+	if generateErr != nil {
+		message := generateErr.Error()
+		if len(message) > 1000 {
+			message = message[:1000]
+		}
+		return protocol.JobResult{Error: message}
+	}
+	const maxResultBytes = 128 << 10
+	if len(answer) > maxResultBytes {
+		return protocol.JobResult{Error: "inference result exceeds coordinator limit; reduce max_tokens"}
+	}
+	return protocol.JobResult{Result: answer}
 }
