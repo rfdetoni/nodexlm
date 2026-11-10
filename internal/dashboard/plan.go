@@ -96,6 +96,11 @@ func (m *Manager) Plan() (map[string]any, error) {
 		// F16 K and V tensors; architectures with other KV layouts remain unknown.
 		width := uint64(meta.EmbeddingLength/meta.HeadCount) * uint64(meta.KVHeadCount)
 		value := uint64(4) * uint64(settings.ContextTokens) * uint64(meta.BlockCount) * width
+		if settings.KVCacheType == "q8_0" {
+			value = (uint64(2) * uint64(settings.ContextTokens) * uint64(meta.BlockCount) * width * 34 + 31) / 32
+		} else if settings.KVCacheType == "q4_0" {
+			value = (uint64(2) * uint64(settings.ContextTokens) * uint64(meta.BlockCount) * width * 18 + 31) / 32
+		}
 		kvBytes = &value
 	}
 	samples := m.InferenceSamples()
@@ -127,7 +132,9 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if !settings.Distributed && uint64(size) > host {
 		bottleneck = "host-memory"
 	}
-	return map[string]any{"strategy": strategy, "excluded_guests": excluded, "selection_reason": selectionReason, "model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and F16 KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
+	kvType := settings.KVCacheType
+	if kvType == "" { kvType = "f16" }
+	return map[string]any{"estimated_kv_type": kvType, "strategy": strategy, "excluded_guests": excluded, "selection_reason": selectionReason, "model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
 }
 func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 	if len(id) != 64 {
