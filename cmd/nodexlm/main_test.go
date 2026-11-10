@@ -13,7 +13,7 @@ import (
 )
 
 func TestRejoinRejectsInvalidCodeWithoutReplacingSavedAgent(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), ".nodexlm")
 	original := config.Agent{
 		Coordinator: "https://192.168.1.1:8443",
 		Node: protocol.Credential{
