@@ -20,4 +20,10 @@ func TestNativeTuningFlagsOptIn(t *testing.T) {
 			t.Fatalf("missing native option %s: %s", option, got)
 		}
 	}
+
+	modelDraft := &Managed{ModelPath: "main.gguf", Alias: "main", SpeculativeMode: "draft", DraftModelPath: "draft.gguf"}
+	flags := strings.Join(modelDraft.args(8787, 2048, 4, "auto", 24), " ")
+	for _, option := range []string{"--spec-type draft-simple", "--spec-draft-model draft.gguf", "--spec-draft-ngl 0"} {
+		if !strings.Contains(flags, option) { t.Fatalf("missing draft option %s: %s", option, flags) }
+	}
 }
