@@ -156,28 +156,28 @@ internal class PairingClient(private val context: Context) {
                 Log.w("NodexLM-Pairing", "Wi-Fi multicast lock unavailable", e)
             }
             DatagramSocket().use { socket ->
-            socket.broadcast = true
-            socket.soTimeout = 250
-            val bytes = DISCOVERY_MESSAGE.toByteArray(Charsets.US_ASCII)
-            val destinations = linkedSetOf(InetAddress.getByName("127.0.0.1"), InetAddress.getByName("255.255.255.255"))
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                if (!iface.isUp || iface.isLoopback) continue
-                for (addr in iface.interfaceAddresses) addr.broadcast?.let { destinations.add(it) }
-            }
-            for (ip in destinations) try { socket.send(DatagramPacket(bytes, bytes.size, ip, DISCOVERY_PORT)) } catch (_: Exception) {}
-            val deadline = System.currentTimeMillis() + 3000L
-            val buf = ByteArray(1500)
-            while (System.currentTimeMillis() < deadline && endpoints.size < 20) {
-                val packet = DatagramPacket(buf, buf.size)
-                try {
-                    socket.receive(packet)
-                    val offer = JSONObject(String(buf, 0, packet.length, Charsets.UTF_8))
-                    val url = URL(offer.getString("endpoint"))
-                    if (url.protocol == "https" && url.port > 0 && url.host.isNotBlank()) endpoints.add(url.toString())
-                } catch (_: Exception) { /* Continue listening until the deadline. */ }
-            }
+                socket.broadcast = true
+                socket.soTimeout = 250
+                val bytes = DISCOVERY_MESSAGE.toByteArray(Charsets.US_ASCII)
+                val destinations = linkedSetOf(InetAddress.getByName("127.0.0.1"), InetAddress.getByName("255.255.255.255"))
+                val interfaces = NetworkInterface.getNetworkInterfaces()
+                while (interfaces.hasMoreElements()) {
+                    val iface = interfaces.nextElement()
+                    if (!iface.isUp || iface.isLoopback) continue
+                    for (addr in iface.interfaceAddresses) addr.broadcast?.let { destinations.add(it) }
+                }
+                for (ip in destinations) try { socket.send(DatagramPacket(bytes, bytes.size, ip, DISCOVERY_PORT)) } catch (_: Exception) {}
+                val deadline = System.currentTimeMillis() + 3000L
+                val buf = ByteArray(1500)
+                while (System.currentTimeMillis() < deadline && endpoints.size < 20) {
+                    val packet = DatagramPacket(buf, buf.size)
+                    try {
+                        socket.receive(packet)
+                        val offer = JSONObject(String(buf, 0, packet.length, Charsets.UTF_8))
+                        val url = URL(offer.getString("endpoint"))
+                        if (url.protocol == "https" && url.port > 0 && url.host.isNotBlank()) endpoints.add(url.toString())
+                    } catch (_: Exception) { /* Continue listening until the deadline. */ }
+                }
             }
         } finally {
             try { if (lock?.isHeld == true) lock.release() } catch (_: Exception) {}
