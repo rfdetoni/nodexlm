@@ -10,6 +10,10 @@ let actionBusy = false;
 let catalogSearching = false;
 let catalogSearched = false;
 let downloadPollBusy = false;
+let residentModelNames=[];
+let loadingPlan=null;
+let loadingPlanModel='';
+let modelFolderPath='';
 const fmt = bytes => bytes > 0 ? (bytes / 1073741824).toFixed(2) + ' GiB' : '—';
 function notice(message) { $('toast').textContent=message; $('toast').style.display='block'; clearTimeout(notice.timer); notice.timer=setTimeout(() => $('toast').style.display='none', 4800); }
 async function api(path, method='GET', body) {
@@ -102,6 +106,40 @@ async function downloadCandidate(candidate, applyAfter) {
   await refresh();
  } finally {actionBusy=false; if(latestStatus){renderLocalModels(localModels,latestStatus);renderCatalog();}}
 }
+async function loadModelFolder() {
+ try {
+  const folder=await api('/api/models/folder');
+  modelFolderPath=folder.path||'';
+  $('modelFolder').textContent=modelFolderPath||'Não configurada';
+ } catch(e) {$('modelFolder').textContent='Indisponível';}
+}
+function renderLoadStatus(status){
+ const box=$('loadingStatus'), runtime=status.runtime||{};
+ if(!runtime.loading){box.hidden=true;box.replaceChildren();loadingPlan=null;loadingPlanModel='';return;}
+ box.hidden=false;box.replaceChildren(el('strong','', 'Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
+ const activity=el('progress','download-bar');
+ activity.setAttribute('aria-label','Carregamento em andamento: progresso real indisponível');
+ box.append(activity,el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s · progresso real não informado pelo llama.cpp'));
+ if(!loadingPlan || loadingPlanModel!==status.settings.model){
+  box.append(el('p','muted','Calculando distribuição estimada das camadas…'));return;
+ }
+ box.append(el('p','muted','Distribuição planejada (não é porcentagem carregada):'));
+ for(const node of loadingPlan.nodes){
+  const name=node.name||node.endpoint, line=el('div','layer-allocation');
+  line.append(el('strong','',name+' · ~'+node.layers+' de '+loadingPlan.blocks+' camadas'));
+  line.append(el('small','muted',fmt(node.estimated_weight_bytes)+' de pesos estimados / '+fmt(node.budget_bytes)+' disponíveis'));
+  const bar=el('progress','download-bar');
+  bar.max=Math.max(1,loadingPlan.blocks);bar.value=node.layers;
+  bar.setAttribute('aria-label',name+': participação estimada de '+node.layers+' camadas em '+loadingPlan.blocks);
+  line.append(bar);box.append(line);
+ }
+}
+async function updateLoadingPlan(status){
+ if(!status.runtime?.loading || !status.settings?.model || loadingPlanModel===status.settings.model)return;
+ loadingPlanModel=status.settings.model;loadingPlan=null;
+ try{loadingPlan=await api('/api/plan')}catch(e){console.warn('Placement estimate unavailable during load',e.message)}
+ if(latestStatus?.runtime?.loading)renderLoadStatus(latestStatus);
+}
 function renderLocalModels(models,status) {
  const list=$('models');list.replaceChildren();
  if(!models.length){list.append(el('div','empty-state','Nenhum GGUF salvo. Pesquise no catálogo abaixo para baixar.'));return;}
@@ -110,9 +148,15 @@ function renderLocalModels(models,status) {
   const info=el('div','model-info');info.append(el('strong','model-title',m.name));
   info.append(el('div','model-meta',fmt(m.size_bytes)+(m.moe?' · MoE ('+m.expert_count+' experts)':'')));
   const controls=el('div','model-actions');
-  const loaded=status.runtime.loaded && status.settings.model===m.name;
+  const loaded=residentModelNames.includes(m.name) || (status.runtime.loaded && status.runtime.model===m.name);
+  const blocked=loaded || status.runtime.loading || actionBusy;
   if(loaded)controls.append(el('span','model-tag active','Em uso'));
-  else controls.append(action('Aplicar','',()=>applyModel(m.name),actionBusy));
+  else controls.append(action('Aplicar','',()=>applyModel(m.name),blocked));
+  controls.append(action('Excluir','secondary',async()=>{
+   if(!await confirmAction('Excluir definitivamente '+m.name+' e todas as suas partes GGUF?','Excluir'))return;
+   await api('/api/models/'+encodeURIComponent(m.name),'DELETE');
+   notice('Modelo excluído: '+m.name);settingsInitialized=false;await refresh();
+  },blocked));
   row.append(info,controls);list.append(row);
  }
 }
@@ -168,6 +212,8 @@ async function refresh(){
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
  renderResidentModels(resident);
  latestStatus=status;localModels=models;
+ renderLoadStatus(status);
+ await updateLoadingPlan(status);
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
  $('modelState').textContent=status.runtime.loading
