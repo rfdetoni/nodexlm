@@ -73,7 +73,9 @@ function settingsFromForm(model) {
  return {model, threads:+$('threads').value, context_tokens:+$('contextTokens').value,
   gpu_layers:$('gpuLayers').value, moe_cpu:$('moeCPU').checked,
   distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
-  moe_cache_mib:+$('moeCache').value};
+  moe_cache_mib:+$('moeCache').value, flash_attention:$('flashAttention').value,
+   kv_cache_type:$('kvCacheType').value, batch_size:+$('batchSize').value,
+   ubatch_size:+$('ubatchSize').value, speculative_mode:$('speculativeMode').value};
 }
 function modelFile(candidate) {
  // Hub paths may contain directories; the Host only stores a safe GGUF basename.
@@ -269,7 +271,7 @@ async function refresh(){
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
  if (!settingsInitialized) {
   for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib})) $(id).value=v;
-  $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'capacity'; settingsInitialized=true;
+  $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'capacity'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
  }
  renderLocalModels(models,status);renderCatalog();
  const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
