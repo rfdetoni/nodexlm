@@ -110,7 +110,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 			bottleneck = "network-advisory"
 		}
 	}
-	if uint64(size) > host {
+	if !settings.Distributed && uint64(size) > host {
 		bottleneck = "host-memory"
 	}
 	return map[string]any{"model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and F16 KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
