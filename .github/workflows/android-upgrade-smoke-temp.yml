@@ -1,0 +1,44 @@
+name: Android native runtime compatibility (upgrade)
+on:
+  push:
+    branches: [feat/adaptive-inference-engine-20261110]
+    paths: ['.github/workflows/android-upgrade-smoke-temp.yml']
+permissions:
+  contents: read
+concurrency:
+  group: nodexlm-android-upgrade-smoke
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v4
+        with: {packages: 'platform-tools'}
+      - name: Native build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslc spirv-headers libvulkan-dev
+      - uses: gradle/actions/setup-gradle@v4
+        with: {gradle-version: '8.11.1', cache-read-only: true}
+      - name: Test Kotlin and compile JNI for both ABIs
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --max-workers=2 :app:testDebugUnitTest :app:assembleDebug
+      - name: Check native libraries packaged
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          for abi in arm64-v8a armeabi-v7a; do
+            unzip -Z1 android/app/build/outputs/apk/debug/app-debug.apk | grep -Fqx "lib/$abi/libnodexlm.so"
+          done
