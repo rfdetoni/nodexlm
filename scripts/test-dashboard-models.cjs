@@ -12,6 +12,7 @@ class Element {
   append(...elements) {this.children.push(...elements);}
   replaceChildren(...elements) {this._text='';this.children=[...elements];}
   addEventListener(name,callback) {this.handlers[name]=callback;}
+  focus() {this.focused=true;}
   setAttribute(name,value) {this[name]=String(value);}
 }
 const elements=new Map();
@@ -42,6 +43,17 @@ vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
 async function main(){
+  assert.equal(get('view-overview').hidden,false,'overview should be visible at startup');
+  assert.equal(get('view-models').hidden,true,'secondary workspaces should be hidden');
+  get('quickModels').handlers.click();
+  assert.equal(get('view-models').hidden,false,'model shortcut did not open workspace');
+  assert.equal(get('view-overview').hidden,true,'previous workspace still visible');
+  assert.equal(get('nav-models')['aria-current'],'page','active menu state not announced');
+  get('nav-models').handlers.keydown({key:'ArrowRight',preventDefault(){}});
+  assert.equal(get('view-inference').hidden,false,'keyboard navigation to inference failed');
+  assert.equal(get('nav-inference').focused,true,'keyboard focus not moved');
+  get('nav-overview').handlers.click();
+  assert.equal(get('view-overview').hidden,false,'return to overview failed');
   const model={repository:'owner/quantizations',filename:'qwen/Qwen3-Q4_K_M.gguf',size_bytes:2*1073741824,
     placement:'single-node-candidate',reason:'Estimativa de memória',url:'https://huggingface.co/owner/quantizations/resolve/main/qwen/Qwen3-Q4_K_M.gguf'};
   vm.runInContext(`catalogModels=[${JSON.stringify(model)}];catalogSearched=true;renderCatalog()`,sandbox);
@@ -69,6 +81,6 @@ async function main(){
   vm.runInContext('renderCatalog()',sandbox);
   assert.equal(get('catalogResults').children.length,1);
   assert.equal(get('catalogResults').children[0].children[1].children[0].textContent,'Aplicar');
-  console.log('Model catalog: result list, download, progress, auto-apply, filter and local model PASS');
+  console.log('Console navigation and model catalog: keyboard, workspaces, download, progress, auto-apply, filters PASS');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -12,6 +12,8 @@ Visual identity: [DESIGN.md](DESIGN.md). The console is loopback-only, authentic
 | Chat | `sendChat` | One active generation, incremental text, real abort, failed turns excluded from saved history | Native E2E + stream cancellation regression |
 | History | Browser localStorage | At most 62 messages; explicit confirmed deletion; no bearer tokens stored with history | Browser |
 | Model load/download | Existing API state + polling | Keep UI responsive; show load phase/errors; partial transfers remain resumable | Go manager and shard tests |
+| Console navigation | `activateConsoleView` + native buttons | Only one active workspace, keyboard arrow/Home/End navigation, aria-current, remembered selection | DOM regression + browser |
+| Debug logs | CLI `--debug` + `internal/debuglog` | Explicit opt-in, local permissions 0600, bounded rotation, HTTP route only (no headers or request bodies) | Go privacy and rotation tests |
 
 History is local to this browser/profile and can contain sensitive prompts. The interface labels its persistence and offers deletion. Logout clears the visible/in-memory transcript and aborts generation; saved history persists until explicitly erased. A partial/interrupted answer is visible but is not added to the next model context.
 

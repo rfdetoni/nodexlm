@@ -36,7 +36,14 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Formatting
-        run: test -z "$(gofmt -l .)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Go files needing gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
       - run: go test -race ./... -timeout 120s
       - run: node --check internal/dashboard/static/app.js && node scripts/test-dashboard-models.cjs
       - run: sh scripts/test-install.sh

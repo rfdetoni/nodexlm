@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/process"
 )
@@ -25,8 +25,8 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 	cmd := exec.CommandContext(ctx, executable, args...)
 	process.KillWithParent(cmd)
 	cmd.Env = nativeRPCEnvironment(executable)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = debuglog.NativeOutput()
+	cmd.Stderr = debuglog.NativeOutput()
 	if err := cmd.Start(); err != nil {
 		return err
 	}

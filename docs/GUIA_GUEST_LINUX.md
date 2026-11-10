@@ -59,3 +59,13 @@ nodexlm guest --rejoin --server https://IP_DO_HOST:8443 --code CODIGO_NOVO --bac
 ```
 
 A opção `--rejoin` substitui `agent.json` somente depois de validar o código temporário, a identidade TLS do Host e receber novas credenciais. Uma tentativa inválida não substitui o pareamento existente. Sem `--rejoin`, credenciais existentes continuam protegidas. O comando `guest` agora verifica autorização com um heartbeat antes de baixar/iniciar o RPC, mostrando uma orientação específica se receber 401.
+
+## Captura de logs do Guest
+
+```sh
+nodexlm guest --backend cpu --debug
+# outro terminal:
+tail -f "${NODEXLM_HOME:-$HOME/.nodexlm}/logs/guest.log"
+```
+
+No modo debug, os eventos de heartbeat, túnel e a saída do servidor GGML ficam em um arquivo local privado e com rotação. Não compartilhe tokens ou caminhos pessoais por acidente.

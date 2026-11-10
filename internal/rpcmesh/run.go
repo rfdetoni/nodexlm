@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/process"
@@ -73,8 +74,8 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	cmd := exec.CommandContext(ctx, executable, args...)
 	process.KillWithParent(cmd)
 	cmd.Env = nativeRPCEnvironment(executable)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = debuglog.NativeOutput()
+	cmd.Stderr = debuglog.NativeOutput()
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("start native RPC server: %w", err)
 	}

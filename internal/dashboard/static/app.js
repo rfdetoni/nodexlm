@@ -23,6 +23,50 @@ async function api(path, method='GET', body) {
   if (!response.ok) {if(response.status===401) {sessionStorage.removeItem('nodexlm-admin');$('auth').hidden=false;$('app').hidden=true;}throw Error(data.error||'HTTP '+response.status)}
   return data;
 }
+const consoleViews=[
+ {id:'overview',name:'Visão geral',description:'Estado do cluster e modelos disponíveis.'},
+ {id:'models',name:'Modelos',description:'Biblioteca GGUF, downloads e catálogo.'},
+ {id:'inference',name:'Inferência',description:'Configuração, camadas e carregamento.'},
+ {id:'cluster',name:'Dispositivos',description:'Guests, recursos e pareamento seguro.'},
+ {id:'observability',name:'Diagnóstico',description:'Medições reais de rede e inferência.'},
+ {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'}
+];
+function activateConsoleView(view){
+ const chosen=consoleViews.find(item=>item.id===view)||consoleViews[0];
+ for(const item of consoleViews){
+  const active=item.id===chosen.id;
+  $('view-'+item.id).hidden=!active;
+  $('nav-'+item.id).setAttribute('aria-current',active?'page':'false');
+ }
+ $('workspaceTitle').textContent=chosen.name;
+ $('workspaceDescription').textContent=chosen.description;
+ $('consoleMain').scrollTop=0;
+ try{sessionStorage.setItem('nodexlm-console-view',chosen.id)}catch{}
+ if(chosen.id==='observability' && token)guard(refreshObservations);
+}
+function setupConsoleNavigation(){
+ for(let i=0;i<consoleViews.length;i++){
+  const item=consoleViews[i],button=$('nav-'+item.id);
+  button.addEventListener('click',()=>activateConsoleView(item.id));
+  button.addEventListener('keydown',event=>{
+   let next=i;
+   if(event.key==='ArrowDown'||event.key==='ArrowRight')next=(i+1)%consoleViews.length;
+   else if(event.key==='ArrowUp'||event.key==='ArrowLeft')next=(i+consoleViews.length-1)%consoleViews.length;
+   else if(event.key==='Home')next=0;
+   else if(event.key==='End')next=consoleViews.length-1;
+   else return;
+   event.preventDefault();
+   activateConsoleView(consoleViews[next].id);
+   $('nav-'+consoleViews[next].id).focus();
+  });
+ }
+ for(const [id,view] of [['quickModels','models'],['quickCluster','cluster'],['quickInference','inference']]){
+  $(id).addEventListener('click',()=>activateConsoleView(view));
+ }
+ let stored='overview';
+ try{stored=sessionStorage.getItem('nodexlm-console-view')||'overview'}catch{}
+ activateConsoleView(stored);
+}
 function setupAuth(){$('auth').hidden=!!token;$('app').hidden=!token;}
 function setSelect(items,chosen){let list=$('modelSelect');list.replaceChildren();let empty=document.createElement('option');empty.value='';empty.textContent='Selecione um modelo';list.append(empty);for(const m of items){let el=document.createElement('option');el.value=m.name;el.textContent=m.name+' ('+fmt(m.size_bytes)+')'+(m.moe?' · MoE':'');list.append(el);}list.value=chosen||'';}
 function settingsFromForm(model) {
@@ -382,4 +426,5 @@ $('openModelFolder').addEventListener('click',()=>guard(async()=>{
  await api('/api/models/folder/open','POST',{});
  notice('Solicitada abertura da pasta no computador Host.');
 }));
+setupConsoleNavigation();
 setupAuth();if(token){renderChat();guard(refresh);guard(loadModelFolder);}

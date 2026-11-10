@@ -30,6 +30,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/config"
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
 	"github.com/rfdetoni/nodexlm/internal/dashboard"
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
@@ -109,12 +110,14 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm bench --node NODE_ID       # benchmark an idle authenticated Guest tunnel
   nodexlm cert --hosts 127.0.0.1,localhost,192.168.1.10
   nodexlm host                       # HTTPS host + LAN discovery + Web UI on localhost:8787
+  nodexlm host --debug               # private rotating debug logs under NODEXLM_HOME/logs
   nodexlm host --web-addr off        # headless without the Web UI
   nodexlm web-token                  # print local Web UI admin credential
   nodexlm coordinator --addr 0.0.0.0:8443 --pair
   nodexlm join                       # prompts for 8-character code
   nodexlm guest                      # discover Host, pair, start distributed RPC worker
   nodexlm guest --backend cpu        # CPU-only distributed Guest
+  nodexlm guest --backend cpu --debug # captures native RPC and connection diagnostics
   nodexlm guest --rejoin --server https://host:8443 --code ABCD2345 # renew stale node credentials
   nodexlm join --code ABCD2345 --name worker-1
   nodexlm pairing # issue a fresh 8-character code
@@ -175,11 +178,20 @@ func serve(args []string) error {
 	enablePair := f.Bool("pair", false, "enable 8-character local pairing code (initial window: 10 minutes)")
 	discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "UDP discovery port")
 	webAddr := f.String("web-addr", "127.0.0.1:8787", "loopback HTTP web management listener; off to disable")
+	debug := f.Bool("debug", false, "log Host events and native llama.cpp output to a private rotating file")
 	modelDir := f.String("model-dir", "", "directory containing managed GGUF models")
 	rpcTransport := f.String("rpc-transport", "auto", "local RPC transport: auto, unix, tcp")
 	llamaBin := f.String("llama-bin", "llama-server", "llama-server executable used by Web UI")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if *debug {
+		stop, err := debuglog.Start(*dir, "host")
+		if err != nil {
+			return fmt.Errorf("enable Host debug logging: %w", err)
+		}
+		defer stop()
+		slog.Debug("Host configuration", "listen", *addr, "web_ui", *webAddr, "rpc_transport", *rpcTransport)
 	}
 	if *discoveryPort < 1 || *discoveryPort > 65535 {
 		return errors.New("invalid discovery port")
@@ -250,7 +262,7 @@ func serve(args []string) error {
 		}
 		fmt.Printf("\nNODEXLM PAIRING CODE: %s\nAvailable for 10 minutes on the same local network.\n\n", code)
 	}
-	srv := &http.Server{Addr: *addr, Handler: s.LANHandler(), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	srv := &http.Server{Addr: *addr, Handler: traceRoutes(s.LANHandler(), "lan"), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	var webServer *http.Server
 	var manager *dashboard.Manager
 	var webListener net.Listener
@@ -298,7 +310,7 @@ func serve(args []string) error {
 				return err
 			}
 		}
-		webServer = &http.Server{Handler: webUI.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+		webServer = &http.Server{Handler: traceRoutes(webUI.Handler(), "console"), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 		go func() {
 			if err := webServer.Serve(webListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("Web UI failed", "error", err)
@@ -517,6 +529,15 @@ func join(args []string) error {
 	return nil
 }
 
+// traceRoutes logs only route/method in debug mode, never the query string,
+// headers, bearer tokens or request/response bodies. Preserves Hijacker.
+func traceRoutes(next http.Handler, component string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("HTTP request", "component", component, "method", r.Method, "path", r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
+
 // guest discovers and securely pairs with the Host before starting a native
 // distributed RPC Guest. The code proves TLS identity; no admin token is used.
 func guest(args []string) error {
@@ -528,6 +549,7 @@ func guest(args []string) error {
 	code := f.String("code", "", "8-character pairing code; prompted when absent")
 	rejoin := f.Bool("rejoin", false, "renew stale credentials using a new Host pairing code")
 	dir := f.String("dir", config.DefaultDir(), "Guest configuration directory")
+	debug := f.Bool("debug", false, "log Guest heartbeat, reconnects and native RPC output to a private rotating file")
 	backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
 	bin := f.String("rpc-bin", "", "matching rpc-server executable")
 	address := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
@@ -538,6 +560,14 @@ func guest(args []string) error {
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected Guest arguments")
+	}
+	if *debug {
+		stop, err := debuglog.Start(*dir, "guest")
+		if err != nil {
+			return fmt.Errorf("enable Guest debug logging: %w", err)
+		}
+		defer stop()
+		slog.Debug("Guest configuration", "host", *server, "backend", *backend, "tunnels", *tunnels, "transport", *address)
 	}
 	if _, err := config.ReadAgent(*dir); err != nil || *rejoin {
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -932,8 +962,11 @@ func rpcNode(args []string) error {
 			slog.Warn("Guest RAM/VRAM heartbeat failed", "error", err,
 				"ram_bytes", profile.RAMBytes, "available_ram_bytes", profile.AvailableRAMBytes,
 				"gpus", len(profile.GPUs))
-		} else if profile.RAMBytes == 0 {
-			slog.Warn("Ubuntu Guest RAM could not be measured; check /proc/meminfo access")
+		} else {
+			slog.Debug("Guest heartbeat accepted", "available_ram_bytes", profile.AvailableRAMBytes, "ram_bytes", profile.RAMBytes, "gpu_devices", len(profile.GPUs), "runtime", profile.Runtime.Version)
+			if profile.RAMBytes == 0 {
+				slog.Warn("Ubuntu Guest RAM could not be measured; check /proc/meminfo access")
+			}
 		}
 	}
 	// Report immediately, before the first RPC tunnel begins serving layers.
