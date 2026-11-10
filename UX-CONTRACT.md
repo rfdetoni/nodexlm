@@ -18,3 +18,18 @@ Visual identity: [DESIGN.md](DESIGN.md). The console is loopback-only, authentic
 History is local to this browser/profile and can contain sensitive prompts. The interface labels its persistence and offers deletion. Logout clears the visible/in-memory transcript and aborts generation; saved history persists until explicitly erased. A partial/interrupted answer is visible but is not added to the next model context.
 
 Runtime context is configured before loading. The chat sends prior completed turns within a 64-message request limit; a backend can still reject conversations exceeding the configured token window. Such errors retain the previous conversation and draft for recovery.
+
+## Quiet graphite redesign invariants
+
+- Web Visão geral shortcuts navigate into the six existing workspaces, without
+  creating a parallel RPC/API path. The overview chat prompt only transfers
+  a draft to the chat form; it does not submit or consume tokens.
+- Overview capacity is the backend aggregate *estimated budget*, not guaranteed
+  usable RAM/VRAM. Online nodes reflect the current authorized node list.
+- Android: five horizontally scrollable tabs split device overview, Host
+  connection, processing, GGUF library and energy/maintenance settings. Pair
+  success may return to overview and offer RPC start. No service is started on
+  a mere tab change.
+- Web/Android share a quiet graphite, low-chroma steel-blue visual palette
+  and a five-node N symbol. Neither variant adds WebView, UI frameworks, a
+  telemetry service or changes the authentication protocol.
