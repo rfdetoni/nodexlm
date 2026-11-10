@@ -20,6 +20,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/process"
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 )
 
 // RunNativeGuest supervises one RPC compute server and its TLS reverse tunnels.
@@ -73,8 +74,8 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	cmd := exec.CommandContext(ctx, executable, args...)
 	process.KillWithParent(cmd)
 	cmd.Env = nativeRPCEnvironment(executable)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = debuglog.NativeOutput()
+	cmd.Stderr = debuglog.NativeOutput()
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("start native RPC server: %w", err)
 	}
