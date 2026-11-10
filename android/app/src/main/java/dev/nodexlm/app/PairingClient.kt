@@ -6,6 +6,7 @@ import android.content.Context
 import android.app.ActivityManager
 import android.os.Build
 import android.util.Log
+import android.net.wifi.WifiManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -144,7 +145,17 @@ internal class PairingClient(private val context: Context) {
 
     private fun discover(): List<String> {
         val endpoints = linkedSetOf<String>()
-        DatagramSocket().use { socket ->
+        // Some older Android Wi-Fi stacks suppress local multicast discovery.
+        // Request only a short-lived lock, and still allow manual HTTPS Host URL.
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val lock = wifi?.createMulticastLock("NodexLM:pairing").apply {
+            this?.setReferenceCounted(false)
+        }
+        try {
+            try { lock?.acquire() } catch (e: Exception) {
+                Log.w("NodexLM-Pairing", "Wi-Fi multicast lock unavailable", e)
+            }
+            DatagramSocket().use { socket ->
             socket.broadcast = true
             socket.soTimeout = 250
             val bytes = DISCOVERY_MESSAGE.toByteArray(Charsets.US_ASCII)
@@ -167,6 +178,9 @@ internal class PairingClient(private val context: Context) {
                     if (url.protocol == "https" && url.port > 0 && url.host.isNotBlank()) endpoints.add(url.toString())
                 } catch (_: Exception) { /* Continue listening until the deadline. */ }
             }
+            }
+        } finally {
+            try { if (lock?.isHeld == true) lock.release() } catch (_: Exception) {}
         }
         return endpoints.toList()
     }
