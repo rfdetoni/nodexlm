@@ -5,6 +5,8 @@ package dev.nodexlm.app
 import android.content.Context
 import android.app.ActivityManager
 import android.os.Build
+import android.util.Log
+import android.net.wifi.WifiManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -48,22 +50,36 @@ internal class PairingClient(private val context: Context) {
                 .generateCertificate(boundedPairingBytes(it, 65536).inputStream()).encoded
         } else null
         val matches = mutableListOf<Pair<String, ByteArray>>()
+        val failures = mutableListOf<String>()
         for (endpoint in endpoints) {
+            var stage = "URL validation"
             try {
                 val remote = URL(endpoint)
                 if (remote.protocol != "https" || remote.userInfo != null || remote.query != null || remote.ref != null) continue
+                stage = "TLS handshake"
                 val certDER = fetchCertificate(remote)
-                if (trusted != null && !MessageDigest.isEqual(trusted, certDER)) continue
+                stage = "Host certificate identity"
+                if (trusted != null && !MessageDigest.isEqual(trusted, certDER)) {
+                    val reason = context.getString(R.string.pair_host_certificate_changed)
+                    failures.add(reason)
+                    Log.w("NodexLM-Pairing", reason)
+                    continue
+                }
+                stage = "pairing offer"
                 val offer = requestOffer(endpoint, certDER)
                 if (offer.getString("endpoint") != endpoint) continue
                 val expires = java.time.Instant.parse(offer.getString("expires"))
                 val now = java.time.Instant.now()
-                if (expires.isBefore(now) || expires.isAfter(now.plusSeconds(31 * 60L))) continue
+                if (expires.isBefore(now) || expires.isAfter(now.plusSeconds(31 * 60L))) {
+                    failures.add(context.getString(R.string.pair_clock_or_code_expired))
+                    continue
+                }
                 val salt = Base64.getUrlDecoder().decode(offer.getString("salt"))
                 val nonce = Base64.getUrlDecoder().decode(offer.getString("nonce"))
                 if (salt.size != 16 || nonce.size != 16) continue
                 val proof = hexToBytes(offer.getString("proof"))
                 if (proof.size != 32) continue
+                stage = "pairing proof (PBKDF2)"
                 val key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(
                     PBEKeySpec(code.toCharArray(), salt, 200_000, 256)
                 ).encoded
@@ -74,10 +90,23 @@ internal class PairingClient(private val context: Context) {
                         MessageDigest.getInstance("SHA-256").digest(certDER) + nonce
                 )
                 key.fill(0)
-                if (MessageDigest.isEqual(proof, expected) && matches.none { MessageDigest.isEqual(it.second, certDER) }) matches.add(Pair(endpoint, certDER))
-            } catch (_: Exception) { /* Ignore untrusted or unavailable LAN hosts. */ }
+                if (MessageDigest.isEqual(proof, expected)) {
+                    if (matches.none { MessageDigest.isEqual(it.second, certDER) }) matches.add(Pair(endpoint, certDER))
+                } else {
+                    failures.add(context.getString(R.string.pair_code_mismatch))
+                }
+            } catch (e: Exception) {
+                // No codes, tokens or certificate contents are written to logs.
+                Log.w("NodexLM-Pairing", "Candidate rejected during $stage: ${e.javaClass.simpleName}", e)
+                failures.add("$stage: ${e.message?.take(160) ?: e.javaClass.simpleName}")
+            }
         }
-        if (matches.size != 1) error(if (matches.isEmpty()) "No host matches that code" else "Multiple matching hosts; enter the host URL")
+        if (matches.size != 1) {
+            if (matches.isEmpty() && inputEndpoint.isNotBlank() && failures.isNotEmpty()) {
+                error(failures.first())
+            }
+            error(if (matches.isEmpty()) "No host matches that code; use the Host HTTPS URL to diagnose" else "Multiple matching hosts; enter the host URL")
+        }
         val (endpoint, certificate) = matches.single()
         val memory = ActivityManager.MemoryInfo()
         (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
@@ -116,29 +145,42 @@ internal class PairingClient(private val context: Context) {
 
     private fun discover(): List<String> {
         val endpoints = linkedSetOf<String>()
-        DatagramSocket().use { socket ->
-            socket.broadcast = true
-            socket.soTimeout = 250
-            val bytes = DISCOVERY_MESSAGE.toByteArray(Charsets.US_ASCII)
-            val destinations = linkedSetOf(InetAddress.getByName("127.0.0.1"), InetAddress.getByName("255.255.255.255"))
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                if (!iface.isUp || iface.isLoopback) continue
-                for (addr in iface.interfaceAddresses) addr.broadcast?.let { destinations.add(it) }
+        // Some older Android Wi-Fi stacks suppress local multicast discovery.
+        // Request only a short-lived lock, and still allow manual HTTPS Host URL.
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val lock = wifi?.createMulticastLock("NodexLM:pairing").apply {
+            this?.setReferenceCounted(false)
+        }
+        try {
+            try { lock?.acquire() } catch (e: Exception) {
+                Log.w("NodexLM-Pairing", "Wi-Fi multicast lock unavailable", e)
             }
-            for (ip in destinations) try { socket.send(DatagramPacket(bytes, bytes.size, ip, DISCOVERY_PORT)) } catch (_: Exception) {}
-            val deadline = System.currentTimeMillis() + 3000L
-            val buf = ByteArray(1500)
-            while (System.currentTimeMillis() < deadline && endpoints.size < 20) {
-                val packet = DatagramPacket(buf, buf.size)
-                try {
-                    socket.receive(packet)
-                    val offer = JSONObject(String(buf, 0, packet.length, Charsets.UTF_8))
-                    val url = URL(offer.getString("endpoint"))
-                    if (url.protocol == "https" && url.port > 0 && url.host.isNotBlank()) endpoints.add(url.toString())
-                } catch (_: Exception) { /* Continue listening until the deadline. */ }
+            DatagramSocket().use { socket ->
+                socket.broadcast = true
+                socket.soTimeout = 250
+                val bytes = DISCOVERY_MESSAGE.toByteArray(Charsets.US_ASCII)
+                val destinations = linkedSetOf(InetAddress.getByName("127.0.0.1"), InetAddress.getByName("255.255.255.255"))
+                val interfaces = NetworkInterface.getNetworkInterfaces()
+                while (interfaces.hasMoreElements()) {
+                    val iface = interfaces.nextElement()
+                    if (!iface.isUp || iface.isLoopback) continue
+                    for (addr in iface.interfaceAddresses) addr.broadcast?.let { destinations.add(it) }
+                }
+                for (ip in destinations) try { socket.send(DatagramPacket(bytes, bytes.size, ip, DISCOVERY_PORT)) } catch (_: Exception) {}
+                val deadline = System.currentTimeMillis() + 3000L
+                val buf = ByteArray(1500)
+                while (System.currentTimeMillis() < deadline && endpoints.size < 20) {
+                    val packet = DatagramPacket(buf, buf.size)
+                    try {
+                        socket.receive(packet)
+                        val offer = JSONObject(String(buf, 0, packet.length, Charsets.UTF_8))
+                        val url = URL(offer.getString("endpoint"))
+                        if (url.protocol == "https" && url.port > 0 && url.host.isNotBlank()) endpoints.add(url.toString())
+                    } catch (_: Exception) { /* Continue listening until the deadline. */ }
+                }
             }
+        } finally {
+            try { if (lock?.isHeld == true) lock.release() } catch (_: Exception) {}
         }
         return endpoints.toList()
     }

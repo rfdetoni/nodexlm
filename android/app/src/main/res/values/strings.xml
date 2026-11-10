@@ -142,4 +142,7 @@
     <string name="rpc_guest_offer_message">Do you want to start RPC Guest now? This phone will share its available CPU/GPU and memory with the Host to process model layers. The GGUF stays on the Host. Running the Guest uses battery and may heat up the phone. You can change the processing mode in Cluster.</string>
     <string name="rpc_guest_offer_accept">Start RPC Guest</string>
     <string name="rpc_guest_offer_later">Not now</string>
+    <string name="pair_host_certificate_changed">The Host certificate has changed. Import the new Host certificate from Cluster before pairing again.</string>
+    <string name="pair_clock_or_code_expired">Pairing code expired or the phone date/time is incorrect.</string>
+    <string name="pair_code_mismatch">Pairing code does not match this Host.</string>
 </resources>
