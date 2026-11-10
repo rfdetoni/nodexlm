@@ -72,7 +72,7 @@ function setSelect(items,chosen){let list=$('modelSelect');list.replaceChildren(
 function settingsFromForm(model) {
  return {model, threads:+$('threads').value, context_tokens:+$('contextTokens').value,
   gpu_layers:$('gpuLayers').value, moe_cpu:$('moeCPU').checked,
-  distributed:$('distributed').checked, moe_cpu_layers:+$('moeCPULayers').value,
+  distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
   moe_cache_mib:+$('moeCache').value};
 }
 function modelFile(candidate) {
@@ -269,7 +269,7 @@ async function refresh(){
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
  if (!settingsInitialized) {
   for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib})) $(id).value=v;
-  $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; settingsInitialized=true;
+  $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'capacity'; settingsInitialized=true;
  }
  renderLocalModels(models,status);renderCatalog();
  const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
@@ -341,12 +341,12 @@ $('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').va
 $('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';chatController?.abort();chatHistory=[];$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
-$('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',{model:$('modelSelect').value,threads:+$('threads').value,context_tokens:+$('contextTokens').value,gpu_layers:$('gpuLayers').value,moe_cpu:$('moeCPU').checked,distributed:$('distributed').checked,moe_cpu_layers:+$('moeCPULayers').value,moe_cache_mib:+$('moeCache').value});notice('Configuração salva');settingsInitialized=false;await refresh()})});
+$('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',settingsFromForm($('modelSelect').value));notice('Configuração salva');settingsInitialized=false;await refresh()})});
 $('load').addEventListener('click',()=>guard(async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
 $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
 $('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pairing/start','POST',{});$('pairCode').hidden=false;$('pairCode').textContent=p.code+' · válido por '+p.expires_in;notice('Código renovado')}));
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
- const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas'));
+ const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.strategy||'capacity'))); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
  for(const node of plan.nodes)area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));
  area.append(el('p','', 'KV F16 estimado: '+fmt(plan.estimated_kv_bytes)+' · '+(plan.tokens_per_second?plan.tokens_per_second.toFixed(1)+' tokens/s medidos':'Tokens/s ainda não medido')+' · '+({'unmeasured':'Gargalo ainda não medido','network-advisory':'Atenção à velocidade da rede','host-memory':'Limite de memória do Host'}[plan.bottleneck]||plan.bottleneck)));
  for(const node of plan.nodes){if(node.network)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.network.round_trip_ms.toFixed(2)+' ms RTT · '+node.network.mib_per_second.toFixed(1)+' MiB/s de eco'));}
