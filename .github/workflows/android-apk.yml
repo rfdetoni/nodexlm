@@ -1,24 +1,22 @@
 name: Android APK
 
-# Manual builds do not burn Actions minutes on every commit.
-# Version tags publish signed APKs directly in GitHub Releases; no Play Store.
+# Building native llama.cpp for two ABIs is expensive. Build test APKs only
+# on explicit dispatch; version tags build signed production releases.
+# Successful manual main builds are reused by android-public-download.yml.
 on:
   workflow_dispatch:
+    inputs:
+      verify_release:
+        description: 'Also validate minified release with disposable test signing (slower)'
+        type: boolean
+        default: false
   push:
-    # Validate workflow edits without running CI on every application commit.
-    branches:
-      - main
-    paths:
-      - '.github/workflows/android-apk.yml'
-      - 'android/**'
-      - 'scripts/android-signing.py'
-      - 'internal/llamaruntime/revision.json'
     tags:
       - 'v*'
 
 concurrency:
   group: nodexlm-android-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -73,7 +71,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-          cache-read-only: ${{ github.event_name != 'push' }}
+          cache-read-only: ${{ startsWith(github.ref, 'refs/tags/') }}
 
       - name: Model and energy policy regressions
         working-directory: android
@@ -121,6 +119,7 @@ jobs:
           fi
 
       - name: Build installable debug APK
+        if: github.event_name == 'workflow_dispatch'
         working-directory: android
         shell: bash
         run: |
@@ -131,6 +130,7 @@ jobs:
             :app:assembleDebug
 
       - name: Verify debug APK and native library
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -146,6 +146,7 @@ jobs:
           sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
 
       - name: Upload debug APK
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: nodexlm-android-debug
@@ -154,7 +155,7 @@ jobs:
           retention-days: 14
 
       - name: Validate minified release signing with an ephemeral test identity
-        if: steps.signing.outputs.configured != 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_release && steps.signing.outputs.configured != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -169,7 +170,7 @@ jobs:
           echo 'Minified release validation passed. Test-signed APK is not published.'
 
       - name: Build signed release APK
-        if: steps.signing.outputs.configured == 'true'
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true'
         working-directory: android
         shell: bash
         env:
@@ -185,7 +186,7 @@ jobs:
             :app:assembleRelease
 
       - name: Verify signed release APK and package it
-        if: steps.signing.outputs.configured == 'true'
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -200,7 +201,7 @@ jobs:
           (cd dist && sha256sum NodexLM-android-universal.apk > SHA256SUMS-android.txt)
 
       - name: Build update manifest for direct Android updates
-        if: steps.signing.outputs.configured == 'true' && startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true' && startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           VERSION_NAME: ${{ steps.version.outputs.name }}
@@ -217,7 +218,7 @@ jobs:
           PYUPDATE
 
       - name: Upload signed release APK
-        if: steps.signing.outputs.configured == 'true'
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: nodexlm-android-release
