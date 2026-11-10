@@ -145,4 +145,9 @@
     <string name="pair_host_certificate_changed">O certificado do Host mudou. Importe o novo certificado do Host na aba Cluster antes de parear novamente.</string>
     <string name="pair_clock_or_code_expired">O código de pareamento expirou ou a data/hora do celular está incorreta.</string>
     <string name="pair_code_mismatch">O código de pareamento não corresponde a este Host.</string>
+    <string name="tab_overview">Visão geral</string>
+    <string name="tab_connection">Conexão</string>
+    <string name="tab_processing">Processamento</string>
+    <string name="node_not_paired">Ainda não pareado com um Host</string>
+    <string name="node_paired">Pareado com um Host</string>
 </resources>

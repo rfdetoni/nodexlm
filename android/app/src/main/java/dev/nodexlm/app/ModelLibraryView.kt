@@ -53,9 +53,16 @@ internal class ModelLibraryView(
         space(14)
         val searchCard = card()
         query.setSingleLine(true)
+        query.background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(0xff23272b.toInt())
+            cornerRadius = 9 * resources.displayMetrics.density
+            setStroke((1 * resources.displayMetrics.density).toInt(), 0xff3c434a.toInt())
+        }
+        query.setPadding(14 * resources.displayMetrics.density.toInt().coerceAtLeast(1), 0,
+            14 * resources.displayMetrics.density.toInt().coerceAtLeast(1), 0)
         query.setText("Qwen")
-        query.setTextColor(0xffeef4ff.toInt())
-        query.setHintTextColor(0xff8f9bab.toInt())
+        query.setTextColor(0xffd9dee3.toInt())
+        query.setHintTextColor(0xff969faa.toInt())
         query.hint = activity.getString(R.string.query_hint)
         searchCard.addView(query)
         searchCard.addView(action(activity.getString(R.string.ui_76a328da1ce2)) { search() })
@@ -63,12 +70,12 @@ internal class ModelLibraryView(
         space(12)
         val progressCard = card()
         status.text = activity.getString(R.string.ui_17b418d5924d)
-        status.setTextColor(0xffbccadd.toInt())
+        status.setTextColor(0xffacb5be.toInt())
         progressCard.addView(status)
         bar.max = 1000
         bar.visibility = GONE
         progressCard.addView(bar,LayoutParams(LayoutParams.MATCH_PARENT,10).apply {topMargin=10})
-        downloadProgress.setTextColor(0xff82b9ff.toInt())
+        downloadProgress.setTextColor(0xffaab8c5.toInt())
         progressCard.addView(downloadProgress)
         cancel = action(activity.getString(R.string.ui_cdd64d8d4333)) { cancelDownload() }
         cancel.visibility = GONE
@@ -139,7 +146,7 @@ internal class ModelLibraryView(
             "distributed-candidate" -> activity.getString(R.string.placement_distributed)
             "insufficient-memory" -> activity.getString(R.string.placement_memory)
             else -> activity.getString(R.string.placement_unknown)
-        },12,false).apply {setTextColor(if(suitable)0xff80d6b4.toInt() else 0xffe6ba78.toInt())})
+        },12,false).apply {setTextColor(if(suitable)0xffaab8c5.toInt() else 0xffb6a99b.toInt())})
         row.addView(action(activity.getString(R.string.download_size,gib(model.sizeBytes))) { confirmDownload(model) })
         results.addView(row)
     }
@@ -306,23 +313,25 @@ internal class ModelLibraryView(
     private fun space(dp: Int) = addView(View(activity), LayoutParams(1,(dp*resources.displayMetrics.density).toInt()))
     private fun label(s:String,size:Int,bold:Boolean) = addView(text(s,size,bold))
     private fun text(s:String,size:Int,bold:Boolean)=TextView(activity).apply {
-        text=s;textSize=size.toFloat();setTextColor(if(bold) 0xffeff4ff.toInt() else 0xffacb8c9.toInt())
+        text=s;textSize=size.toFloat();setTextColor(if(bold) 0xffd9dee3.toInt() else 0xffa5afb8.toInt())
         setPadding(0,8,0,8)
         if(bold) setTypeface(null,android.graphics.Typeface.BOLD)
     }
     private fun card():LinearLayout = LinearLayout(activity).apply {
         orientation=VERTICAL
         background=android.graphics.drawable.GradientDrawable().apply {
-            setColor(0xff202a38.toInt());cornerRadius=18*resources.displayMetrics.density
-            setStroke((1*resources.displayMetrics.density).toInt(),0xff354557.toInt())
+            setColor(0xff292d32.toInt());cornerRadius=12*resources.displayMetrics.density
+            setStroke((1*resources.displayMetrics.density).toInt(),0xff3a4047.toInt())
         }
         val p=(16*resources.displayMetrics.density).toInt();setPadding(p,p,p,p)
         layoutParams=LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.WRAP_CONTENT).apply {bottomMargin=(12*resources.displayMetrics.density).toInt()}
     }
     private fun action(label:String,handler:()->Unit) = Button(activity).apply {
         text=label;isAllCaps=false
-        setTextColor(0xffdceaff.toInt())
-        backgroundTintList=android.content.res.ColorStateList.valueOf(0xff30476b.toInt())
+        setTextColor(0xffdce2e7.toInt())
+        backgroundTintList=android.content.res.ColorStateList.valueOf(0xff394550.toInt())
+        stateListAnimator = null
+        elevation = 0f
         setOnClickListener{handler()}
     }
 }
