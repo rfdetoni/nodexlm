@@ -554,6 +554,7 @@ func guest(args []string) error {
 	bin := f.String("rpc-bin", "", "matching rpc-server executable")
 	address := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	tunnels := f.Int("tunnels", 8, "concurrent secured tunnels (1-8)")
+	rpcCache := f.Bool("rpc-cache", false, "cache model tensors on this Guest disk (opt-in; may contain model weights)")
 	discoveryPort := f.Int("discovery-port", pairing.DiscoveryPort, "LAN UDP discovery port")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -613,6 +614,7 @@ func guest(args []string) error {
 	}
 	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
 	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels)}
+	if *rpcCache { options = append(options, "--rpc-cache") }
 	if *bin != "" {
 		options = append(options, "--rpc-bin", *bin)
 	}
@@ -884,6 +886,7 @@ func rpcNode(args []string) error {
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
 	addr := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	slots := f.Int("tunnels", 8, "simultaneous secured RPC tunnels (1-8)")
+	rpcCache := f.Bool("rpc-cache", false, "cache model tensors on this Guest disk (opt-in; contains model weights)")
 	ca := f.String("ca", "", "Host certificate for legacy enrollment")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -983,5 +986,5 @@ func rpcNode(args []string) error {
 			}
 		}
 	}()
-	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots, *device)
+	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots, *rpcCache, *device)
 }
