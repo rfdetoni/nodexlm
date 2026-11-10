@@ -138,4 +138,8 @@
     <string name="apk_metadata_invalid">Metadados inválidos do APK</string>
     <string name="apk_version_invalid">Versão do APK inesperada</string>
     <string name="update_not_installed">Atualização não instalada: %1$s</string>
+    <string name="rpc_guest_offer_title">Conectado ao Host</string>
+    <string name="rpc_guest_offer_message">Deseja ativar o Guest RPC agora? O celular compartilhará CPU/GPU e memória disponíveis com o Host para processar camadas do modelo. O GGUF permanece no Host. O Guest consome bateria e pode aquecer o aparelho. Você pode alterar o modo de processamento na aba Cluster.</string>
+    <string name="rpc_guest_offer_accept">Ativar Guest RPC</string>
+    <string name="rpc_guest_offer_later">Agora não</string>
 </resources>
