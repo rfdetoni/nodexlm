@@ -1,13 +1,11 @@
 name: Portable RPC bundles
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'internal/llamaruntime/**'
-      - 'android/app/src/main/cpp/**'
-      - '.github/workflows/rpc-platforms.yml'
   push:
-    branches: [main]
+    # Only rebuild native bundles when the pinned runtime/patch changes.
+    # Full-PR diff filters would rebuild the five-platform matrix for
+    # every subsequent frontend/Go edit, wasting Actions minutes.
+    branches: [main, 'feat/**', 'fix/**']
     paths:
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
@@ -94,7 +92,7 @@ jobs:
           path: dist/*
           retention-days: 14
   publish:
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions: {contents: write}
