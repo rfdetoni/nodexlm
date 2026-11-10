@@ -58,8 +58,8 @@ internal class ModelLibraryView(
             cornerRadius = 9 * resources.displayMetrics.density
             setStroke((1 * resources.displayMetrics.density).toInt(), 0xff3c434a.toInt())
         }
-        query.setPadding(14 * resources.displayMetrics.density.toInt().coerceAtLeast(1), 0,
-            14 * resources.displayMetrics.density.toInt().coerceAtLeast(1), 0)
+        val horizontalPadding = (14 * resources.displayMetrics.density).toInt()
+        query.setPadding(horizontalPadding, 0, horizontalPadding, 0)
         query.setText("Qwen")
         query.setTextColor(0xffd9dee3.toInt())
         query.setHintTextColor(0xff969faa.toInt())
