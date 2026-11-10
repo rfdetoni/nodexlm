@@ -40,6 +40,8 @@ jobs:
         with:
           gradle-version: '8.11.1'
           cache-read-only: true
-      - name: Compile UI and run unit tests (no native APK package)
+      - name: Validate launcher icon contract
+        run: python3 scripts/check-android-launcher.py
+      - name: Compile Android resources, Kotlin UI and unit tests
         working-directory: android
-        run: gradle --no-daemon --max-workers=2 :app:compileDebugKotlin :app:testDebugUnitTest
+        run: gradle --no-daemon --max-workers=2 :app:processDebugResources :app:compileDebugKotlin :app:testDebugUnitTest

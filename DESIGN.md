@@ -37,6 +37,10 @@ model selection, capacity estimates, inference and troubleshooting.
 - Flat network mark: five connected nodes form a subtle N, representing
   one Host coordinating multiple devices. Web uses inline SVG; Android uses
   a small native Canvas view. Both must remain readable at compact sizes.
+- Android launcher uses the same five-node N: adaptive foreground (within
+  the 66dp circular safe zone), flat graphite background, round launcher icon
+  and a system-tinted monochrome variant on Android 13+. Manifest refers
+  explicitly to the regular and round mipmap resources.
 - Corners: 12px for panels, 8–9px for controls. Prefer borders to elevation.
 - Keep semantic statuses understandable by text and shape, never color alone.
   Critical failure/confirmation states may use semantic warning colors when
