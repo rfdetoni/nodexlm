@@ -5,6 +5,7 @@ package dev.nodexlm.app
 import android.content.Context
 import android.app.ActivityManager
 import android.os.Build
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -48,12 +49,22 @@ internal class PairingClient(private val context: Context) {
                 .generateCertificate(boundedPairingBytes(it, 65536).inputStream()).encoded
         } else null
         val matches = mutableListOf<Pair<String, ByteArray>>()
+        val failures = mutableListOf<String>()
         for (endpoint in endpoints) {
+            var stage = "URL validation"
             try {
                 val remote = URL(endpoint)
                 if (remote.protocol != "https" || remote.userInfo != null || remote.query != null || remote.ref != null) continue
+                stage = "TLS handshake"
                 val certDER = fetchCertificate(remote)
-                if (trusted != null && !MessageDigest.isEqual(trusted, certDER)) continue
+                stage = "Host certificate identity"
+                if (trusted != null && !MessageDigest.isEqual(trusted, certDER)) {
+                    val reason = "O certificado do Host mudou. Importe o novo certificado do Host na aba Cluster antes de parear novamente."
+                    failures.add(reason)
+                    Log.w("NodexLM-Pairing", reason)
+                    continue
+                }
+                stage = "pairing offer"
                 val offer = requestOffer(endpoint, certDER)
                 if (offer.getString("endpoint") != endpoint) continue
                 val expires = java.time.Instant.parse(offer.getString("expires"))
@@ -64,6 +75,7 @@ internal class PairingClient(private val context: Context) {
                 if (salt.size != 16 || nonce.size != 16) continue
                 val proof = hexToBytes(offer.getString("proof"))
                 if (proof.size != 32) continue
+                stage = "pairing proof (PBKDF2)"
                 val key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(
                     PBEKeySpec(code.toCharArray(), salt, 200_000, 256)
                 ).encoded
@@ -74,10 +86,23 @@ internal class PairingClient(private val context: Context) {
                         MessageDigest.getInstance("SHA-256").digest(certDER) + nonce
                 )
                 key.fill(0)
-                if (MessageDigest.isEqual(proof, expected) && matches.none { MessageDigest.isEqual(it.second, certDER) }) matches.add(Pair(endpoint, certDER))
-            } catch (_: Exception) { /* Ignore untrusted or unavailable LAN hosts. */ }
+                if (MessageDigest.isEqual(proof, expected)) {
+                    if (matches.none { MessageDigest.isEqual(it.second, certDER) }) matches.add(Pair(endpoint, certDER))
+                } else {
+                    failures.add("Código de pareamento não corresponde ao Host")
+                }
+            } catch (e: Exception) {
+                // No codes, tokens or certificate contents are written to logs.
+                Log.w("NodexLM-Pairing", "Candidate rejected during $stage: ${e.javaClass.simpleName}", e)
+                failures.add("$stage: ${e.message?.take(160) ?: e.javaClass.simpleName}")
+            }
         }
-        if (matches.size != 1) error(if (matches.isEmpty()) "No host matches that code" else "Multiple matching hosts; enter the host URL")
+        if (matches.size != 1) {
+            if (matches.isEmpty() && inputEndpoint.isNotBlank() && failures.isNotEmpty()) {
+                error(failures.first())
+            }
+            error(if (matches.isEmpty()) "No host matches that code; use the Host HTTPS URL to diagnose" else "Multiple matching hosts; enter the host URL")
+        }
         val (endpoint, certificate) = matches.single()
         val memory = ActivityManager.MemoryInfo()
         (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
