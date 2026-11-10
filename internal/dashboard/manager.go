@@ -39,6 +39,11 @@ type Settings struct {
 	MoECacheMiB   int    `json:"moe_cache_mib"`
 	Distributed   bool   `json:"distributed"`
 	PlacementStrategy string `json:"placement_strategy,omitempty"`
+	FlashAttention string `json:"flash_attention,omitempty"`
+	KVCacheType string `json:"kv_cache_type,omitempty"`
+	BatchSize int `json:"batch_size,omitempty"`
+	UBatchSize int `json:"ubatch_size,omitempty"`
+	SpeculativeMode string `json:"speculative_mode,omitempty"`
 }
 
 type Download struct {
@@ -151,6 +156,19 @@ func (m *Manager) DownloadState() *Download {
 func (m *Manager) validate(s Settings) error {
 	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 || (s.PlacementStrategy != "" && s.PlacementStrategy != "capacity" && s.PlacementStrategy != "speed") {
 		return errors.New("invalid runtime limits or conflicting MoE settings")
+	}
+	if s.FlashAttention != "" && s.FlashAttention != "auto" && s.FlashAttention != "on" && s.FlashAttention != "off" {
+		return errors.New("flash_attention must be auto, on or off")
+	}
+	if s.KVCacheType != "" && s.KVCacheType != "f16" && s.KVCacheType != "q8_0" && s.KVCacheType != "q4_0" {
+		return errors.New("kv_cache_type must be f16, q8_0 or q4_0")
+	}
+	if s.BatchSize < 0 || s.BatchSize > 8192 || s.UBatchSize < 0 || s.UBatchSize > 4096 ||
+		(s.BatchSize > 0 && s.UBatchSize > s.BatchSize) {
+		return errors.New("invalid batch_size or ubatch_size")
+	}
+	if s.SpeculativeMode != "" && s.SpeculativeMode != "off" && s.SpeculativeMode != "ngram" {
+		return errors.New("speculative_mode must be off or ngram")
 	}
 	if s.GPULayers != "auto" && s.GPULayers != "all" {
 		if parsed, err := strconv.Atoi(s.GPULayers); err != nil || parsed < 0 || parsed > 1024 || fmt.Sprint(parsed) != s.GPULayers {
@@ -372,7 +390,7 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
 	}
 	m.setPhase("loading_model")
-	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, KeepLoaded: true}
+	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType, BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, SpeculativeMode: s.SpeculativeMode, KeepLoaded: true}
 	if s.Distributed {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers
