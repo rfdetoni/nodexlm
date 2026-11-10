@@ -49,3 +49,13 @@ Use **Carregar adicional** para manter outro modelo no Host, respeitando o orça
 No chat, escolha o modelo residente, temperatura e limite de tokens. As respostas chegam incrementalmente; **Parar** cancela a solicitação. O histórico persiste neste navegador e só é excluído após confirmação. A reutilização de prefixo mantém KV por modelo, sem compartilhar estado entre modelos diferentes.
 
 **Ver plano** mostra camadas, pesos, KV F16 estimado e medições recentes. **Medir rede** mede RTT/eco pelo túnel TLS; **Medir inferência** executa uma carga real e exige descarregar os modelos. Pela CLI: `nodexlm bench --model MODELO [--node ID]`. O gráfico usa amostras medidas; banda de eco não é convertida em tokens/s.
+
+## Diagnóstico do Host
+
+```sh
+nodexlm host --debug --web-addr 127.0.0.1:8788
+# outro terminal:
+tail -f "${NODEXLM_HOME:-$HOME/.nodexlm}/logs/host.log"
+```
+
+Acesse o Console Web na porta escolhida, usando os menus funcionais. O log não grava o corpo das requisições HTTP ou tokens de autenticação, mas a saída do runtime nativo pode conter informações internas do modelo, caminhos e IPs. Compartilhe apenas trechos revisados.
