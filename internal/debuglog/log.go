@@ -21,6 +21,7 @@ import (
 const maxLogBytes int64 = 8 << 20
 
 type outputState struct{ writer io.Writer }
+
 var nativeOutput atomic.Pointer[outputState]
 
 // NativeOutput includes stderr from GGML subprocesses in the debug log.
@@ -34,7 +35,7 @@ func NativeOutput() io.Writer {
 }
 
 type rotatingWriter struct {
-	mu sync.Mutex
+	mu   sync.Mutex
 	path string
 	file *os.File
 	size int64
