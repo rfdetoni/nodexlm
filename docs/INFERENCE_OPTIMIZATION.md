@@ -35,7 +35,7 @@ do llama-server:
 | KV cache | f16, q8_0, q4_0 | Quantização reduz memória e pode afetar qualidade; confirme suporte no backend |
 | Batch lógico | 0 (nativo), 1–8192 | Aumenta demanda de memória |
 | Microbatch | 0 (nativo), 1–4096 | Quando ambos definidos, microbatch não pode exceder batch |
-| Especulação | off, ngram | `ngram` habilita `--spec-type ngram-simple` e não é um draft remoto |
+| Especulação | off, ngram, draft | `ngram` usa lookup de tokens; `draft` carrega um GGUF diferente na CPU do Host, com `--spec-type draft-simple` |
 
 Confirme a comparação com `/api/bench/inference` antes/depois, usando
 mesmo modelo, contexto, quantidade de tokens e condições de rede. O ganho
@@ -65,8 +65,7 @@ o conteúdo armazenado no disco dele. O Android não recebeu essa opção.
 
 - Não há escalonamento dinâmico de especialistas MoE; as opções MoE atuais
   delegam a execução ao llama.cpp.
-- Não há *draft model* independente rodando em um Guest para speculative
-  decoding. O modo n-gram é local ao runtime principal.
+- O modelo draft independente pode rodar na CPU do Host, mas não está implementada a alocação automática do draft em um Guest. Compatibilidade de vocabulário e custo/benefício precisam ser verificados pelo llama.cpp.
 - Não há tensor parallelism adaptativo, nem migração de KV cache entre
   processos, nem balanceamento de requisições entre múltiplos clusters
   distribuídos. Modelos residentes adicionais permanecem locais ao Host.
