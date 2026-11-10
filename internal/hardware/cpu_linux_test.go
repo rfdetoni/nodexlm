@@ -10,5 +10,7 @@ func TestCPUCounters(t *testing.T) {
 		t.Fatalf("CPU counters: total=%d idle=%d ok=%t", total, idle, ok)
 	}
 	_, _, ok = parseLinuxCPU("cpu broken")
-	if ok { t.Fatal("accepted invalid CPU counters") }
+	if ok {
+		t.Fatal("accepted invalid CPU counters")
+	}
 }

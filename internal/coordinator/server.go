@@ -289,8 +289,12 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		n.device.Models = append([]string(nil), req.Models...)
 		// Lease updates are partial and may come from older Guest clients.
 		// Keep the most recent measured values when the lease omits them.
-		if req.CPUUsagePercent != nil { n.device.CPUUsagePercent = req.CPUUsagePercent }
-		if req.RAMUsedBytes != nil { n.device.RAMUsedBytes = req.RAMUsedBytes }
+		if req.CPUUsagePercent != nil {
+			n.device.CPUUsagePercent = req.CPUUsagePercent
+		}
+		if req.RAMUsedBytes != nil {
+			n.device.RAMUsedBytes = req.RAMUsedBytes
+		}
 		if req.RAMBytes > 0 && req.RAMBytes < 1<<50 && req.AvailableRAMBytes <= req.RAMBytes {
 			n.device.RAMBytes = req.RAMBytes
 			n.device.AvailableRAMBytes = req.AvailableRAMBytes
