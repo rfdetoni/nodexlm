@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/process"
-	"github.com/rfdetoni/nodexlm/internal/debuglog"
 )
 
 func runUnixGuest(ctx context.Context, client *netclient.Client, executable, address string, slots int, device string) error {
