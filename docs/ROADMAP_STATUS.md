@@ -70,3 +70,22 @@ Os contratos de texto OpenAI, pool e RPC estão descritos nos guias. Nenhum chec
 | Snapshot imutável e publicação por digest | [Distribuição aprovada](https://github.com/rfdetoni/nodexlm/actions/runs/42398983229) |
 
 Esses testes não instalaram secrets de produção, não executaram uma auditoria externa nem comprovaram comportamento em aparelhos físicos.
+
+## Revalidação da `main` — 10/11/2026
+
+Esta revisão complementa o histórico de 07/11, sem reclassificar testes de CI como aceite de hardware físico ou auditoria externa.
+
+| Área | Evidência verificada |
+|---|---|
+| Atualização de Actions | [PR #19](https://github.com/rfdetoni/nodexlm/pull/19), `setup-go v7`, `setup-java v6`, `download-artifact v8`, versões fixadas por SHA; [Go race/vet e Windows aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42861781983) |
+| Go / Cross-build / releases | [Desktop e CLI aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42862160864) após atualização das Actions |
+| RPC real e OpenAI | [E2E Linux com pareamento, camadas distribuídas, streaming e SDK oficial OpenAI/Agents aprovado](https://github.com/rfdetoni/nodexlm/actions/runs/42862160410) |
+| Android | [Unit tests e compilação de APK universal aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42862160464); não equivale a teste em aparelho físico ou release estável |
+| RPC multiplataforma | [Validação de cinco bundles publicados aprovada](https://github.com/rfdetoni/nodexlm/actions/runs/42862160540); macOS virtual usa fallback CPU quando necessário |
+| Segurança de release | [Regressões Authenticode de teste aprovadas](https://github.com/rfdetoni/nodexlm/actions/runs/42862160556); [publicação RPC verificada](https://github.com/rfdetoni/nodexlm/actions/runs/42862160538). Isso não confirma certificado comercial de produção |
+| Segurança da configuração/worker | [PR #20](https://github.com/rfdetoni/nodexlm/pull/20): impede alteração silenciosa de permissões de diretórios existentes e limita respostas pelo tamanho JSON real; [Go race/vet + Windows aprovados](https://github.com/rfdetoni/nodexlm/actions/runs/42863910642) |
+| Backlog GitHub | PRs Dependabot #15/#16/#17 consolidados no #19; PR #18 encerrado porque o downloader compartilhado de `main` já usa `Range`, `If-Range`, staging persistente e SHA-256 quando disponível |
+
+**Pendências externas ainda abertas:** avaliação criptográfica independente do pareamento ou troca por PAKE auditado; instalação da identidade de assinatura Android nos secrets; certificado Code Signing Windows de produção; medições em Android/Vulkan/Metal e demais dispositivos físicos; versão estável assinada, além de eventual aprovação dos índices de distribuição. Consulte [RELEASE.md](RELEASE.md) para os critérios executáveis. Não publicar “100% em produção” antes dessas evidências.
+
+O caminho OpenAI aceito em E2E cobre texto, ferramentas, Responses e fluxo de agentes. Imagem, áudio e demais contratos multimodais não são fornecidos pelo runtime gerenciado: a capacidade declarada deve permanecer a descrita em [OPENAI_COMPATIBILITY.md](OPENAI_COMPATIBILITY.md).
