@@ -882,6 +882,18 @@ func rpcNode(args []string) error {
 	if agent.CertificateFingerprint == "" && *ca == "" {
 		return errors.New("RPC requires a paired certificate pin or --ca")
 	}
+	// Reject expired/revoked credentials before fetching or launching a native
+	// runtime. A 401 needs a new authenticated pairing, not a CPU/GPU change.
+	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), 8*time.Second)
+	profile := hardware.Collect(agent.Node.NodeID, nil)
+	status, preflightErr := cli.Request(preflightCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+	preflightCancel()
+	if preflightErr != nil {
+		if status == http.StatusUnauthorized {
+			return fmt.Errorf("Host rejected saved Guest credentials (HTTP 401); get a fresh Host pairing code and run 'nodexlm guest --rejoin --server %s --code NEW_CODE --backend %s': %w", agent.Coordinator, *backend, preflightErr)
+		}
+		return fmt.Errorf("cannot authenticate Guest with Host; check HTTPS connectivity before starting RPC: %w", preflightErr)
+	}
 	executable := *bin
 	if executable == "" {
 		c, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
