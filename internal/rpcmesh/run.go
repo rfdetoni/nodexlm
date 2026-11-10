@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 	"github.com/rfdetoni/nodexlm/internal/process"
-	"github.com/rfdetoni/nodexlm/internal/debuglog"
 )
 
 // RunNativeGuest supervises one RPC compute server and its TLS reverse tunnels.
