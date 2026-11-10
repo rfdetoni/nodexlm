@@ -258,6 +258,73 @@ function renderCatalog() {
   row.append(info,actions);dest.append(row);
  }
 }
+// Never infer 0% from absent hardware counters. A nil metric is unavailable.
+const percent = value => typeof value==='number' && Number.isFinite(value) && value>=0 && value<=100 ? value : null;
+const measuredBytes = value => typeof value==='number' && Number.isFinite(value) && value>=0 ? value : null;
+function metricRow(name,value,suffix,used,total) {
+ const line=el('div','resource-metric');
+ const textLine=el('div','resource-metric-label');
+ textLine.append(el('span','',name),el('strong','',value===null?'Indisponível':value.toFixed(1)+suffix));
+ line.append(textLine);
+ if(value!==null){
+  const bar=el('progress','resource-meter');bar.max=100;bar.value=Math.max(0,Math.min(100,value));
+  bar.setAttribute('aria-label',name+': '+value.toFixed(1)+'% de utilização');
+  line.append(bar);
+ }
+ if(used!==null && total!==null && total>0)
+  line.append(el('small','muted',fmt(used)+' utilizados de '+fmt(total)));
+ return line;
+}
+function renderNodeResources(devices) {
+ const area=$('nodeResourceCards');area.replaceChildren();
+ const nodes=Array.isArray(devices)?devices:[];
+ if(!nodes.length) {area.append(el('p','muted','Nenhum dispositivo disponível.'));return;}
+ for(const n of nodes) {
+  const card=el('article','resource-node');
+  const head=el('div','resource-node-head');
+  const identity=el('div','');
+  identity.append(el('strong','',String(n.name||'Dispositivo sem nome')),el('small','muted',
+    (n.id?'Guest · ':'Host · ')+String(n.platform||'desconhecido')));
+  const live=n.status==='online';
+  const state=el('span','resource-state',live?'Online':'Offline');
+  head.append(identity,state);card.append(head);
+  const seen=n.last_seen?Date.parse(n.last_seen):NaN;
+  const age=Number.isFinite(seen)?Math.max(0,Math.round((Date.now()-seen)/1000)):null;
+  card.append(el('p','resource-seen',
+    !live?'Última medição indisponível (dispositivo offline)':age===null?'Horário da medição desconhecido':'Última comunicação há '+age+' s'));
+  if (!live) {card.append(el('p','muted','Sem amostras atuais de recursos.'));area.append(card);continue;}
+  const cpu=percent(n.cpu_usage_percent);
+  const ramTotal=measuredBytes(n.ram_bytes),ramUsed=measuredBytes(n.ram_used_bytes);
+  const ram=ramTotal>0 && ramUsed!==null && ramUsed<=ramTotal?ramUsed/ramTotal*100:null;
+  card.append(metricRow('CPU',cpu,'%',null,null));
+  card.append(metricRow('RAM',ram,'%',ramUsed,ramTotal));
+  const gpus=Array.isArray(n.gpus)?n.gpus:[];
+  if(!gpus.length) card.append(el('p','resource-empty','GPU não informada para este dispositivo'));
+  for (const g of gpus) {
+   const gpuName=String(g.name||'GPU');
+   const gpuUsage=percent(g.usage_percent);
+   const vramTotal=measuredBytes(g.vram_bytes),vramUsed=measuredBytes(g.vram_used_bytes);
+   const vram=vramTotal>0&&vramUsed!==null&&vramUsed<=vramTotal?vramUsed/vramTotal*100:null;
+   card.append(el('div','resource-gpu-title',gpuName));
+   card.append(metricRow('GPU',gpuUsage,'%',null,null));
+   card.append(metricRow('VRAM',vram,'%',vramUsed,vramTotal));
+  }
+  area.append(card);
+ }
+}
+let resourcePollBusy=false;
+async function refreshNodeResources() {
+ if(resourcePollBusy || !token || $('app').hidden || document.hidden || $('view-cluster').hidden)return;
+ resourcePollBusy=true;
+ try {
+  const cluster=await api('/api/cluster');
+  renderNodeResources(cluster.devices);
+  $('resourceRefresh').textContent='Atualizado agora · heartbeats dos Guests a cada 15 s';
+ } catch(error) {
+  $('resourceRefresh').textContent='Não foi possível atualizar: '+error.message;
+ } finally {resourcePollBusy=false;}
+}
+
 async function refresh(){
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
  renderResidentModels(resident);
@@ -265,6 +332,8 @@ async function refresh(){
  latestStatus=status;localModels=models;
  renderLoadStatus(status);
  await updateLoadingPlan(status);
+ renderNodeResources(cluster.devices);
+ $('resourceRefresh').textContent='Atualizado agora · heartbeats dos Guests a cada 15 s';
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
  $('sideOnline').textContent=nodes.filter(n=>n.status==='online').length;
@@ -372,6 +441,8 @@ $('clearChat').addEventListener('click',()=>guard(async()=>{
 
 
 setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)},10000);
+// Only the Devices workspace polls resource telemetry. No background polling of hidden panels.
+setInterval(refreshNodeResources,5000);
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
  if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;

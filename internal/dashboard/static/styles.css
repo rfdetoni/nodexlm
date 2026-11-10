@@ -218,3 +218,28 @@ dialog{background:#292d32;color:#dce1e6;border:1px solid #525d67}
  .compose-footer button{width:100%}
  .overview-side{padding:17px}
 }
+
+/* Small, understated live resource cards; hidden workspaces do not poll. */
+.telemetry-heading{margin:18px 0 12px;align-items:center}
+.telemetry-heading h3{margin:0 0 3px;font-size:14px}
+.telemetry-heading p{font-size:12px;margin:0}
+.telemetry-heading small{font-size:11px;text-align:right}
+.resource-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:12px;margin:12px 0 20px}
+.resource-node{padding:17px;background:#24282d;border:1px solid #3c444a;border-radius:10px;min-width:0}
+.resource-node-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.resource-node-head strong{display:block;overflow-wrap:anywhere;font-size:14px;color:#d7dce2}
+.resource-node-head small{display:block;margin-top:3px}
+.resource-state{font-size:11px;white-space:nowrap;color:#adb7c1;border:1px solid #4a5259;border-radius:5px;padding:3px 7px}
+.resource-seen{font-size:11px;color:#9daab5;margin:8px 0 14px}
+.resource-metric{margin:12px 0}
+.resource-metric-label{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}
+.resource-metric-label span{font-size:12px;color:#acb6bf}
+.resource-metric-label strong{font-size:12px;color:#c9d2d9;font-weight:600}
+.resource-metric small{display:block;font-size:10px;margin-top:5px}
+progress.resource-meter{display:block;appearance:none;width:100%;height:7px;border:none;border-radius:4px;overflow:hidden;background:#3d454b}
+progress.resource-meter::-webkit-progress-bar{background:#3d454b}
+progress.resource-meter::-webkit-progress-value{background:#8498a8;border-radius:4px}
+progress.resource-meter::-moz-progress-bar{background:#8498a8;border-radius:4px}
+.resource-gpu-title{font-size:12px;color:#c9d3dc;font-weight:600;margin-top:14px;padding-top:12px;border-top:1px solid #373e44;overflow-wrap:anywhere}
+.resource-empty{font-size:11px;color:#9da8b1;margin:12px 0 0}
+@media(max-width:550px){.telemetry-heading{align-items:flex-start;flex-direction:column}.telemetry-heading small{text-align:left}}
