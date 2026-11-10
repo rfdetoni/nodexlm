@@ -168,3 +168,7 @@ Os bundles r3 fixados incluem Linux amd64 CPU/Vulkan, Linux arm64 CPU, macOS arm
 POSIX com bundle r3 utiliza socket Unix privado. Runtimes customizados precisam anunciar suporte Unix para seleção automática; `nodexlm host --rpc-transport tcp` permite interoperabilidade explícita com runtime legado. Windows mantém TCP loopback. Não abra a porta nativa na LAN.
 
 Se o mDNS não estiver disponível, informe o endereço HTTPS explicitamente. UDP 46465 continua disponível; DNS-SD usa UDP 5353 e a rede pode bloquear multicast.
+
+## Guest recebe HTTP 401 no heartbeat
+
+Se `nodexlm guest --backend cpu` informar `server HTTP 401: unauthorized`, o Host não reconhece mais a credencial de nó salva. A conexão de rede pode estar íntegra; trocar backend CPU/GPU não corrige um token revogado. Gere um código novo no Host (`nodexlm pairing`) e, no Guest, use `nodexlm guest --rejoin --server https://IP:8443 --code CODIGO_NOVO --backend cpu`. A renovação só substitui credenciais após autenticação criptográfica pelo código e TLS. Não remova o diretório de modelos ou runtimes. A mensagem `recv returned 0` isolada pode ser uma sondagem de prontidão local, não uma falha de credenciais.
