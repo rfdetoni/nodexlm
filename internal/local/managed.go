@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/config"
+	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/process"
-	"github.com/rfdetoni/nodexlm/internal/debuglog"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
