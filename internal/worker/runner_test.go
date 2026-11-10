@@ -114,9 +114,17 @@ func TestBoundedResultRespectsCoordinatorJSONBodyLimit(t *testing.T) {
 	if result.Error != "" || len(body) > 1<<20 || len(result.Result) > (1<<20)/2 {
 		t.Fatalf("valid result cannot be submitted safely: error=%q serialized=%d", result.Error, len(body))
 	}
-	tooLarge := boundedResult(strings.Repeat("x", (128<<10)+1), nil)
+	ascii := boundedResult(strings.Repeat("x", 256<<10), nil)
+	if ascii.Error != "" || len(ascii.Result) != 256<<10 {
+		t.Fatal("valid 256 KiB ASCII result rejected unnecessarily")
+	}
+	tooLarge := boundedResult(strings.Repeat("x", (1<<19)+1), nil)
 	if tooLarge.Error == "" || tooLarge.Result != "" {
 		t.Fatal("oversized result must be reported as a bounded job failure")
+	}
+	escaped := boundedResult(strings.Repeat("\x00", (1<<20)/6+1), nil)
+	if escaped.Error == "" || escaped.Result != "" {
+		t.Fatal("JSON-escaped result over 1 MiB must be rejected before submission")
 	}
 	generationFailure := boundedResult(strings.Repeat("ignored", 40000), fmt.Errorf("%s", strings.Repeat("e", 2000)))
 	if generationFailure.Result != "" || len(generationFailure.Error) != 1000 {
