@@ -59,3 +59,24 @@ tail -f "${NODEXLM_HOME:-$HOME/.nodexlm}/logs/host.log"
 ```
 
 Acesse o Console Web na porta escolhida, usando os menus funcionais. O log não grava o corpo das requisições HTTP ou tokens de autenticação, mas a saída do runtime nativo pode conter informações internas do modelo, caminhos e IPs. Compartilhe apenas trechos revisados.
+
+## Monitoramento de recursos (Host e Guests)
+
+A tela **Dispositivos** mostra cartões de recursos atualizados aproximadamente
+a cada 5 segundos, enquanto a aba estiver aberta. Guests RPC Go e Android
+enviam amostras por heartbeats autenticados a cada 15 segundos, sem nova porta
+ou credencial. O Host recolhe suas próprias métricas quando consultado.
+
+- **CPU %**: uso total do dispositivo entre leituras de contadores do sistema.
+  A primeira amostra não tem percentual; se o Android não disponibilizar
+  `/proc/stat`, a CPU aparece como **Indisponível**.
+- **RAM**: usada / total a partir da memória física informada pelo sistema.
+  No Android, não altera o orçamento de alocação usado no modo GPU.
+- **GPU %**: motor de computação quando o driver o expõe (NVIDIA
+  `nvidia-smi`, AMD Linux `gpu_busy_percent`). Outras GPUs exibem
+  **Indisponível**; presença de uma GPU não significa 0% de uso.
+- **VRAM**: usada / total quando o driver fornece ambas. Em GPUs integradas
+  a memória pode ser compartilhada com a RAM, portanto não some os valores.
+
+O contador de `última comunicação` é um heartbeat, não a latência da rede.
+Dispositivos offline não exibem valores antigos como leituras atuais.

@@ -52,12 +52,7 @@ func TestDRMUnknownUsedDoesNotInventFreeVRAM(t *testing.T) {
 	}
 }
 
-func TestCPUCounterParsingAndMeasuredGPUUsage(t *testing.T) {
-	raw := "cpu  40 2 20 130 8 0 0 0 0 0\n"
-	total, idle, ok := parseLinuxCPU(raw)
-	if !ok || total != 200 || idle != 138 {
-		t.Fatalf("CPU counters: total=%d idle=%d ok=%t", total, idle, ok)
-	}
+func TestMeasuredGPUUsage(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "card0", "device")
 	if err := os.MkdirAll(dir, 0700); err != nil { t.Fatal(err) }

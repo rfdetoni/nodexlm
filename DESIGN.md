@@ -86,3 +86,12 @@ rather than hiding a spinner. Use native buttons, labels, keyboard navigation,
 text progress/error messages, local-only token storage and visible scrollbars.
 Respect reduced motion and avoid decorative animations. No text or activity
 metrics should claim an unmeasured result.
+
+## Live node telemetry
+
+The Devices workspace shows low-contrast, readable per-node resource cards.
+Host and Guests share CPU load, measured physical RAM usage, and GPU/VRAM usage
+where drivers expose real counters. Missing values are explicitly unavailable,
+including Android OEMs that restrict /proc/stat. This view polls only while
+visible; the authenticated heartbeat reuses the existing coordinator route.
+Avoid fabricated estimates, aggregated VRAM or high-frequency GPU processes.

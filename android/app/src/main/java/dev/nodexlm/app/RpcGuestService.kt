@@ -62,6 +62,7 @@ class RpcGuestService : Service() {
     private val reconnectFailures=java.util.concurrent.atomic.AtomicLong()
     private val running = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
+    private val cpuSampler = CpuUsageSampler()
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
     private var cpuLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -125,7 +126,7 @@ class RpcGuestService : Service() {
                     while (running.get()) {
                         try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
                         catch (e: Exception) { if (running.get()) Log.w(LOG, "Heartbeat failed: ${e.message}") }
-                        sleepWhileRunning(30_000)
+                        sleepWhileRunning(15_000)
                     }
                 }
                 repeat(TUNNELS) { slot ->
@@ -251,11 +252,22 @@ class RpcGuestService : Service() {
             .put("architecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
             .put("cpu_count", Runtime.getRuntime().availableProcessors())
             .put("ram_bytes", memory.totalMem)
+            .put("ram_used_bytes", (memory.totalMem - memory.availMem).coerceAtLeast(0L))
             .put("available_ram_bytes", if (mode == "gpu") 0L else available)
             // Only expose GPU memory when this worker allows Vulkan offload.
             // A CPU-only Guest must not make the Host allocate layers to GPU.
             .put("gpus", if (mode == "cpu") JSONArray() else try {
-                JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
+                val gpus = JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
+                for (i in 0 until gpus.length()) {
+                    val gpu = gpus.optJSONObject(i) ?: continue
+                    val total = gpu.optLong("vram_bytes", 0L)
+                    val free = gpu.optLong("free_vram_bytes", -1L)
+                    if (total > 0L && free >= 0L && free <= total) {
+                        gpu.put("vram_used_bytes", total - free)
+                    }
+                    // Vulkan does not expose measured engine busy percentage here.
+                }
+                gpus
             } catch (e: Exception) {
                 Log.w(LOG, "Vulkan metrics unavailable", e)
                 JSONArray()
@@ -271,6 +283,7 @@ class RpcGuestService : Service() {
                 .put("benchmark", true)
                 .put("reconnect_failures",reconnectFailures.get())
                 .put("rpc_ready", false))
+        cpuSampler.sample()?.let { device.put("cpu_usage_percent", it) }
         val connection = java.net.URL(endpoint.trimEnd('/') + "/v1/nodes/heartbeat")
             .openConnection() as HttpsURLConnection
         PinnedHostTls.configure(connection, this)
