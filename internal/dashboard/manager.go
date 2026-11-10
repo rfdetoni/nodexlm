@@ -38,6 +38,7 @@ type Settings struct {
 	MoECPULayers  int    `json:"moe_cpu_layers"`
 	MoECacheMiB   int    `json:"moe_cache_mib"`
 	Distributed   bool   `json:"distributed"`
+	PlacementStrategy string `json:"placement_strategy,omitempty"`
 }
 
 type Download struct {
@@ -148,7 +149,7 @@ func (m *Manager) DownloadState() *Download {
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
-	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 {
+	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 || (s.PlacementStrategy != "" && s.PlacementStrategy != "capacity" && s.PlacementStrategy != "speed") {
 		return errors.New("invalid runtime limits or conflicting MoE settings")
 	}
 	if s.GPULayers != "auto" && s.GPULayers != "all" {
@@ -344,17 +345,18 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		name, _ := os.Hostname()
 		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
-		remoteCapacities := make([]uint64, 0, len(guests))
-		for _, guest := range guests {
-			if guest.CapacityBytes == 0 {
-				return errors.New("RPC Guest lacks a usable free-memory report; cannot safely place layers")
-			}
-			rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
-			remoteCapacities = append(remoteCapacities, guest.CapacityBytes)
+		selection, selectErr := m.chooseRPC(s, model.BlockCount, uint64(size), hostCapacity, guests)
+		if selectErr != nil {
+			return selectErr
 		}
-		localLayers, err = clusterplan.LocalLayerCount(model.BlockCount, uint64(size), hostCapacity, remoteCapacities)
-		if err != nil {
-			return err
+		localLayers = selection.LocalLayers
+		for _, candidate := range selection.Guests {
+			for _, guest := range guests {
+				if guest.ID == candidate.ID {
+					rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
+					break
+				}
+			}
 		}
 	}
 	var resolved string
