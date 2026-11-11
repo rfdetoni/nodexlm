@@ -17,12 +17,12 @@ Esse erro significa que a biblioteca GGML compartilhada não está acessível ao
 
 1. Atualize a CLI pelo [instalador](../INSTALL.md).
 2. Encerre a execução antiga e reinicie `nodexlm guest --backend cpu`.
-3. Se persistir, procure as bibliotecas ao lado do executável RPC em `~/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-nodexlm-rpc-b12143-r3/`.
+3. Se persistir, procure as bibliotecas ao lado do executável RPC em `~/.nodexlm/runtimes/llama.cpp/b12255/linux-amd64/cpu-rpc/`.
 
 Caso o diretório do runtime esteja incompleto e precise recriá-lo, o comando abaixo remove **apenas** o runtime baixado, não as credenciais do Guest:
 
 ```sh
-rm -rf "$HOME/.nodexlm/runtimes/llama.cpp/b12143/linux-amd64/cpu-rpc-nodexlm-rpc-b12143-r3"
+rm -rf "$HOME/.nodexlm/runtimes/llama.cpp/b12255/linux-amd64/cpu-rpc"
 nodexlm guest --backend cpu
 ```
 
@@ -62,7 +62,7 @@ adb logcat -d -s AndroidRuntime:E
 
 ## Modelo não carrega
 
-Confira se os Guests RPC estão conectados, se a versão do protocolo é `b12143`, se o GGUF é válido e se há memória para pesos, KV cache e buffers. Reduza o contexto ou escolha quantização menor; a soma teórica de memórias não basta para garantir o carregamento.
+Confira se os Guests RPC estão conectados, se a versão do protocolo é `b12255`, se o GGUF é válido e se há memória para pesos, KV cache e buffers. Reduza o contexto ou escolha quantização menor; a soma teórica de memórias não basta para garantir o carregamento.
 
 Ao abrir um problema no GitHub, envie versão, sistema, arquitetura, modo CPU/GPU, log **sem tokens** e passos para reprodução.
 
@@ -120,7 +120,7 @@ não comprovam incompatibilidade de protocolo nem erro de inferência.
 
 Se o modelo não carregar ou os Guests não processarem camadas, confira os logs
 do **Host** no momento em que aplicar o GGUF. Verifique a mensagem de erro de
-`llama-server` e se Host e Guests usam o mesmo runtime RPC `b12143`.
+`llama-server` e se Host e Guests usam o mesmo runtime RPC `b12255`.
 Compare `nodexlm version` nos dispositivos. Não exclua credenciais ou o
 runtime apenas por esse texto; as falhas de modelo devem ser diagnosticadas
 pelo erro de carregamento, não por fechamento de socket isolado.
@@ -142,7 +142,7 @@ O padrão Linux passa a reservar 8 túneis, dentro do limite do relay.
 Para investigar protocolos e desempenho de um modelo novo, reproduza primeiro
 com um GGUF pequeno e um Guest CPU; se o mesmo `HELLO` falhar, o problema
 não depende do tamanho ou da quantização do modelo. Compare as versões do
-runtime `llama.cpp b12143` nos dois lados.
+runtime `llama.cpp b12255` nos dois lados.
 
 ## `RPC tunnel capacity reached` e `RPC tunnel refused: HTTP 503`
 

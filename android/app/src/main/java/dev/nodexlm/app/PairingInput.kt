@@ -2,6 +2,10 @@ package dev.nodexlm.app
 
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.time.Instant
+import java.time.OffsetDateTime
+
+internal fun parsePairingExpiry(value: String): Instant = OffsetDateTime.parse(value).toInstant()
 
 /** Bound untrusted pairing JSON/certificate reads before allocating their bodies. */
 internal fun boundedPairingBytes(input: InputStream, limit: Int = 8192): ByteArray {

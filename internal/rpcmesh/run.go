@@ -25,7 +25,7 @@ import (
 
 // RunNativeGuest supervises one RPC compute server and its TLS reverse tunnels.
 // The model file is not required on this node: tensors are placed by the Host.
-func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, listen string, slots int, devices ...string) error {
+func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, listen string, slots int, cache bool, devices ...string) error {
 	device := ""
 	if len(devices) > 0 {
 		device = devices[0]
@@ -42,7 +42,7 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 		}
 	}
 	if strings.HasPrefix(listen, "unix:") {
-		return runUnixGuest(ctx, client, executable, listen, slots, device)
+		return runUnixGuest(ctx, client, executable, listen, slots, device, cache)
 	}
 	if err := ValidateRPCAddress(listen); err != nil {
 		return err
@@ -68,6 +68,9 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 	_ = probe.Close()
 	// The native GGML RPC server is always restricted to loopback.
 	args := []string{"--host", host, "--port", port}
+	if cache {
+		args = append(args, "--cache")
+	}
 	if device != "" {
 		args = append(args, "--device", device)
 	}

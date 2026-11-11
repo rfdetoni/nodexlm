@@ -29,16 +29,19 @@ import (
 // the resident NodexLM process and returns RAM to the OS after idle timeout.
 // One active inference at a time in the alpha runtime.
 type Managed struct {
-	mu                       sync.Mutex
-	Binary, ModelPath, Alias string
-	Threads, ContextTokens   int
-	GPULayers                string
-	MoECPU                   bool
-	MoECPULayers             int
-	MoECacheMiB              int
-	Idle                     time.Duration
-	KeepLoaded               bool
-	RPCServers               []string
+	mu                                           sync.Mutex
+	Binary, ModelPath, Alias                     string
+	Threads, ContextTokens                       int
+	GPULayers                                    string
+	MoECPU                                       bool
+	MoECPULayers                                 int
+	MoECacheMiB                                  int
+	FlashAttention, KVCacheType, SpeculativeMode string
+	DraftModelPath                               string
+	BatchSize, UBatchSize                        int
+	Idle                                         time.Duration
+	KeepLoaded                                   bool
+	RPCServers                                   []string
 	// RPCLocalLayers keeps the first N transformer blocks on the host CPU;
 	// remaining blocks are placed on RPC devices using layer-split mode.
 	RPCLocalLayers int
@@ -115,6 +118,15 @@ func (m *Managed) ensure(ctx context.Context) error {
 	}
 	if _, err := ModelSize(m.ModelPath); err != nil {
 		return fmt.Errorf("missing GGUF shards: %w", err)
+	}
+
+	if m.SpeculativeMode == "draft" {
+		if m.DraftModelPath == "" || m.DraftModelPath == m.ModelPath {
+			return errors.New("draft speculative decoding requires another GGUF")
+		}
+		if _, err := ModelSize(m.DraftModelPath); err != nil {
+			return fmt.Errorf("draft GGUF unavailable: %w", err)
+		}
 	}
 	meta, err := InspectGGUF(m.ModelPath)
 	if err != nil {
@@ -275,6 +287,26 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 
 func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []string {
 	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui", "--jinja"}
+	if m.FlashAttention != "" && m.FlashAttention != "auto" {
+		args = append(args, "--flash-attn", m.FlashAttention)
+	}
+	if m.KVCacheType != "" && m.KVCacheType != "f16" {
+		args = append(args, "--cache-type-k", m.KVCacheType, "--cache-type-v", m.KVCacheType)
+	}
+	if m.BatchSize > 0 {
+		args = append(args, "--batch-size", strconv.Itoa(m.BatchSize))
+	}
+	if m.UBatchSize > 0 {
+		args = append(args, "--ubatch-size", strconv.Itoa(m.UBatchSize))
+	}
+
+	if m.SpeculativeMode == "ngram" {
+		args = append(args, "--spec-type", "ngram-simple")
+	} else if m.SpeculativeMode == "draft" && m.DraftModelPath != "" {
+		// Draft stays on Host CPU to avoid allocating another model on the
+		// active RPC Guest backends. GGML validates vocabulary compatibility.
+		args = append(args, "--spec-type", "draft-simple", "--spec-draft-model", m.DraftModelPath, "--spec-draft-ngl", "0")
+	}
 	switch {
 	case m.MoECPU:
 		args = append(args, "--cpu-moe")

@@ -44,7 +44,7 @@ func TestNativeRPCExitDoesNotLeaveTunnelsRunning(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	err := RunNativeGuest(ctx, &netclient.Client{}, executable, "127.0.0.1:0", 1)
+	err := RunNativeGuest(ctx, &netclient.Client{}, executable, "127.0.0.1:0", 1, false)
 	if err == nil || !strings.Contains(err.Error(), "native RPC server exited before readiness") {
 		t.Fatalf("expected prompt native RPC process-exit error; got %v", err)
 	}
@@ -56,7 +56,7 @@ func TestNativeRPCRejectsAlreadyOccupiedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	err = RunNativeGuest(context.Background(), nil, "nonexistent-rpc", listener.Addr().String(), 1)
+	err = RunNativeGuest(context.Background(), nil, "nonexistent-rpc", listener.Addr().String(), 1, false)
 	if err == nil || !strings.Contains(err.Error(), "native RPC listen address unavailable") {
 		t.Fatalf("expected occupied RPC port to be rejected; got %v", err)
 	}

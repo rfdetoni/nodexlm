@@ -68,7 +68,7 @@ internal class PairingClient(private val context: Context) {
                 stage = "pairing offer"
                 val offer = requestOffer(endpoint, certDER)
                 if (offer.getString("endpoint") != endpoint) continue
-                val expires = java.time.Instant.parse(offer.getString("expires"))
+                val expires = parsePairingExpiry(offer.getString("expires"))
                 val now = java.time.Instant.now()
                 if (expires.isBefore(now) || expires.isAfter(now.plusSeconds(31 * 60L))) {
                     failures.add(context.getString(R.string.pair_clock_or_code_expired))

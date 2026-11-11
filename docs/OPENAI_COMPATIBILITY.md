@@ -2,7 +2,7 @@
 
 O Host expõe a inferência em `http://127.0.0.1:8787/v1`. Configure um modelo GGUF residente e uma `NODEXLM_API_KEY` exclusiva de inferência, com pelo menos 32 caracteres. O token de administrador também funciona, mas aplicações de chat e agentes devem usar a chave restrita.
 
-A interface preserva os campos JSON e o streaming do runtime `llama.cpp b12143`, incluindo chamadas de ferramentas e raciocínio devolvido pelo modelo. Não reduz mensagens a texto nem converte chamadas de ferramentas em uma resposta textual. Cada modelo residente mantém seu processo/KV; o modelo principal também pode distribuir camadas para Guests RPC.
+A interface preserva os campos JSON e o streaming do runtime `llama.cpp b12255`, incluindo chamadas de ferramentas e raciocínio devolvido pelo modelo. Não reduz mensagens a texto nem converte chamadas de ferramentas em uma resposta textual. Cada modelo residente mantém seu processo/KV; o modelo principal também pode distribuir camadas para Guests RPC.
 
 ## Contratos
 

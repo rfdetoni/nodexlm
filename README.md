@@ -49,6 +49,7 @@ O código de pareamento **não** é o token de administrador. O GGUF de um model
 - [Clientes OpenAI, chat e agentes](docs/OPENAI_COMPATIBILITY.md)
 - [Pareamento e segurança](docs/PAIRING.md)
 - [Model Hub: detalhes técnicos](docs/MODEL_HUB.md)
+- [Inferência adaptativa, otimização e cache RPC](docs/INFERENCE_OPTIMIZATION.md)
 - [MoE e limitações](docs/MOE.md)
 - [Assinatura, distribuição e aceite físico](docs/RELEASE.md)
 - [Histórico de alterações](CHANGELOG.md)

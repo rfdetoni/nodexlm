@@ -40,7 +40,7 @@ O NodexLM procura bibliotecas GGML ao lado do `ggml-rpc-server`, sem `sudo` nem 
 
 ## Recomendações
 
-Mantenha a mesma revisão de protocolo `llama.cpp b12143` entre Host e Guests e prefira rede Ethernet para cargas maiores. A divisão de camadas por RPC depende da largura de banda e pode ser mais lenta que a execução em um único computador.
+Mantenha a mesma revisão de protocolo `llama.cpp b12255` entre Host e Guests e prefira rede Ethernet para cargas maiores. A divisão de camadas por RPC depende da largura de banda e pode ser mais lenta que a execução em um único computador.
 
 Leia [Instalação](../INSTALL.md) e [diagnóstico](GUIA_DIAGNOSTICO.md).
 
