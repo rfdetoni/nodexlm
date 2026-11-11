@@ -1,0 +1,179 @@
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -7,7 +7,13 @@
+ #include "llama.h"
+ 
+ #include <algorithm>
+-#include <array>
++#include <array>
++#include <condition_variable>
++#include <cstdlib>
++#include <memory>
++#include <mutex>
++#include <thread>
++#include <unordered_map>
+ #include <cinttypes>
+ #include <cstdint>
+ #include <cstring>
+@@ -1658,7 +1664,113 @@
+     }
+     GGML_ASSERT(size_data != 0 && "call init_mappings() first");
+ 
+-    std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
++    std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
++
++    // NodexLM: one long-lived worker per RPC device, and at most one queued
++    // tensor per worker. GGUF mappings remain valid until all workers finish.
++    // Uploads to different Guests overlap; commands to the same Guest remain
++    // ordered. No tensor payload is copied into an additional staging buffer.
++    struct rpc_upload_worker {
++        struct task {
++            ggml_tensor * tensor = nullptr;
++            const void  * data   = nullptr;
++            size_t size         = 0;
++        };
++        std::mutex mutex;
++        std::condition_variable wake;
++        task pending;
++        bool stopping = false;
++        std::exception_ptr failure;
++        std::thread worker;
++
++        rpc_upload_worker() : worker([this] {
++            for (;;) {
++                std::unique_lock<std::mutex> lock(mutex);
++                wake.wait(lock, [this] { return stopping || pending.tensor != nullptr; });
++                if (pending.tensor == nullptr && stopping) {
++                    return;
++                }
++                const task next = pending;
++                pending = {};
++                wake.notify_all();
++                lock.unlock();
++                try {
++                    ggml_backend_tensor_set(next.tensor, next.data, 0, next.size);
++                } catch (...) {
++                    lock.lock();
++                    failure = std::current_exception();
++                    stopping = true;
++                    pending = {};
++                    wake.notify_all();
++                    return;
++                }
++            }
++        }) {}
++
++        void submit(ggml_tensor * tensor, const void * data, size_t size) {
++            std::unique_lock<std::mutex> lock(mutex);
++            wake.wait(lock, [this] { return pending.tensor == nullptr || failure != nullptr; });
++            if (failure) {
++                std::rethrow_exception(failure);
++            }
++            if (stopping) {
++                throw std::runtime_error("RPC tensor worker is stopped");
++            }
++            pending = {tensor, data, size};
++            wake.notify_all();
++        }
++
++        void finish() {
++            {
++                std::lock_guard<std::mutex> lock(mutex);
++                stopping = true;
++                wake.notify_all();
++            }
++            if (worker.joinable()) {
++                worker.join();
++            }
++            if (failure) {
++                std::rethrow_exception(failure);
++            }
++        }
++
++        ~rpc_upload_worker() {
++            try { finish(); } catch (...) { /* destructor must not throw */ }
++        }
++    };
++
++    const char * parallel_setting = std::getenv("NODEXLM_PARALLEL_RPC_UPLOAD");
++    const bool parallel_rpc = use_mmap && parallel_setting && std::strcmp(parallel_setting, "1") == 0;
++    std::unordered_map<ggml_backend_dev_t, std::unique_ptr<rpc_upload_worker>> rpc_uploads;
++    auto queue_rpc_upload = [&](ggml_tensor * tensor, const void * data, size_t size) -> bool {
++        if (!parallel_rpc || !tensor->buffer) {
++            return false;
++        }
++        const auto buft = ggml_backend_buffer_get_type(tensor->buffer);
++        const auto dev = buft ? ggml_backend_buft_get_device(buft) : nullptr;
++        if (!dev || std::strncmp(ggml_backend_dev_name(dev), "RPC", 3) != 0) {
++            return false;
++        }
++        auto it = rpc_uploads.find(dev);
++        if (it == rpc_uploads.end()) {
++            // Hard cap: no unbounded threads, tensor queues or extra mappings.
++            if (rpc_uploads.size() >= 4) {
++                return false;
++            }
++            it = rpc_uploads.emplace(dev, std::make_unique<rpc_upload_worker>()).first;
++        }
++        it->second->submit(tensor, data, size);
++        return true;
++    };
++    auto finish_rpc_uploads = [&] {
++        for (auto & entry : rpc_uploads) {
++            entry.second->finish();
++        }
++        rpc_uploads.clear();
++    };
++    if (parallel_rpc) {
++        LLAMA_LOG_INFO("%s: bounded parallel RPC tensor uploads enabled (max 4 workers)\n", __func__);
++    }
+ 
+     // 4 staging buffers for async uploads, each sized 1MB seems to be a good default for single NVMe drives.
+     // NVMe raid configurations might require more / larger buffers.
+@@ -1785,9 +1897,10 @@
+         }
+ 
+         if (progress_callback) {
+-            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
+-                return false;
+-            }
++            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
++                finish_rpc_uploads();
++                return false;
++            }
+         }
+ 
+         size_t n_size = ggml_nbytes(cur);
+@@ -1828,9 +1941,11 @@
+                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
+                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
+             } else {
+-                ggml_backend_tensor_set(cur, data, 0, n_size);
+-            }
+-        } else {
++                if (!queue_rpc_upload(cur, data, n_size)) {
++                    ggml_backend_tensor_set(cur, data, 0, n_size);
++                }
++            }
++        } else {
+             const auto & file = files.at(weight->idx);
+ 
+             if (ggml_backend_buffer_is_host(cur->buffer)) {
+@@ -1922,10 +2037,12 @@
+             }
+         }
+ 
+-        size_done += n_size;
+-    }
+-
+-    // free temporary resources used for async uploads
++        size_done += n_size;
++    }
++    // Drain before mmap fragment unmapping and before reporting 100% loaded.
++    finish_rpc_uploads();
++
++    // free temporary resources used for async uploads
+     for (auto * event : events) {
+         ggml_backend_event_synchronize(event);
+         ggml_backend_event_free(event);
