@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -322,6 +323,7 @@ func (m *Manager) StartLoad() error {
 		cancel()
 		return err
 	}
+	slog.Info("Model load accepted", "distributed", distributed, "timeout_minutes", int(limit.Minutes()))
 	go func() {
 		defer cancel()
 		m.runLoad(ctx)
@@ -374,6 +376,7 @@ func (m *Manager) runLoad(ctx context.Context) error {
 	defer m.poolMu.Unlock()
 	err := m.load(ctx)
 	m.mu.Lock()
+	duration := time.Since(m.loadStartedAt)
 	m.loading = false
 	m.loadCancel = nil
 	if err != nil {
@@ -386,6 +389,11 @@ func (m *Manager) runLoad(ctx context.Context) error {
 	close(m.loadDone)
 	m.loadDone = nil
 	m.mu.Unlock()
+	if err != nil {
+		slog.Error("Model load failed", "elapsed_seconds", int(duration.Seconds()), "error", err)
+	} else {
+		slog.Info("Model load completed", "elapsed_seconds", int(duration.Seconds()))
+	}
 	return err
 }
 
@@ -394,6 +402,7 @@ func (m *Manager) setPhase(phase string) {
 	m.loadPhase = phase
 	m.phaseStartedAt = time.Now()
 	m.mu.Unlock()
+	slog.Info("Model load phase", "phase", phase)
 }
 
 func (m *Manager) load(ctx context.Context) error {
@@ -417,6 +426,7 @@ func (m *Manager) load(ctx context.Context) error {
 	rpcEndpoints := []string(nil)
 	localLayers := 0
 	if s.Distributed {
+		m.setPhase("selecting_guests")
 		if provider == nil {
 			return errors.New("distributed inference needs a Host coordinator")
 		}
@@ -455,10 +465,14 @@ func (m *Manager) load(ctx context.Context) error {
 		if len(rpcEndpoints) != len(selection.Guests) {
 			return errors.New("RPC relay became unavailable while planning layers; reconnect the selected Guests")
 		}
+		slog.Info("Distributed model placement planned", "selected_guests", len(selection.Guests),
+			"available_guests", len(guests), "host_layers", localLayers, "total_layers", model.BlockCount,
+			"strategy", s.PlacementStrategy)
 		m.mu.Lock()
 		m.loadRPCNodes = selectedIDs
 		m.mu.Unlock()
 	}
+	m.setPhase("resolving_runtime")
 	var resolved string
 	if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {
 		// This opt-in backend is separately resolved by local.Managed.
