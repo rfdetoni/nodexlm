@@ -181,7 +181,7 @@ func validDevice(d protocol.Device) bool {
 		len(d.GPUs) > 16 || d.CPUCount < 1 || d.CPUCount > 4096 ||
 		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
 		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
-		!validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
+		!validMobileTelemetry(d) || !validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
 		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 {
 		return false
 	}
@@ -199,6 +199,12 @@ func validDevice(d protocol.Device) bool {
 		}
 	}
 	return true
+}
+
+func validMobileTelemetry(d protocol.Device) bool {
+	return (d.BatteryPercent == nil || (*d.BatteryPercent >= 0 && *d.BatteryPercent <= 100)) &&
+		(d.ThermalStatus == nil || (*d.ThermalStatus >= 0 && *d.ThermalStatus <= 6)) &&
+		(d.ThermalHeadroom == nil || (*d.ThermalHeadroom >= 0 && *d.ThermalHeadroom <= 10))
 }
 
 // Zero is a measured idle sample; nil means unavailable.
@@ -259,7 +265,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	if len(req.Models) > 128 || len(req.GPUs) > 16 ||
 		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
 		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
-		!validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
+		!validMobileTelemetry(req) || !validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
 		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 {
 		fail(w, 400, "invalid node resources")
 		return
@@ -305,6 +311,10 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.MaxContributionBytes = req.MaxContributionBytes
 			n.device.MemoryReserveBytes = req.MemoryReserveBytes
 		}
+		if req.BatteryPercent != nil { n.device.BatteryPercent = req.BatteryPercent }
+		if req.Charging != nil { n.device.Charging = req.Charging }
+		if req.ThermalStatus != nil { n.device.ThermalStatus = req.ThermalStatus }
+		if req.ThermalHeadroom != nil { n.device.ThermalHeadroom = req.ThermalHeadroom }
 		if req.GPUs != nil {
 			valid := true
 			for _, gpu := range req.GPUs {
