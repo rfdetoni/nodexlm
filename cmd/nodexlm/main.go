@@ -182,9 +182,12 @@ func serve(args []string) error {
 	modelDir := f.String("model-dir", "", "directory containing managed GGUF models")
 	rpcTransport := f.String("rpc-transport", "auto", "local RPC transport: auto, unix, tcp")
 	llamaBin := f.String("llama-bin", "llama-server", "llama-server executable used by Web UI")
+	rpcExclude := f.String("rpc-exclude-ids", "", "comma-separated full Guest IDs to temporarily exclude from RPC model placement (does not revoke pairing)")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	excludedGuests, err := parseRPCExclusions(*rpcExclude)
+	if err != nil { return err }
 	if *debug {
 		stop, err := debuglog.Start(*dir, "host")
 		if err != nil {
@@ -192,6 +195,9 @@ func serve(args []string) error {
 		}
 		defer stop()
 		slog.Debug("Host configuration", "listen", *addr, "web_ui", *webAddr, "rpc_transport", *rpcTransport)
+	}
+	if len(excludedGuests) != 0 {
+		slog.Warn("RPC Guests excluded from model placement for diagnosis", "count", len(excludedGuests))
 	}
 	if *discoveryPort < 1 || *discoveryPort > 65535 {
 		return errors.New("invalid discovery port")
@@ -289,6 +295,9 @@ func serve(args []string) error {
 			profiles := s.DevicesSnapshot()
 			out := make([]dashboard.RPCGuest, 0, len(ready))
 			for _, profile := range profiles {
+				if _, excluded := excludedGuests[profile.ID]; excluded {
+					continue
+				}
 				endpoint, ok := ready[profile.ID]
 				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
 					continue

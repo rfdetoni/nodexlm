@@ -184,8 +184,12 @@ func (m *Managed) ensure(ctx context.Context) error {
 		cmd.Env = append(os.Environ(), launch.Env...)
 	}
 	process.KillWithParent(cmd)
-	cmd.Stdout = io.Discard
+	// llama.cpp versions and GPU backends may log startup information to
+	// stdout instead of stderr. Preserve both streams in the private debug
+	// log and in the bounded diagnostic tail; do not lose the only evidence
+	// of a stuck RPC HELLO or model load.
 	stderr := &nativeLogTail{}
+	cmd.Stdout = io.MultiWriter(debuglog.NativeOutput(), stderr)
 	cmd.Stderr = io.MultiWriter(debuglog.NativeOutput(), stderr)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to launch %s: %w", EffectiveBackend(m.Backend), err)
@@ -214,7 +218,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	for {
 		select {
 		case <-exit.done:
-			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
+			return fmt.Errorf("%s exited while loading the model: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 		default:
 		}
 		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+launch.ReadyPath, nil)
@@ -229,7 +233,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 				if ready {
 					select {
 					case <-exit.done:
-						return fmt.Errorf("%s exited before becoming ready: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
+						return fmt.Errorf("%s exited before becoming ready: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 					default:
 					}
 					m.started = cmd
@@ -243,11 +247,11 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 		select {
 		case <-exit.done:
-			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
+			return fmt.Errorf("%s exited while loading the model: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 		case <-startup.Done():
 			stopProcess()
 			if errors.Is(startup.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("%s not ready after %s; check model and stderr: %s", EffectiveBackend(m.Backend), timeout, stderr.String())
+				return fmt.Errorf("%s not ready after %s; check model and native output: %s", EffectiveBackend(m.Backend), timeout, stderr.String())
 			}
 			return fmt.Errorf("%s startup cancelled: %w", EffectiveBackend(m.Backend), startup.Err())
 		case <-time.After(250 * time.Millisecond):
