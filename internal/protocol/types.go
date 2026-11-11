@@ -62,6 +62,11 @@ type Device struct {
 	// User-defined maximum weight contribution and minimum free OS reserve.
 	MaxContributionBytes uint64         `json:"max_contribution_bytes,omitempty"`
 	MemoryReserveBytes   uint64         `json:"memory_reserve_bytes,omitempty"`
+	// Nil represents unavailable telemetry; zero is a measured value.
+	BatteryPercent   *int              `json:"battery_percent,omitempty"`
+	Charging         *bool             `json:"charging,omitempty"`
+	ThermalStatus    *int              `json:"thermal_status,omitempty"`
+	ThermalHeadroom  *float64          `json:"thermal_headroom,omitempty"`
 	GPUs              []GPUDevice       `json:"gpus,omitempty"`
 	Runtime           RuntimeCapability `json:"runtime"`
 	Models            []string          `json:"models,omitempty"`
