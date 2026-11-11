@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 class Element {
-  constructor(tag) {this.tag=tag;this.children=[];this.handlers={};this.style={};this.value='';this.hidden=false;this.disabled=false;this._text='';}
+  constructor(tag) {this.tag=tag;this.children=[];this.handlers={};this.style={};this.value='';this.checked=false;this.hidden=false;this.disabled=false;this._text='';}
   set textContent(value) {this._text=String(value);this.children=[];}
   get textContent() {return this._text+this.children.map(c=>c.textContent).join('');}
   append(...elements) {this.children.push(...elements);}
