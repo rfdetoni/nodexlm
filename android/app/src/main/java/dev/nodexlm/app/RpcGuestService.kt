@@ -190,7 +190,7 @@ class RpcGuestService : Service() {
             .addAction(Notification.Action.Builder(null, "Parar", stop).build())
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else startForeground(43, notification)
     }
 
@@ -202,9 +202,17 @@ class RpcGuestService : Service() {
         } catch (e: Exception) { Log.w(LOG, "CPU wake lock unavailable", e) }
         try {
             val wifi = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+            // HIGH_PERF can assist screen-off Wi-Fi on API 29-33; on API 34+
+            // Android converts it to LOW_LATENCY, which is ineffective with
+            // screen off. This is an advisory lock, not a Doze exemption.
             @Suppress("DEPRECATION")
-            wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "NodexLM:rpc-wifi")
+            val mode = if (Build.VERSION.SDK_INT < 34) WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                       else WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            wifiLock = wifi.createWifiLock(mode, "NodexLM:rpc-wifi")
                 .apply { setReferenceCounted(false); acquire() }
+            Log.i(LOG, "Wi-Fi lock acquired; API=${Build.VERSION.SDK_INT}, " +
+                "screen_off_supported_by_mode=${Build.VERSION.SDK_INT < 34}; " +
+                "device power policy and OEM may still suspend connectivity")
         } catch (e: Exception) { Log.w(LOG, "Wi-Fi wake lock unavailable", e) }
     }
 
@@ -261,13 +269,21 @@ class RpcGuestService : Service() {
             .put("cpu_count", Runtime.getRuntime().availableProcessors())
             .put("ram_bytes", memory.totalMem)
             .put("ram_used_bytes", (memory.totalMem - memory.availMem).coerceAtLeast(0L))
-            .put("available_ram_bytes", if (mode == "gpu") 0L else available)
+            // Physical RAM is still available when compute is GPU-only;
+            // disabling CPU does not make physical memory disappear.
+            .put("available_ram_bytes", available)
+            .put("max_contribution_bytes", getSharedPreferences("nodexlm", MODE_PRIVATE)
+                .getInt("rpc_max_contribution_mib", 0).coerceIn(0, 65536).toLong() * 1024L * 1024L)
+            .put("memory_reserve_bytes", getSharedPreferences("nodexlm", MODE_PRIVATE)
+                .getInt("rpc_memory_reserve_mib", 1024).coerceIn(1024, 65536).toLong() * 1024L * 1024L)
             // Only expose GPU memory when this worker allows Vulkan offload.
             // A CPU-only Guest must not make the Host allocate layers to GPU.
             .put("gpus", if (mode == "cpu") JSONArray() else try {
                 val gpus = JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
                 for (i in 0 until gpus.length()) {
                     val gpu = gpus.optJSONObject(i) ?: continue
+                    // Vulkan heap counters on Android refer to shared physical RAM.
+                    gpu.put("memory_type", "shared")
                     val total = gpu.optLong("vram_bytes", 0L)
                     val free = gpu.optLong("free_vram_bytes", -1L)
                     if (total > 0L && free >= 0L && free <= total) {
