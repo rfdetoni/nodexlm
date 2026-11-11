@@ -43,6 +43,14 @@ jobs:
             html = html[:table] + telemetry + '\n' + html[table:]
             html_path.write_text(html)
 
+          css_path = Path('internal/dashboard/static/styles.css')
+          css = css_path.read_text()
+          if '.resource-cards' not in css:
+            main_css = from_main(str(css_path))
+            marker = '/* Small, understated live resource cards; hidden workspaces do not poll. */'
+            assert marker in main_css, 'Metrics CSS missing from main'
+            css_path.write_text(css.rstrip() + '\n\n' + main_css[main_css.index(marker):])
+
           test_path = Path('scripts/test-dashboard-models.cjs')
           test = test_path.read_text()
           if 'Telemetry must never' not in test:
@@ -56,7 +64,7 @@ jobs:
           PY
           node --check internal/dashboard/static/app.js
           node scripts/test-dashboard-models.cjs
-          git add internal/dashboard/static/index.html scripts/test-dashboard-models.cjs
+          git add internal/dashboard/static/index.html internal/dashboard/static/styles.css scripts/test-dashboard-models.cjs
           if ! git diff --cached --quiet; then
             git commit -m "fix(web): preserve resource dashboard and pairing timer together"
           fi
