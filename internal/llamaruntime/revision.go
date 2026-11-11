@@ -12,12 +12,12 @@ var Version = revision.Version
 var SourceCommit = revision.Commit
 
 type runtimeRevision struct {
-	UnixRPC             bool              `json:"unix_rpc"`
-	ParallelRPCUploads  bool              `json:"parallel_rpc_uploads"`
-	Version             string            `json:"version"`
-	Commit              string            `json:"commit"`
-	RPCRelease          string            `json:"rpc_release"`
-	Published           map[string]string `json:"published"`
+	UnixRPC            bool              `json:"unix_rpc"`
+	ParallelRPCUploads bool              `json:"parallel_rpc_uploads"`
+	Version            string            `json:"version"`
+	Commit             string            `json:"commit"`
+	RPCRelease         string            `json:"rpc_release"`
+	Published          map[string]string `json:"published"`
 }
 
 func BundledParallelRPCUploadsSupported() bool {
