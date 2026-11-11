@@ -281,7 +281,7 @@ class MainActivity : Activity() {
             val threads = cpuThreads.text.toString().toIntOrNull()
             if (min == null || min !in 5..95 || from == null || from !in 0..23 ||
                 until == null || until !in 0..23 || cap == null || cap !in 0..65536 ||
-                reserve == null || reserve !in 1024..65536 || threads == null || threads !in 0..16) {
+                reserve == null || reserve !in 1024..65536 || threads == null || threads !in 0..8) {
                 setStatus(getString(R.string.ui_5f20f24e5efa))
             } else {
                 prefs.edit().putBoolean("rpc_only_charging",onlyCharging.isChecked).putInt("rpc_min_battery",min)
