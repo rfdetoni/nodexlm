@@ -183,9 +183,11 @@ function renderLoadStatus(status){
   const sent=channels.reduce((sum,[,node])=>sum+(Number(node.to_guest_bytes)||0),0);
   const last=Math.max(0,...channels.map(([,node])=>Number(node.last_activity_ms)||0));
   const idleFor=last>0?Math.max(0,Math.floor((Date.now()-last)/1000)):null;
-  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados aos Guests selecionados durante este carregamento.'));
+  const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
+  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados aos Guests selecionados durante este carregamento · média '+(sent/1048576/seconds).toFixed(2)+' MiB/s.'));
   for(const [id,node] of channels){
-   box.append(el('p','rpc-node-transfer',id.slice(0,12)+'… · '+fmt(Number(node.to_guest_bytes)||0)+' enviados · '+(Number(node.connected)||0)+' túneis, '+(Number(node.idle)||0)+' livres'));
+   const bytes=Number(node.to_guest_bytes)||0;
+    box.append(el('p','rpc-node-transfer',id.slice(0,12)+'… · '+fmt(bytes)+' enviados · '+(bytes/1048576/seconds).toFixed(2)+' MiB/s médios · '+(Number(node.connected)||0)+' túneis, '+(Number(node.idle)||0)+' livres'));
   }
   if(runtime.phase==='loading_model' && Number(runtime.phase_elapsed_seconds)>120 && (last===0 || idleFor>120)){
    box.append(el('p','rpc-stall-warning','Sem transferência RPC recente há mais de 2 min. Verifique os túneis e logs nativos do Host/Guest; cancele se estiver travado.'));
@@ -410,10 +412,18 @@ async function sendChat(){
  const prompt=$('prompt').value.trim();if(!prompt)return;
  const model=$('chatModel').value||latestStatus?.runtime?.model;if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
- const start=performance.now();let first=null;let answer='';let usage=null;let done=false;let reader;
- renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');output.append(reply);
+ const start=performance.now();let first=null;let answer='';let reasoning='';let usage=null;let done=false;let reader;
+ renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');const details=el('details','reasoning-details');const summary=el('summary','','Raciocínio do modelo');const thoughts=el('p','reasoning-content');details.append(summary,thoughts);details.hidden=true;output.append(details,reply);
  try{
-  const response=await fetch('/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({model,messages:[...chatHistory.slice(-62),{role:'user',content:prompt}],temperature:+$('chatTemperature').value,max_tokens:+$('chatTokens').value,cache_prompt:true,stream_options:{include_usage:true},stream:true})});
+  const effort=$('chatEffort').value;
+  const maxTokens=+$('chatTokens').value;
+  const thinkingBudget=+$('chatThinkingBudget').value;
+  if(!Number.isInteger(thinkingBudget)||thinkingBudget<0||thinkingBudget>4096||thinkingBudget>maxTokens)throw Error('O orçamento de raciocínio deve estar entre 0 e o máximo de tokens da resposta.');
+  if(effort==='none'&&thinkingBudget>0)throw Error('Desative o orçamento de tokens quando o thinking estiver desligado.');
+  const payload={model,messages:[...chatHistory.slice(-62),{role:'user',content:prompt}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
+  if(effort!=='auto')payload.reasoning_effort=effort;
+  if(thinkingBudget>0)payload.reasoning_budget_tokens=thinkingBudget;
+  const response=await fetch('/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify(payload)});
   if(!response.ok){const text=await response.text();let message=text;try{message=JSON.parse(text).error||text}catch{}throw Error(message)}
   reader=response.body.getReader();const decoder=new TextDecoder();let pending='';
   while(!done){
@@ -426,6 +436,8 @@ async function sendChat(){
     if(!data)continue;if(data==='[DONE]'){done=true;break}
     const event=JSON.parse(data);if(event.error)throw Error(event.error.message||event.error);
     if(event.usage)usage=event.usage;
+    const thinking=event.choices?.[0]?.delta?.reasoning_content||'';
+    if(thinking){reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning}
     const text=event.choices?.[0]?.delta?.content||'';
     if(text){if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer}
    }
@@ -435,7 +447,7 @@ async function sendChat(){
   chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();$('prompt').value='';
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
-  $('chatMetrics').textContent='Tempo: '+elapsed.toFixed(2)+' s'+(first!==null?' · Primeiro token: '+((first-start)/1000).toFixed(2)+' s':'')+(usage?.completion_tokens?' · '+(usage.completion_tokens/elapsed).toFixed(1)+' tokens/s':'');
+  $('chatMetrics').textContent='Tempo: '+elapsed.toFixed(2)+' s'+(first!==null?' · Primeiro token: '+((first-start)/1000).toFixed(2)+' s':'')+(usage?.completion_tokens?' · '+(usage.completion_tokens/elapsed).toFixed(1)+' tokens/s':'')+(usage?.completion_tokens_details?.reasoning_tokens?' · Thinking: '+usage.completion_tokens_details.reasoning_tokens+' tokens':'');
  }catch(error){
   const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;
   if(!answer)reply.textContent=message;if(!controller.signal.aborted)notice(message);
@@ -562,6 +574,7 @@ $('previewPlan').addEventListener('click',()=>guard(async()=>{
  area.append(el('p','muted','Camadas e KV F16 são estimativas; a alocação final depende do runtime. Aviso de rede: RTT acima de 10 ms ou eco abaixo de 50 MiB/s. Tokens/s são medidos, sem previsão pela banda; mudar a configuração ou os nós pode invalidar a comparação.'));
 }));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
+$('chatEffort').addEventListener('change',()=>{const disabled=$('chatEffort').value==='none';$('chatThinkingBudget').disabled=disabled;if(disabled)$('chatThinkingBudget').value='0'});
 $('stopChat').addEventListener('click',()=>chatController?.abort());
 $('clearChat').addEventListener('click',()=>guard(async()=>{
  if(!await confirmAction('Apagar o histórico de conversas salvo neste navegador?','Apagar histórico'))return;

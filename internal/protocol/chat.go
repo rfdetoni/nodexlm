@@ -51,6 +51,20 @@ func ValidateChat(req ChatRequest) string {
 	if req.MaxTokens < 0 || req.MaxTokens > 4096 {
 		return "max_tokens exceeds limit"
 	}
+	switch req.ReasoningEffort {
+	case "", "none", "low", "medium", "high", "xhigh":
+	default:
+		return "reasoning_effort must be none, low, medium, high or xhigh"
+	}
+	if req.ReasoningBudgetTokens < 0 || req.ReasoningBudgetTokens > 4096 {
+		return "reasoning_budget_tokens must be between 0 and 4096"
+	}
+	if req.ReasoningEffort == "none" && req.ReasoningBudgetTokens > 0 {
+		return "reasoning_budget_tokens cannot be set when reasoning_effort is none"
+	}
+	if req.ReasoningBudgetTokens > 0 && req.MaxTokens > 0 && req.ReasoningBudgetTokens > req.MaxTokens {
+		return "reasoning_budget_tokens cannot exceed max_tokens"
+	}
 	if math.IsNaN(req.Temperature) || math.IsInf(req.Temperature, 0) || req.Temperature < 0 || req.Temperature > 2 {
 		return "temperature must be between 0 and 2"
 	}

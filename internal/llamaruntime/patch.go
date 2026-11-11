@@ -12,12 +12,23 @@ import (
 //go:embed patches/unix-rpc.patch
 var unixRPCPatch []byte
 
+//go:embed patches/parallel-rpc-loader.patch
+var parallelRPCPatch []byte
+
 func applyRPCPatch(ctx context.Context, source string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", source, "apply", "-")
-	cmd.Stdin = bytes.NewReader(unixRPCPatch)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("apply pinned Unix RPC patch: %w: %s", err, out)
+	for _, patch := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "Unix RPC", data: unixRPCPatch},
+		{name: "parallel tensor upload", data: parallelRPCPatch},
+	} {
+		cmd := exec.CommandContext(ctx, "git", "-C", source, "apply", "-")
+		cmd.Stdin = bytes.NewReader(patch.data)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("apply pinned %s patch: %w: %s", patch.name, err, out)
+		}
 	}
 	return nil
 }

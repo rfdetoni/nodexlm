@@ -33,7 +33,7 @@ jobs:
           # Publish from current main only while its pinned native source/patch
           # still matches the build. The release notes retain the build SHA.
           subprocess.run(['git','fetch','--depth=1','origin',build['commit']],check=True)
-          for file in ['internal/llamaruntime/patches/unix-rpc.patch']:
+          for file in ['internal/llamaruntime/patches/unix-rpc.patch', 'internal/llamaruntime/patches/parallel-rpc-loader.patch']:
               assert subprocess.check_output(['git','show',build['commit']+':'+file])==pathlib.Path(file).read_bytes()
           before=json.loads(subprocess.check_output(['git','show',build['commit']+':internal/llamaruntime/revision.json']))
           current=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())

@@ -12,17 +12,19 @@ type Message struct {
 }
 
 type ChatRequest struct {
-	CachePrompt   *bool          `json:"cache_prompt,omitempty"`
-	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
-	Model         string         `json:"model"`
-	Messages      []Message      `json:"messages"`
-	MaxTokens     int            `json:"max_tokens,omitempty"`
-	Temperature   float64        `json:"temperature"`
-	TopP          *float64       `json:"top_p,omitempty"`
-	Stop          Stop           `json:"stop,omitempty"`
-	Priority      int            `json:"priority,omitempty"`
-	Stream        bool           `json:"stream,omitempty"`
-	TargetNode    string         `json:"target_node,omitempty"`
+	CachePrompt           *bool          `json:"cache_prompt,omitempty"`
+	StreamOptions         *StreamOptions `json:"stream_options,omitempty"`
+	Model                 string         `json:"model"`
+	Messages              []Message      `json:"messages"`
+	MaxTokens             int            `json:"max_tokens,omitempty"`
+	ReasoningEffort       string         `json:"reasoning_effort,omitempty"`
+	ReasoningBudgetTokens int            `json:"reasoning_budget_tokens,omitempty"`
+	Temperature           float64        `json:"temperature"`
+	TopP                  *float64       `json:"top_p,omitempty"`
+	Stop                  Stop           `json:"stop,omitempty"`
+	Priority              int            `json:"priority,omitempty"`
+	Stream                bool           `json:"stream,omitempty"`
+	TargetNode            string         `json:"target_node,omitempty"`
 }
 
 type GPUDevice struct {

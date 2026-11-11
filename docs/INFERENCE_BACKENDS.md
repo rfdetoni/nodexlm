@@ -107,3 +107,57 @@ NODEXLM_EXPERIMENTAL_MISTRALRS=1 nodexlm local \
 
 Esse comando não torna o mistral.rs um Guest RPC nem modifica os tokens de
 pareamento do Host. A política de segurança do processo local continua a mesma.
+
+## Carregamento paralelo de pesos (Linux RPC)
+
+O NodexLM mantém o arquivo GGUF no Host e utiliza RPC autenticado para
+distribuir seus tensores. No runtime nativo verificado **r2**, carregamentos
+distribuídos com dois ou mais dispositivos RPC habilitam
+`NODEXLM_PARALLEL_RPC_UPLOAD=1` automaticamente. O patch implementa
+**um worker persistente por dispositivo** e limita a quatro destinos
+simultâneos, com apenas um tensor pendente por worker.
+
+- **Memória:** o fluxo paralelo usa ponteiros do GGUF via **mmap**. Não
+  duplica os tensores inteiros em buffers Go. Com `--no-mmap`, a via
+  síncrona do llama.cpp continua em uso.
+- **Ordenação:** cada Guest recebe seus tensores na ordem original.
+  O Host sincroniza todos os workers antes de liberar os mapeamentos
+  GGUF ou informar 100% da carga.
+- **Isolamento:** um dispositivo lento não bloqueia o envio simultâneo
+  para outros, embora um erro definitivo em um Guest ainda invalide a
+  carga distribuída.
+- **Compatibilidade:** r1 e r2 usam o mesmo protocolo RPC b12255.
+  O bundle nativo r2 tem SHA-256 fixado e é instalado em cache separado;
+  outras plataformas continuam utilizando seus bundles já verificados.
+- **Fallback:** em builds sem patch (ou com apenas um Guest), o fluxo
+  sequencial original é mantido. Para diagnosticar diferenças de
+  estabilidade ou desempenho, inicie o Host com
+  `NODEXLM_PARALLEL_RPC_UPLOAD=0 nodexlm host --debug`.
+
+O cache de tensores já existente pode ser habilitado **explicitamente**
+no Guest com `nodexlm guest --backend cpu --rpc-cache --debug`.
+Os pesos do modelo podem permanecer em disco no Guest: **não habilite
+o cache sem confiar no dispositivo e no armazenamento**. O primeiro
+carregamento normalmente precisa transferir os pesos; os seguintes
+podem se beneficiar dos hashes e arquivos de cache.
+
+No painel, os contadores `to_guest_bytes` e a média em MiB/s representam
+**bytes reais transferidos** ao Guest, não camadas confirmadas. Medir
+carregamento frio e repetido antes/depois no mesmo modelo e cluster,
+comparando também o uso de CPU, rede e memória.
+
+## Chat: esforço e orçamento de thinking
+
+Na aba **Chat**, selecione **Automático**, **Desativado**, **Baixo**,
+**Médio**, **Alto** ou **Muito alto (se suportado)**. O controle repassa
+`reasoning_effort` ao llama.cpp, conforme o suporte do template do
+modelo; `none` solicita a desativação do raciocínio.
+
+O campo opcional de orçamento em tokens repassa
+`reasoning_budget_tokens` (0 = não enviar, permitindo ao modelo
+decidir), limitado ao máximo de tokens da requisição. O console
+mostra `reasoning_content` em seção recolhível quando o backend
+envia esse campo no SSE, sem misturá-lo à resposta final ou ao
+histórico da conversa. Modelos que não suportam reasoning podem
+ignorar as opções; elas não garantem uma quantidade exata de
+raciocínio nem o mesmo comportamento entre modelos.
