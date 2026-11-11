@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"log/slog"
 	"runtime"
 	"strings"
 	"time"
