@@ -447,7 +447,7 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		name, _ := os.Hostname()
 		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
-		selection, selectErr := m.chooseRPC(s, model.BlockCount, uint64(size), hostCapacity, guests)
+		selection, selectErr := m.chooseRPC(s, model, uint64(size), hostCapacity, guests)
 		if selectErr != nil {
 			return selectErr
 		}
