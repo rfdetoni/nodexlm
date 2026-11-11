@@ -95,3 +95,12 @@ where drivers expose real counters. Missing values are explicitly unavailable,
 including Android OEMs that restrict /proc/stat. This view polls only while
 visible; the authenticated heartbeat reuses the existing coordinator route.
 Avoid fabricated estimates, aggregated VRAM or high-frequency GPU processes.
+
+## Backend selection
+
+The console keeps llama.cpp as the default and preserves its authenticated
+RPC Host/Guest contract. A separate mistral.rs option is deliberately labeled
+experimental, Host-only and off by default. It must never imply compatible
+RPC tensor distribution, mobile GPU support or authenticated native HTTP.
+Backend-specific unsupported settings fail validation at load time; users
+receive an explicit reason instead of a silent fallback.
