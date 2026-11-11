@@ -361,11 +361,13 @@ let pairingRequestBusy = false;
 let pairingAutoRenew = false;
 let pairingRetryAt = 0;
 const pairingRetryDelayMs = 30000;
+// Use monotonic time: browser clock corrections cannot extend pairing lifetime.
+const pairingNow = () => performance.now();
 function pairingTTL(payload) {
  const measured = Number(payload.expires_in_ms);
  if(Number.isFinite(measured) && measured > 0 && measured <= 1800000)return measured;
  // Legacy Host compatibility: previous versions returned e.g. "10m".
- const match = /^(\\d+)([smh])$/.exec(String(payload.expires_in||''));
+ const match = /^(\d+)([smh])$/.exec(String(payload.expires_in||''));
  if(!match)throw Error('Resposta do Host sem prazo de expiração válido.');
  const unit={s:1000,m:60000,h:3600000}[match[2]];
  const ms=Number(match[1])*unit;
@@ -373,7 +375,7 @@ function pairingTTL(payload) {
  return ms;
 }
 function pairingSecondsLeft(){
- return pairingSession ? Math.max(0,Math.ceil((pairingSession.expiresAt-Date.now())/1000)) : 0;
+ return pairingSession ? Math.max(0,Math.ceil((pairingSession.expiresAt-pairingNow())/1000)) : 0;
 }
 function clearPairingSession(){
  pairingSession=null;pairingAutoRenew=false;pairingRetryAt=0;
@@ -388,22 +390,26 @@ async function generatePairingCode(automatic=false){
  pairingRequestBusy=true;
  $('pair').disabled=true;
  if(pairingSession) $('pairStatus').textContent=automatic?'Renovando código automaticamente…':'Gerando novo código…';
+ const startingToken=token;
  try {
   const payload=await api('/v1/pairing/start','POST',{});
+  if(token!==startingToken || $('app').hidden)return;
   const ttl=pairingTTL(payload);
   if(!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(String(payload.code||''))) {
    throw Error('O Host retornou um código de pareamento inválido.');
   }
-  // Subtract one second to avoid displaying a code as valid after a network
-  // delay; a monotonic elapsed countdown is not sensitive to clock skew.
-  pairingSession={code:payload.code,expiresAt:Date.now()+Math.max(0,ttl-1000),ttl};
+  // Allow for a small response delay without relying on clock synchronization.
+  pairingSession={code:payload.code,expiresAt:pairingNow()+Math.max(0,ttl-250),ttl};
   pairingRetryAt=0;
   renderPairingSession();
   notice(automatic?'Código de pareamento renovado automaticamente':'Código de pareamento gerado');
  } catch(error) {
-  if(automatic) {
-   pairingRetryAt=Date.now()+pairingRetryDelayMs;
-   if(pairingSession) $('pairStatus').textContent='Falha na renovação. Nova tentativa em 30 s.';
+  // The request may have reached the Host even when its response was lost.
+  // Hide the old code rather than claiming it is still valid.
+  if(pairingSession){
+   pairingSession={code:'',expiresAt:pairingNow()-1,ttl:pairingSession.ttl};
+   if(automatic)pairingRetryAt=pairingNow()+pairingRetryDelayMs;
+   renderPairingSession();
   }
   throw error;
  } finally {
@@ -415,14 +421,14 @@ function renderPairingSession(){
  const area=$('pairingSession');
  if(!pairingSession){area.hidden=true;return;}
  area.hidden=false;
- const seconds=pairingSecondsLeft(),remainingMs=Math.max(0,pairingSession.expiresAt-Date.now());
+ const seconds=pairingSecondsLeft(),remainingMs=Math.max(0,pairingSession.expiresAt-pairingNow());
  $('pairCode').textContent=seconds>0?pairingSession.code:'Código expirado';
  $('pairCountdown').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
  $('pairProgress').max=pairingSession.ttl;
  $('pairProgress').value=remainingMs;
  $('pairStatus').textContent=seconds>0?'Código ativo. Utilize-o para parear um dispositivo.':
    pairingRequestBusy?'Renovando código…':
-   pairingAutoRenew && pairingRetryAt>Date.now()?'Falha na renovação. Nova tentativa em até 30 s.':
+   pairingAutoRenew && pairingRetryAt>pairingNow()?'Falha na renovação. Nova tentativa em até 30 s.':
    pairingAutoRenew?'Código expirado. Renovação automática habilitada.':
    'Código expirado. Gere outro para permitir novos pareamentos.';
 }
@@ -430,17 +436,17 @@ function pairingTick(){
  if(!pairingSession || !token || $('app').hidden)return;
  renderPairingSession();
  if(pairingSecondsLeft()===0 && pairingAutoRenew && !pairingRequestBusy &&
-    !document.hidden && Date.now()>=pairingRetryAt){
+    !document.hidden && pairingNow()>=pairingRetryAt){
   return guard(()=>generatePairingCode(true));
  }
 }
 $('pair').addEventListener('click',()=>guard(()=>generatePairingCode(false)));
 $('pairAutoRenew').addEventListener('change',()=>{
  pairingAutoRenew=$('pairAutoRenew').checked;
- pairingTick();
+ return pairingTick();
 });
 setInterval(pairingTick,1000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)pairingTick()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)return pairingTick()});
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas'));
  for(const node of plan.nodes)area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));
