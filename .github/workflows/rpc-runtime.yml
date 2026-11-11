@@ -4,16 +4,12 @@ name: Pinned Linux RPC runtime
 # artifact at runtime so regular Linux Guests do not need CMake or compilers.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/rpc-runtime.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: nodexlm-rpc-runtime-b12143-r2
+  group: nodexlm-rpc-runtime-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -43,6 +39,8 @@ jobs:
           set -euo pipefail
           git clone --quiet --depth=1 --branch "$LLAMA_VERSION" https://github.com/ggml-org/llama.cpp.git llama-source
           test "$(git -C llama-source rev-parse HEAD)" = "$LLAMA_COMMIT"
+      - name: Apply pinned Unix RPC patch
+        run: git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
       - name: Build matched static CPU RPC pair
         shell: bash
         run: |
@@ -116,6 +114,6 @@ jobs:
           gh release create "$tag" dist/* \
             --repo "$GH_REPO" \
             --target main \
-            --title "NodexLM pinned RPC runtime (llama.cpp b12143)" \
-            --notes 'Verified pinned llama.cpp b12143, source commit 2bc46baa9207d098d03741ac394e7faaf1a955b6. Contains matching llama-server + ggml-rpc-server with GGML linked statically or all required versioned ELF libraries included, plus $ORIGIN RPATH, portable CPU backend for Linux x86_64. Download integrity is checked using SHA256SUMS.txt. This runtime is experimental and intended only for trusted LAN tunnels.' \
+            --title "NodexLM pinned RPC runtime (llama.cpp $LLAMA_VERSION)" \
+            --notes "Verified pinned llama.cpp $LLAMA_VERSION, commit $LLAMA_COMMIT. Matched server and RPC with private sockets, $ORIGIN RPATH, CPU backend. Experimental; use only on trusted LAN." \
             --prerelease --latest=false

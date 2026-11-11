@@ -2,6 +2,16 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Atualização do llama.cpp e inferência adaptativa — 2026-11-10
+
+- Revisão experimental nativa atualizada de `b12143` para `b12255` (commit `940a30ee3b5593e1a66fe0aadc3b731989022552`), com SHA-256 dos dez arquivos oficiais desktop verificados pelo manifesto da release upstream.
+- Compilação de cinco alvos RPC correspondentes e E2E Linux Unix verificados em CI; nenhum bundle da versão antiga é reutilizado após a troca do protocolo.
+- Host Go: seleção opcional de Guests orientada por medições de tokens/s, RTT e rede, mantendo o comportamento anterior quando a estratégia de capacidade é escolhida.
+- Novas configurações opt-in para Flash Attention, KV cache quantizado, batch/microbatch e speculative decoding n-gram ou por segundo GGUF na CPU do Host.
+- Relay RPC usa buffers reutilizáveis, benchmarks antigos são invalidados quando os parâmetros de inferência mudam; cache de pesos do Guest é estritamente opt-in com `--rpc-cache`.
+- Prévia mostra Guests excluídos, estratégia e estimativa de KV de acordo com a quantização selecionada.
+- A publicação dos novos bundles RPC, pinagem dos seus hashes e a validação Android em dispositivos físicos continuam sendo etapas de release e QA, não pressupostos de compilação.
+
 ## Chat e agentes OpenAI — 2026-11-08
 
 - Contratos nativos preservados em Chat Completions, Responses, completions e embeddings: ferramentas, conteúdo textual em partes, developer, argumentos incrementais, JSON Schema e limites modernos de tokens.

@@ -30,14 +30,21 @@ import (
 // Settings are persisted independently of the UI. The model weights live only
 // in the llama-server child process and can be unloaded without stopping NodexLM.
 type Settings struct {
-	Model         string `json:"model"`
-	Threads       int    `json:"threads"`
-	ContextTokens int    `json:"context_tokens"`
-	GPULayers     string `json:"gpu_layers"`
-	MoECPU        bool   `json:"moe_cpu"`
-	MoECPULayers  int    `json:"moe_cpu_layers"`
-	MoECacheMiB   int    `json:"moe_cache_mib"`
-	Distributed   bool   `json:"distributed"`
+	Model             string `json:"model"`
+	Threads           int    `json:"threads"`
+	ContextTokens     int    `json:"context_tokens"`
+	GPULayers         string `json:"gpu_layers"`
+	MoECPU            bool   `json:"moe_cpu"`
+	MoECPULayers      int    `json:"moe_cpu_layers"`
+	MoECacheMiB       int    `json:"moe_cache_mib"`
+	Distributed       bool   `json:"distributed"`
+	PlacementStrategy string `json:"placement_strategy,omitempty"`
+	FlashAttention    string `json:"flash_attention,omitempty"`
+	KVCacheType       string `json:"kv_cache_type,omitempty"`
+	BatchSize         int    `json:"batch_size,omitempty"`
+	UBatchSize        int    `json:"ubatch_size,omitempty"`
+	SpeculativeMode   string `json:"speculative_mode,omitempty"`
+	DraftModel        string `json:"draft_model,omitempty"`
 }
 
 type Download struct {
@@ -148,8 +155,33 @@ func (m *Manager) DownloadState() *Download {
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
-	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 {
+	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 || (s.PlacementStrategy != "" && s.PlacementStrategy != "capacity" && s.PlacementStrategy != "speed") {
 		return errors.New("invalid runtime limits or conflicting MoE settings")
+	}
+	if s.FlashAttention != "" && s.FlashAttention != "auto" && s.FlashAttention != "on" && s.FlashAttention != "off" {
+		return errors.New("flash_attention must be auto, on or off")
+	}
+	if s.KVCacheType != "" && s.KVCacheType != "f16" && s.KVCacheType != "q8_0" && s.KVCacheType != "q4_0" {
+		return errors.New("kv_cache_type must be f16, q8_0 or q4_0")
+	}
+	if s.BatchSize < 0 || s.BatchSize > 8192 || s.UBatchSize < 0 || s.UBatchSize > 4096 ||
+		(s.BatchSize > 0 && s.UBatchSize > s.BatchSize) {
+		return errors.New("invalid batch_size or ubatch_size")
+	}
+	if s.SpeculativeMode != "" && s.SpeculativeMode != "off" && s.SpeculativeMode != "ngram" && s.SpeculativeMode != "draft" {
+		return errors.New("speculative_mode must be off, ngram or draft")
+	}
+	if s.SpeculativeMode == "draft" {
+		if s.DraftModel == "" || s.DraftModel == s.Model {
+			return errors.New("draft mode needs a separate GGUF model")
+		}
+		if _, err := modelPath(m.modelDir, s.DraftModel); err != nil {
+			return err
+		}
+	} else if s.DraftModel != "" {
+		if _, err := modelPath(m.modelDir, s.DraftModel); err != nil {
+			return err
+		}
 	}
 	if s.GPULayers != "auto" && s.GPULayers != "all" {
 		if parsed, err := strconv.Atoi(s.GPULayers); err != nil || parsed < 0 || parsed > 1024 || fmt.Sprint(parsed) != s.GPULayers {
@@ -178,6 +210,17 @@ func (m *Manager) Update(s Settings) error {
 	}
 	if err := writePrivate(filepath.Join(m.dir, "runtime.json"), raw); err != nil {
 		return err
+	}
+	// Benchmarks are only comparable when the native inference configuration
+	// is unchanged. Do not allow stale tokens/s to drive placement decisions.
+	old := m.settings
+	if old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
+		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
+		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB ||
+		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
+		old.BatchSize != s.BatchSize || old.UBatchSize != s.UBatchSize ||
+		old.SpeculativeMode != s.SpeculativeMode || old.DraftModel != s.DraftModel {
+		m.samples = make(map[string]InferenceSample)
 	}
 	m.settings = s
 	return nil
@@ -344,17 +387,18 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		name, _ := os.Hostname()
 		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
-		remoteCapacities := make([]uint64, 0, len(guests))
-		for _, guest := range guests {
-			if guest.CapacityBytes == 0 {
-				return errors.New("RPC Guest lacks a usable free-memory report; cannot safely place layers")
-			}
-			rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
-			remoteCapacities = append(remoteCapacities, guest.CapacityBytes)
+		selection, selectErr := m.chooseRPC(s, model.BlockCount, uint64(size), hostCapacity, guests)
+		if selectErr != nil {
+			return selectErr
 		}
-		localLayers, err = clusterplan.LocalLayerCount(model.BlockCount, uint64(size), hostCapacity, remoteCapacities)
-		if err != nil {
-			return err
+		localLayers = selection.LocalLayers
+		for _, candidate := range selection.Guests {
+			for _, guest := range guests {
+				if guest.ID == candidate.ID {
+					rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
+					break
+				}
+			}
 		}
 	}
 	var resolved string
@@ -369,8 +413,12 @@ func (m *Manager) load(ctx context.Context) error {
 	if s.Distributed && !llamaruntime.SupportsRPC(ctx, resolved) {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
 	}
+	draftPath, err := m.resolveDraftModel(s)
+	if err != nil {
+		return err
+	}
 	m.setPhase("loading_model")
-	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, KeepLoaded: true}
+	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType, BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
 	if s.Distributed {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers

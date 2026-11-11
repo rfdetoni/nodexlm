@@ -64,7 +64,7 @@ No Host, use `nodexlm web-token` para obter a senha do painel. O código tempor�
 
 ## Runtime RPC Linux
 
-No Linux x64/CPU, o NodexLM procura o runtime `llama.cpp b12143` pré-compilado e verificado; para outros sistemas ou backends, pode ser necessário compilar ou fornecer um binário compatível.
+No Linux x64/CPU, o NodexLM procura o runtime fixado em `internal/llamaruntime/revision.json` (`b12255` nesta atualização). Bundles RPC da revisão anterior não são reutilizados; até a publicação e fixação dos novos checksums, pode ser necessário compilar localmente ou fornecer o par correspondente.
 
 Os executáveis podem depender de bibliotecas GGML (`libggml.so.0`, etc.) armazenadas ao lado do runtime. O NodexLM as inclui no caminho de bibliotecas ao iniciar o processo, sem exigir instalação global.
 

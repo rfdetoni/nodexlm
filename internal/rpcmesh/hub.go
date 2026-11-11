@@ -298,11 +298,23 @@ func (r *relay) accept() {
 		}()
 	}
 }
+
+var rpcCopyBuffers = sync.Pool{
+	New: func() any {
+		buffer := make([]byte, 128<<10)
+		return &buffer
+	},
+}
+
+// Bridge only forwards native GGML bytes; reuse bounded buffers so repeated
+// tensor transfers do not allocate a new 32 KiB buffer per direction.
 func bridge(a, b net.Conn) {
 	var once sync.Once
 	done := make(chan struct{}, 2)
 	pump := func(dst, src net.Conn) {
-		_, _ = io.Copy(dst, src)
+		buffer := rpcCopyBuffers.Get().(*[]byte)
+		_, _ = io.CopyBuffer(dst, src, *buffer)
+		rpcCopyBuffers.Put(buffer)
 		once.Do(func() { _ = a.Close(); _ = b.Close() })
 		done <- struct{}{}
 	}

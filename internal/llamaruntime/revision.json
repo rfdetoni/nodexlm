@@ -1,13 +1,7 @@
 {
-  "version": "b12143",
-  "commit": "2bc46baa9207d098d03741ac394e7faaf1a955b6",
-  "rpc_release": "nodexlm-rpc-b12143-r3",
-  "published": {
-    "darwin/arm64/metal": "c88102405d801c976b82801fed51e158482bd1ad5dd9f0fe859a34b96146be1f",
-    "linux/amd64/cpu": "8e1f693b487bd510691f0ecbee177435657fb3b938cea0dd64fd83b063725eb8",
-    "linux/amd64/vulkan": "8eb63fe3a99dd07dfebe1883338d13faed2cf98fb63d76fbf6dd0e12ef118c0e",
-    "linux/arm64/cpu": "1259164ea09763f55fb5e7d3f0ea58c6e13aed8ee3ccabb8d5a000badb84783c",
-    "windows/amd64/cpu": "9c3e57c043129edf1ff77e0312a2a76c97e67c934f26e1c8ee2a1af8741a37fc"
-  },
+  "version": "b12255",
+  "commit": "940a30ee3b5593e1a66fe0aadc3b731989022552",
+  "rpc_release": "nodexlm-rpc-b12255-r1",
+  "published": {},
   "unix_rpc": true
 }

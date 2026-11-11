@@ -37,6 +37,7 @@ jobs:
               assert subprocess.check_output(['git','show',build['commit']+':'+file])==pathlib.Path(file).read_bytes()
           before=json.loads(subprocess.check_output(['git','show',build['commit']+':internal/llamaruntime/revision.json']))
           current=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())
+          assert current["rpc_release"] == build["tag"], "Old artifact tag cannot publish a new runtime revision"
           assert before['commit']==current['commit'] and before['version']==current['version']
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('run='+str(build['run_id'])+'\n')
           PY
@@ -63,4 +64,4 @@ jobs:
           fi
           # GitHub restricts GITHUB_TOKEN tag creation at non-head commits.
           # The native source equality above and provenance retain build identity.
-          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt dist/BUILD.json --target main --title 'Pinned RPC b12143 with private Unix sockets' --notes "Native artifacts built from $build; source revision and Unix patch verified unchanged. Five platform builds and Linux native Unix E2E passed. Artifact attestations bind each binary to its build." --prerelease --latest=false
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt dist/BUILD.json --target main --title "Pinned RPC ${tag} with private Unix sockets" --notes "Native artifacts built from $build; source revision and Unix patch verified unchanged. Five platform builds and Linux native Unix E2E passed. Artifact attestations bind each binary to its build." --prerelease --latest=false
