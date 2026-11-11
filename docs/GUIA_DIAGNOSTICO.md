@@ -172,3 +172,41 @@ Se o mDNS não estiver disponível, informe o endereço HTTPS explicitamente. UD
 ## Guest recebe HTTP 401 no heartbeat
 
 Se `nodexlm guest --backend cpu` informar `server HTTP 401: unauthorized`, o Host não reconhece mais a credencial de nó salva. A conexão de rede pode estar íntegra; trocar backend CPU/GPU não corrige um token revogado. Gere um código novo no Host (`nodexlm pairing`) e, no Guest, use `nodexlm guest --rejoin --server https://IP:8443 --code CODIGO_NOVO --backend cpu`. A renovação só substitui credenciais após autenticação criptográfica pelo código e TLS. Não remova o diretório de modelos ou runtimes. A mensagem `recv returned 0` isolada pode ser uma sondagem de prontidão local, não uma falha de credenciais.
+
+## Transferência RPC não começa: 33–42 bytes e nenhum tensor
+
+Se `/api/status` indicar `loading_model` por vários minutos, mas
+`rpc_transfer[*].to_guest_bytes` mostrar apenas dezenas de bytes, as
+conexões foram abertas **sem comprovação de upload dos pesos**. A quantidade
+de túneis `connected` ou o heartbeat não provam execução de inferência.
+
+1. No Host, use `nodexlm host --debug`. O log registra o planejamento,
+   início do `llama-server` e os volumes reais encaminhados.
+2. Liste os Guests com o token local do Host, sem compartilhá-lo:
+   ```sh
+   curl -fsS -H "Authorization: Bearer $(nodexlm web-token)" \
+     http://127.0.0.1:8787/v1/nodes \
+     | jq -r '.[] | [.id[:8], .name, .platform, .runtime.version, .runtime.rpc_ready] | @tsv'
+   ```
+3. Identifique um Guest que tenha `to_guest_bytes` pequeno, mas
+   `from_guest_bytes=0` e `idle < connected`. Reinicie **apenas ele**
+   com `nodexlm guest --backend cpu --debug` e examine
+   `~/.nodexlm/logs/guest.log`. No Android, use `adb logcat` conforme
+   a seção acima.
+4. Para testar sem esse Guest **sem revogar credenciais**, reinicie o Host
+   passando seu ID completo (64 caracteres hexadecimais):
+   ```sh
+   nodexlm host --debug \
+     --rpc-exclude-ids ID_COMPLETO_DO_GUEST
+   ```
+   Múltiplos IDs podem ser separados por vírgula. Esta opção só filtra
+   **novas seleções de camadas**, não encerra nem revoga sessões existentes;
+   exige reiniciar o Host e repetir o carregamento. Se o restante do
+   cluster não tiver memória suficiente, o planejador retorna erro de
+   capacidade; experimente um GGUF menor para isolar a conexão.
+
+Uma sessão pode ficar bloqueada em `HELLO` por versão de RPC diferente,
+Guest nativo travado ou falha no transporte. Não infira a causa apenas pela
+quantidade de bytes. Reproduza com **um Guest por vez** e compare os logs
+em ambos os lados. O `llama-server` agora preserva tanto stdout quanto
+stderr no arquivo de debug do Host, em vez de descartar stdout.
