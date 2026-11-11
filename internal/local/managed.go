@@ -105,7 +105,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if m.started != nil {
 		return nil
 	}
-	if EffectiveBackend(m.Backend)==BackendLlama && (m.Binary == "" || m.Binary == "llama-server") {
+	if EffectiveBackend(m.Backend) == BackendLlama && (m.Binary == "" || m.Binary == "llama-server") {
 		executable, err := llamaruntime.AutoExecutable(ctx, config.DefaultDir(), m.Binary)
 		if err != nil {
 			return fmt.Errorf("llama.cpp automatic installation failed: %w", err)
@@ -134,8 +134,10 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("invalid GGUF model: %w", err)
 	}
-	if EffectiveBackend(m.Backend)==BackendLlama {
-		if err := m.validateMoE(meta); err != nil {return err}
+	if EffectiveBackend(m.Backend) == BackendLlama {
+		if err := m.validateMoE(meta); err != nil {
+			return err
+		}
 	}
 	if len(m.RPCServers) > 0 {
 		if meta.BlockCount == 0 {
@@ -168,16 +170,18 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if gpu == "" {
 		gpu = "auto"
 	}
-	launch, err := m.backendLaunch(port,nctx,threads,gpu,meta)
-	if err!=nil {return err}
-	cmd:=exec.Command(launch.Binary,launch.Args...)
-	cmd.Env=append(os.Environ(),launch.Env...)
+	launch, err := m.backendLaunch(port, nctx, threads, gpu, meta)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(launch.Binary, launch.Args...)
+	cmd.Env = append(os.Environ(), launch.Env...)
 	process.KillWithParent(cmd)
 	cmd.Stdout = io.Discard
 	stderr := &nativeLogTail{}
 	cmd.Stderr = io.MultiWriter(debuglog.NativeOutput(), stderr)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to launch %s: %w",EffectiveBackend(m.Backend),err)
+		return fmt.Errorf("failed to launch %s: %w", EffectiveBackend(m.Backend), err)
 	}
 	exit := &nativeProcessExit{done: make(chan struct{})}
 	go func() {
@@ -193,27 +197,29 @@ func (m *Managed) ensure(ctx context.Context) error {
 		stopProcess()
 		return err
 	}
-	endpoint.APIKey=launch.APIKey
-	timeout:=launch.Timeout
+	endpoint.APIKey = launch.APIKey
+	timeout := launch.Timeout
 	startup, stop := context.WithTimeout(ctx, timeout)
 	defer stop()
 	for {
 		select {
 		case <-exit.done:
-			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s",EffectiveBackend(m.Backend),exit.err,stderr.String())
+			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 		default:
 		}
 		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+launch.ReadyPath, nil)
 		if err == nil {
-			if launch.APIKey!="" {req.Header.Set("Authorization","Bearer "+launch.APIKey)}
+			if launch.APIKey != "" {
+				req.Header.Set("Authorization", "Bearer "+launch.APIKey)
+			}
 			res, requestErr := endpoint.HTTP.Do(req)
 			if requestErr == nil {
-				ready:=backendIsReady(EffectiveBackend(m.Backend),res)
+				ready := backendIsReady(EffectiveBackend(m.Backend), res)
 				res.Body.Close()
 				if ready {
 					select {
 					case <-exit.done:
-						return fmt.Errorf("%s exited before becoming ready: %v; recent stderr: %s",EffectiveBackend(m.Backend),exit.err,stderr.String())
+						return fmt.Errorf("%s exited before becoming ready: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 					default:
 					}
 					m.started = cmd
@@ -225,13 +231,13 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 		select {
 		case <-exit.done:
-			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s",EffectiveBackend(m.Backend),exit.err,stderr.String())
+			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 		case <-startup.Done():
 			stopProcess()
 			if errors.Is(startup.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("%s not ready after %s; check model and stderr: %s",EffectiveBackend(m.Backend),timeout,stderr.String())
+				return fmt.Errorf("%s not ready after %s; check model and stderr: %s", EffectiveBackend(m.Backend), timeout, stderr.String())
 			}
-			return fmt.Errorf("%s startup cancelled: %w",EffectiveBackend(m.Backend),startup.Err())
+			return fmt.Errorf("%s startup cancelled: %w", EffectiveBackend(m.Backend), startup.Err())
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
