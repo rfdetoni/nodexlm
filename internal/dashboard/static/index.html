@@ -82,7 +82,10 @@
   </div>
   <progress id="pairProgress" class="pairing-progress" max="600" value="600" aria-label="Tempo restante do código de pareamento"></progress>
   <p id="pairStatus" class="muted pairing-status" role="status" aria-live="polite"></p>
-</div><div class="scroll"><table><thead><tr><th>Dispositivo</th><th>Sistema</th><th>Status</th><th>RAM / VRAM</th><th>Modelos</th><th></th></tr></thead><tbody id="nodes"></tbody></table></div></section>
+</div><div class="sectionhead telemetry-heading"><div><h3>Recursos por dispositivo</h3><p class="muted">Amostras recebidas do Host e dos Guests. Atualização automática aproximada.</p></div><small id="resourceRefresh" class="muted" role="status" aria-live="polite">Aguardando medições…</small></div>
+<div id="nodeResourceCards" class="resource-cards" aria-label="Uso de recursos dos nós"><p class="muted">Conecte dispositivos para acompanhar o uso de CPU, RAM e GPU.</p></div>
+<div class="sectionhead telemetry-heading"><h3>Detalhes e gerenciamento dos Guests</h3></div>
+<div class="scroll"><table><thead><tr><th>Dispositivo</th><th>Sistema</th><th>Status</th><th>RAM / VRAM</th><th>Modelos</th><th></th></tr></thead><tbody id="nodes"></tbody></table></div></section>
 </div></section>
 <section class="console-view" id="view-observability" aria-labelledby="nav-observability" hidden><div class="grid single-workspace">
 <section class="card wide"><div class="sectionhead"><h2>Observabilidade</h2><button id="refreshObservations" class="secondary" type="button">Atualizar medições</button></div><div id="observations" role="status" class="model-list">Meça a rede nos controles de cada Guest e a inferência na configuração.</div></section>
