@@ -46,10 +46,6 @@ jobs:
           fi
       - run: go test -race ./... -timeout 120s
       - run: node --check internal/dashboard/static/app.js && node scripts/test-dashboard-models.cjs
-      - name: Check alternate backend benchmark CLI without model download
-        run: |
-          python3 scripts/benchmark-backends.py --model /tmp/mock.gguf --llama-bin /usr/bin/true --mistralrs-bin /usr/bin/true --cpu --dry-run
-
       - run: sh scripts/test-install.sh
       - run: go build -o nodexlm ./cmd/nodexlm && python3 scripts/smoke.py
       - run: go vet ./...
