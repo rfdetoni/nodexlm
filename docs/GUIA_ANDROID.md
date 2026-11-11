@@ -4,7 +4,7 @@
 
 - **Android 10+** com arquitetura ARMv7: Guest RPC **CPU**.
 - **Android 10+** com arquitetura ARM64: Guest RPC **CPU** e tentativa de backend **Vulkan**.
-- O aparelho precisa fornecer GPU Vulkan e driver compatível com o backend do `llama.cpp b12143` para usar GPU.
+- O aparelho precisa fornecer GPU Vulkan e driver compatível com o backend do `llama.cpp b12255` para usar GPU.
 - GPUs móveis frequentemente compartilham memória com a CPU. **Não some RAM e VRAM como se fossem capacidades independentes.**
 
 O app é experimental; build aprovado não comprova execução ou desempenho em todos os celulares.

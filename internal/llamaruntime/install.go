@@ -28,16 +28,16 @@ var repoURL = "https://github.com/ggml-org/llama.cpp/releases/download/" + Versi
 type Artifact struct{ Name, SHA256 string }
 
 var releases = map[string]Artifact{
-	"linux/amd64/cpu":      {"llama-b12143-bin-ubuntu-x64.tar.gz", "23776b0ecc71afaa69f0827c78a0aa07ba2d9e2a71e205e4633d16729c5fef94"},
-	"linux/arm64/cpu":      {"llama-b12143-bin-ubuntu-arm64.tar.gz", "caf94c5ba28ff3a16f89e27e01223675bbd98a74559c557f5004967314f1ab04"},
-	"linux/amd64/vulkan":   {"llama-b12143-bin-ubuntu-vulkan-x64.tar.gz", "dd983d8eaa85e1e71fba4458441b6a507f86bb50db6b5675d1e6aa788ecccbfc"},
-	"linux/arm64/vulkan":   {"llama-b12143-bin-ubuntu-vulkan-arm64.tar.gz", "ca8ed0e09076a4c5e6ea2998a1c49af9abe691b008db4a297cb92f2e816ab38f"},
-	"windows/amd64/cpu":    {"llama-b12143-bin-win-cpu-x64.zip", "41ff350f7f4cef938ecaa4cb69e91cd79adfe76d09652f4bd7e325988dad7b99"},
-	"windows/arm64/cpu":    {"llama-b12143-bin-win-cpu-arm64.zip", "354ccaf0856539cea0c0d140721771df8dc0c219096472ea9c8e7d4f957704dc"},
-	"windows/amd64/vulkan": {"llama-b12143-bin-win-vulkan-x64.zip", "293ab85762b3d2722fc55d6e6db906546971c2b4802de84ec5ca542397314340"},
-	"windows/arm64/vulkan": {"llama-b12143-bin-win-vulkan-arm64.zip", "946223d015b69d7c9f6960a051daf782745378eca0a068d552fe70bf31d72b76"},
-	"darwin/amd64/metal":   {"llama-b12143-bin-macos-x64.tar.gz", "eaf1cd682da34b289f00e4ee5d4c413ca5b9709372fe21bb492cbfba7ae70f01"},
-	"darwin/arm64/metal":   {"llama-b12143-bin-macos-arm64.tar.gz", "83dd79b6d4caf3106a30d48a1237f3a391af772e94d796ba9c3322076cfea851"},
+	"linux/amd64/cpu":      {"llama-b12255-bin-ubuntu-x64.tar.gz", "e49f3492de6ca193766f84fa954490a9e32e733be8ac3ec53d08749775461aa7"},
+	"linux/arm64/cpu":      {"llama-b12255-bin-ubuntu-arm64.tar.gz", "8fae47122432322ee942c78c42b17e9940bc46b4e8812f33bacb699ab6d97f75"},
+	"linux/amd64/vulkan":   {"llama-b12255-bin-ubuntu-vulkan-x64.tar.gz", "82443355c8893a15516e760da40c32c99f5fd39825812424dbcadeb6d67baf61"},
+	"linux/arm64/vulkan":   {"llama-b12255-bin-ubuntu-vulkan-arm64.tar.gz", "90a1d37b9be044f1dbfa61e959ae962e06e74693f82577b1bdaae184263e6870"},
+	"windows/amd64/cpu":    {"llama-b12255-bin-win-cpu-x64.zip", "ec06d7b2f3fc4f7cff3e395e3e85c0de5f928b6a62a8647bbf85776351385597"},
+	"windows/arm64/cpu":    {"llama-b12255-bin-win-cpu-arm64.zip", "3808c676240761f6dcf8fb116c080b324029c34658909bc28ab0b19eb9799f2f"},
+	"windows/amd64/vulkan": {"llama-b12255-bin-win-vulkan-x64.zip", "12460d097486a06eb1c3b745194eb1436d315bcc23003a74a40a11e2721167c8"},
+	"windows/arm64/vulkan": {"llama-b12255-bin-win-vulkan-arm64.zip", "84c2692a6a85661ff78fa30e27ddce786db718d2454cc3b37e72f9a7bc8588f5"},
+	"darwin/amd64/metal":   {"llama-b12255-bin-macos-x64.tar.gz", "8cd76dd2c6d67d706dc06f9ef8a33629531b990263a53e1f2986deed4681ab6d"},
+	"darwin/arm64/metal":   {"llama-b12255-bin-macos-arm64.tar.gz", "56074dd37cd369d4c73658d7ce3b1198ec359fb501ad8f2278b4f8fb36178a48"},
 }
 
 func Backend(requested string) (string, error) {
@@ -331,8 +331,8 @@ func SupportsRPC(ctx context.Context, server string) bool {
 	return (err == nil || len(out) > 0) && strings.Contains(string(out), "--rpc")
 }
 
-// Use a fresh cache for the corrected Linux x64 runtime package. Existing
-// b12143 cpu-rpc directories may contain binaries with missing GGML SONAME
+// Use a revision-scoped cache to isolate matching RPC protocol binaries.
+// Earlier runtime releases may contain incompatible binaries
 // libraries and must not be reused after upgrading the CLI.
 func distributedDir(home, backend string) string {
 	dir := installDir(home, backend) + "-rpc"

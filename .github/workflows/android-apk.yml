@@ -1,8 +1,8 @@
 name: Android APK
 
-# Building native llama.cpp for two ABIs is expensive. Build test APKs only
-# on explicit dispatch; version tags build signed production releases.
-# Successful manual main builds are reused by android-public-download.yml.
+# Native JNI builds are costly: auto-build debug APKs only when the pinned
+# llama.cpp source/patch or launcher resources change on main. Other builds remain manual or tagged.
+# A successful main build is reused by android-public-download.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -11,10 +11,10 @@ on:
         type: boolean
         default: false
   push:
-    branches:
-      - main
-    # Only rebuild on launcher/package changes. Tag pushes are not path-filtered.
+    branches: [main]
     paths:
+      - 'internal/llamaruntime/revision.json'
+      - 'internal/llamaruntime/patches/**'
       - 'android/app/src/main/res/drawable/ic_nodexlm_launcher_*.xml'
       - 'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml'
       - 'android/app/src/main/res/values/colors.xml'
@@ -31,7 +31,30 @@ permissions:
   contents: read
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.native.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false, fetch-depth: 2}
+      - id: native
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            native="$(python3 scripts/native-revision-changed.py)"
+            launcher="$(git diff --name-only HEAD^ HEAD -- android/app/src/main/res/drawable android/app/src/main/res/mipmap-anydpi-v26 android/app/src/main/res/values/colors.xml android/app/src/main/AndroidManifest.xml .github/workflows/android-apk.yml)"
+            if [[ "$native" == "true" || -n "$launcher" ]]; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
   build:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
     name: Android 10+ universal APK
     runs-on: ubuntu-latest
     timeout-minutes: 75
@@ -128,7 +151,7 @@ jobs:
           fi
 
       - name: Build installable debug APK
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         working-directory: android
         shell: bash
         run: |
@@ -139,7 +162,7 @@ jobs:
             :app:assembleDebug
 
       - name: Verify debug APK and native library
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         shell: bash
         run: |
           set -euo pipefail
@@ -155,7 +178,7 @@ jobs:
           sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
 
       - name: Upload debug APK
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@v4
         with:
           name: nodexlm-android-debug
@@ -164,7 +187,7 @@ jobs:
           retention-days: 14
 
       - name: Validate minified release signing with an ephemeral test identity
-        if: github.event_name == 'workflow_dispatch' && inputs.verify_release && steps.signing.outputs.configured != 'true'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.verify_release && steps.signing.outputs.configured != 'true'
         shell: bash
         run: |
           set -euo pipefail

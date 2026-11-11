@@ -2,16 +2,37 @@ name: Portable RPC bundles
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # Only rebuild native bundles when the pinned runtime/patch changes.
+    # Full-PR diff filters would rebuild the five-platform matrix for
+    # every subsequent frontend/Go edit, wasting Actions minutes.
+    branches: [main, 'feat/**', 'fix/**']
     paths:
+      - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
 permissions:
   contents: read
 concurrency:
-  group: nodexlm-rpc-platforms-r3
+  group: nodexlm-rpc-platforms-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.native.outputs.changed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false, fetch-depth: 2}
+      - id: native
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
+          fi
   build:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -88,10 +109,13 @@ jobs:
           path: dist/*
           retention-days: 14
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions: {contents: write}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: {path: dist, merge-multiple: true}
       - name: Publish immutable matching bundles
@@ -99,8 +123,9 @@ jobs:
         run: |
           set -euo pipefail
           cat dist/*.sha256 > dist/SHA256SUMS.txt
-          if gh release view nodexlm-rpc-b12143-r3 >/dev/null 2>&1; then
+          tag=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["rpc_release"])')
+          if gh release view "$tag" >/dev/null 2>&1; then
             echo 'Immutable release already exists; do not overwrite reviewed binaries.'
             exit 0
           fi
-          gh release create nodexlm-rpc-b12143-r3 dist/*.tar.gz dist/SHA256SUMS.txt --target main --title 'Pinned RPC b12143 with private Unix sockets' --notes "Matched native RPC pairs built from $GITHUB_SHA; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads." --prerelease --latest=false
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target main --title "Pinned RPC b12255 with private Unix sockets" --notes "Matched native RPC pairs built from $GITHUB_SHA; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads." --prerelease --latest=false

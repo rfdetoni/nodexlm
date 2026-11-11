@@ -53,7 +53,11 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	if err != nil {
 		return InferenceSample{}, err
 	}
-	engine := &local.Managed{Binary: binary, ModelPath: path, Alias: model, Threads: settings.Threads, ContextTokens: 512, GPULayers: settings.GPULayers, KeepLoaded: true}
+	draftPath, err := m.resolveDraftModel(settings)
+	if err != nil {
+		return InferenceSample{}, err
+	}
+	engine := &local.Managed{Binary: binary, ModelPath: path, Alias: model, Threads: settings.Threads, ContextTokens: 512, GPULayers: settings.GPULayers, FlashAttention: settings.FlashAttention, KVCacheType: settings.KVCacheType, BatchSize: settings.BatchSize, UBatchSize: settings.UBatchSize, SpeculativeMode: settings.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
 	if nodeID != "" {
 		if provider == nil {
 			return InferenceSample{}, errors.New("no RPC Guests")

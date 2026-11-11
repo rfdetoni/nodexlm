@@ -131,7 +131,7 @@ func (d *Dashboard) Handler() http.Handler {
 		nodes := d.Cluster.DevicesSnapshot()
 		devices := append([]protocol.Device{host}, nodes...)
 		summary := clusterplan.Aggregate(devices, time.Now())
-		reply(w, 200, map[string]any{"resources": summary, "rpc_guests": d.Cluster.RPCNodes()})
+		reply(w, 200, map[string]any{"resources": summary, "rpc_guests": d.Cluster.RPCNodes(), "devices": devices})
 	}))
 	mux.HandleFunc("GET /api/catalog", d.api(func(w http.ResponseWriter, r *http.Request) {
 		name, _ := os.Hostname()

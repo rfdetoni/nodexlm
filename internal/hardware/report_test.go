@@ -14,7 +14,7 @@ func TestDRMGPU(t *testing.T) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		for name, value := range map[string]string{"vendor": vendor, "mem_info_vram_total": total, "mem_info_vram_used": used} {
+		for name, value := range map[string]string{"vendor": vendor, "mem_info_vram_total": total, "mem_info_vram_used": used, "gpu_busy_percent": "42"} {
 			if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -49,5 +49,33 @@ func TestDRMUnknownUsedDoesNotInventFreeVRAM(t *testing.T) {
 	got := drmDevices(root)
 	if len(got) != 1 || got[0].VRAMBytes != 1024 || got[0].FreeVRAMBytes != 0 {
 		t.Fatalf("unexpected GPU %+v", got)
+	}
+}
+
+func TestMeasuredGPUUsage(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "card0", "device")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		"vendor": "0x1002", "mem_info_vram_total": "1000",
+		"mem_info_vram_used": "250", "gpu_busy_percent": "42",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found := drmDevices(root)
+	if len(found) != 1 || found[0].UsagePercent == nil || *found[0].UsagePercent != 42 ||
+		found[0].VRAMUsedBytes == nil || *found[0].VRAMUsedBytes != 250 {
+		t.Fatalf("GPU metrics: %+v", found)
+	}
+	if err := os.Remove(filepath.Join(dir, "gpu_busy_percent")); err != nil {
+		t.Fatal(err)
+	}
+	found = drmDevices(root)
+	if len(found) != 1 || found[0].UsagePercent != nil {
+		t.Fatal("Unavailable GPU usage must be null")
 	}
 }

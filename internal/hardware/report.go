@@ -79,14 +79,14 @@ func memoryDarwin() (uint64, uint64) {
 	return n, available
 }
 func gpuNVIDIA() []protocol.GPUDevice {
-	out := command(2*time.Second, "nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits")
+	out := command(2*time.Second, "nvidia-smi", "--query-gpu=name,memory.total,memory.free,utilization.gpu", "--format=csv,noheader,nounits")
 	if out == "" {
 		return nil
 	}
 	var result []protocol.GPUDevice
 	for _, line := range strings.Split(out, "\n") {
 		columns := strings.Split(line, ",")
-		if len(columns) != 3 {
+		if len(columns) != 4 {
 			continue
 		}
 		total, er1 := strconv.ParseUint(strings.TrimSpace(columns[1]), 10, 64)
@@ -94,7 +94,15 @@ func gpuNVIDIA() []protocol.GPUDevice {
 		if er1 != nil || er2 != nil {
 			continue
 		}
-		result = append(result, protocol.GPUDevice{Name: strings.TrimSpace(columns[0]), Vendor: "nvidia", VRAMBytes: total << 20, FreeVRAMBytes: free << 20})
+		gpu := protocol.GPUDevice{Name: strings.TrimSpace(columns[0]), Vendor: "nvidia", VRAMBytes: total << 20, FreeVRAMBytes: free << 20}
+		if free <= total {
+			used := (total - free) << 20
+			gpu.VRAMUsedBytes = &used
+		}
+		if usage, err := strconv.ParseFloat(strings.TrimSpace(columns[3]), 64); err == nil && usage >= 0 && usage <= 100 {
+			gpu.UsagePercent = &usage
+		}
+		result = append(result, gpu)
 	}
 	return result
 }
@@ -140,10 +148,22 @@ func drmDevices(root string) []protocol.GPUDevice {
 		if usedErr == nil && e2 == nil && used <= total {
 			free = total - used
 		}
-		devices = append(devices, protocol.GPUDevice{
+		gpu := protocol.GPUDevice{
 			Name: strings.ToUpper(vendor) + " " + card, Vendor: vendor,
 			VRAMBytes: total, FreeVRAMBytes: free,
-		})
+		}
+		if usedErr == nil && e2 == nil && total > 0 && used <= total {
+			value := used
+			gpu.VRAMUsedBytes = &value
+		}
+		// AMD exposes an actual engine-busy sample; Intel or older DRM drivers
+		// may not. Do not present missing counters as zero utilization.
+		if busyRaw, err := os.ReadFile(filepath.Join(device, "gpu_busy_percent")); err == nil {
+			if busy, err := strconv.ParseFloat(strings.TrimSpace(string(busyRaw)), 64); err == nil && busy >= 0 && busy <= 100 {
+				gpu.UsagePercent = &busy
+			}
+		}
+		devices = append(devices, gpu)
 	}
 	return devices
 }
@@ -159,6 +179,11 @@ func Collect(name string, models []string) protocol.Device {
 		d.RAMBytes, d.AvailableRAMBytes = memoryDarwin()
 	case "windows":
 		d.RAMBytes, d.AvailableRAMBytes = memoryWindows()
+	}
+	d.CPUUsagePercent = sampleCPU()
+	if d.RAMBytes > 0 && d.AvailableRAMBytes <= d.RAMBytes {
+		used := d.RAMBytes - d.AvailableRAMBytes
+		d.RAMUsedBytes = &used
 	}
 	d.GPUs = gpuNVIDIA()
 	if runtime.GOOS == "linux" {
