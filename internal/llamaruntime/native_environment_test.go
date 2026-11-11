@@ -42,7 +42,7 @@ func TestSupportsUnixRPCWithSiblingSharedLibraryPath(t *testing.T) {
 	// discoverable: the test executable refuses to print its capabilities
 	// unless the launcher prepends its own directory to LD_LIBRARY_PATH.
 	script := "#!/bin/sh\n" +
-        "if [ \"\${LD_LIBRARY_PATH%%:*}\" != \"" + dir + "\" ]; then\n" +
+        "if [ \"${LD_LIBRARY_PATH%%:*}\" != \"" + dir + "\" ]; then\n" +
         "  echo 'error while loading shared libraries: libggml.so.0' >&2\n" +
         "  exit 127\n" +
         "fi\n" +
