@@ -58,7 +58,7 @@ jobs:
             'internal/dashboard/manager.go':['Backend: s.Backend','rpcStatsProvider','loadRPCNodes','m.loadRPCBaseline'],
             'internal/dashboard/static/app.js':['renderNodeResources','pairingTick','runtimeBackend','rpc-stall-warning'],
             'cmd/nodexlm/main.go':['RPCIdleNodes','mistralrs-bin','SetRPCStatsProvider'],
-            'internal/rpcmesh/hub.go':['BytesToGuest','IdleNodes','bridgeTracked'],
+            'internal/rpcmesh/hub.go':['bytesToGuest','IdleNodes','bridgeTracked'],
             'internal/local/backend.go':['BackendMistralRS'],
           }
           for path,markers in checks.items():
