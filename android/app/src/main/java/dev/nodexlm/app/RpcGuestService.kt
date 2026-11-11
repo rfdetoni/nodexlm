@@ -172,7 +172,7 @@ class RpcGuestService : Service() {
                                 if (e.message?.contains(" 503 ") == true) retryCeiling = 30_000L
                                 if (running.get()) Log.w(LOG, "RPC tunnel $slot: ${e.message}")
                             }
-                            val jitter = ThreadLocalRandom.current().nextLong(250L, (backoff / 4).coerceAtLeast(251L))
+                            val jitter = ThreadLocalRandom.current().nextLong(0L, (backoff / 4).coerceAtLeast(250L) + 1L)
                             sleepWhileRunning(backoff + jitter)
                             if (failed) backoff = (backoff * 2).coerceAtMost(retryCeiling)
                         }
