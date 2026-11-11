@@ -82,7 +82,10 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 		if strings.Contains(strings.ToLower(filepath.Base(m.ModelPath)), "-00001-of-") {
 			return backendLaunchSpec{}, errors.New("sharded GGUF is not supported in the experimental mistral.rs adapter")
 		}
-		binary := os.Getenv("NODEXLM_MISTRALRS_BIN")
+		binary := m.Binary
+		if binary == "" {
+			binary = os.Getenv("NODEXLM_MISTRALRS_BIN")
+		}
 		if binary == "" {
 			binary = "mistralrs"
 		}

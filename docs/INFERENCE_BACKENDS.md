@@ -94,3 +94,16 @@ Fontes da interface e limites:
 - https://docs.mistralrs.dev/reference/http-api/
 - https://docs.mistralrs.dev/guides/perf/distributed-inference/
 - https://github.com/mlc-ai/mlc-llm
+
+## CLI local (opcional)
+
+Também é possível usar o motor experimental com uma execução local pontual:
+
+```sh
+NODEXLM_EXPERIMENTAL_MISTRALRS=1 nodexlm local \
+  --engine mistralrs --mistralrs-bin /caminho/mistralrs \
+  --model /caminho/model.gguf --prompt "Explique GGUF"
+```
+
+Esse comando não torna o mistral.rs um Guest RPC nem modifica os tokens de
+pareamento do Host. A política de segurança do processo local continua a mesma.
