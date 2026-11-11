@@ -4,12 +4,8 @@ name: Pinned Linux RPC runtime
 # artifact at runtime so regular Linux Guests do not need CMake or compilers.
 on:
   workflow_dispatch:
-  # Only the native patch/build recipe triggers the expensive C++ job.
-  push:
-    branches: [main]
-    paths:
-      - 'internal/llamaruntime/patches/parallel-rpc-loader.patch'
-      - '.github/workflows/rpc-runtime.yml'
+  # Debug-only one-platform build. Release builds use rpc-platforms.yml
+  # to avoid duplicating native CI minutes.
 
 permissions:
   contents: write
@@ -32,7 +28,7 @@ jobs:
           import json,os,pathlib
           revision=json.loads(pathlib.Path("internal/llamaruntime/revision.json").read_text())
           with open(os.environ["GITHUB_ENV"],"a") as env:
-              for key,value in {"LLAMA_VERSION":revision["version"],"LLAMA_COMMIT":revision["commit"],"RPC_RELEASE":revision.get("rpc_candidate_release",revision["rpc_release"])}.items():
+              for key,value in {"LLAMA_VERSION":revision["version"],"LLAMA_COMMIT":revision["commit"],"RPC_RELEASE":revision.get("rpc_candidate_release",revision["rpc_release"])+"-cpu-debug"}.items():
                   env.write(f"{key}={value}\n")
           PY
       - name: Toolchain

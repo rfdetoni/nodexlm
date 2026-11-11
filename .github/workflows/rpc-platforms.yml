@@ -5,7 +5,7 @@ on:
     # Only rebuild native bundles when the pinned runtime/patch changes.
     # Full-PR diff filters would rebuild the five-platform matrix for
     # every subsequent frontend/Go edit, wasting Actions minutes.
-    branches: [main, 'feat/**', 'fix/**']
+    branches: [main]
     paths:
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
@@ -67,11 +67,15 @@ jobs:
           git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
           test "$(git -C upstream rev-parse HEAD)" = "$commit"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
           options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release)
           if [[ "$BACKEND" == vulkan ]]; then options+=(-DGGML_VULKAN=ON); fi
           if [[ "$TARGET_OS" == darwin ]]; then options+=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON); fi
           cmake -S upstream -B native "${options[@]}"
           cmake --build native --config Release --parallel 3 --target llama-server ggml-rpc-server
+          if [[ "$TARGET_OS" == linux && "$TARGET_ARCH" == amd64 && "$BACKEND" == cpu ]]; then
+            strings native/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled' >/dev/null
+          fi
           mkdir -p stage/bin dist
           python3 - <<'PY'
           import pathlib,shutil
@@ -123,9 +127,9 @@ jobs:
         run: |
           set -euo pipefail
           cat dist/*.sha256 > dist/SHA256SUMS.txt
-          tag=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["rpc_release"])')
+          tag=$(python3 -c 'import json; r=json.load(open("internal/llamaruntime/revision.json")); print(r.get("rpc_candidate_release",r["rpc_release"]))')
           if gh release view "$tag" >/dev/null 2>&1; then
             echo 'Immutable release already exists; do not overwrite reviewed binaries.'
             exit 0
           fi
-          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target main --title "Pinned RPC b12255 with private Unix sockets" --notes "Matched native RPC pairs built from $GITHUB_SHA; Unix socket patch in source. Platform artifact provenance available. Review and pin SHA-256 digests before enabling downloads." --prerelease --latest=false
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target main --title "Pinned RPC b12255 with private Unix sockets" --notes "Matched b12255 RPC pairs built from $GITHUB_SHA; private Unix sockets plus bounded per-Guest parallel mmap tensor uploads. Five platform artifact attestations are available. Review and pin each SHA-256 before enabling downloads." --prerelease --latest=false
