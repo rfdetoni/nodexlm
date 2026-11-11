@@ -5,7 +5,7 @@ Base: `main` em `962af888cc227a43961aeca889f45d976ef934f8`. Alterações na PR #
 | ID | Situação | Implementado / limite concreto |
 | --- | --- | --- |
 | AND-01 | implementado sem validação física | Foreground `connectedDevice` e lock Wi-Fi ajustado por API; tela apagada, Doze e ROMs OEM continuam sem prova física. |
-| AND-02 | implementado sem validação física | Orçamento de memória compartilhada limitado à RAM física, limite do usuário, reserva do OS, CPU/GPU sem soma; LMK histórico no Android 11+. Admissão exata por KV/contexto/batch e cargas concorrentes ainda exige implementação/validação. |
+| AND-02 | implementado sem validação física | Orçamento de memória compartilhada limitado à RAM física, limite do usuário, reserva do OS, CPU/GPU sem soma; LMK histórico no Android 11+. Admissão inicial usa estimativa limitada de KV/contexto/batch, aplicada tanto à prévia quanto à carga local/distribuída; alocação nativa exata, arquiteturas não usuais e cargas residentes concorrentes continuam sem garantias. |
 | AND-03 | corrigido e validado | `Managed.ensure()` invalida subprocesso reaped e não reutiliza endpoint morto; teste real com subprocesso que terminou, sem segundo `Wait()`. |
 | AND-04 | implementado sem validação física | Bateria, carregamento, status térmico e headroom disponíveis no heartbeat; parada SEVERE anterior preservada. Redução gradual, drenagem e cooldown ainda não implementados. |
 | AND-05 | não confirmado | Seleção ainda não compara Host sozinho em velocidade usando benchmark comparável de topologia. |
@@ -15,7 +15,7 @@ Base: `main` em `962af888cc227a43961aeca889f45d976ef934f8`. Alterações na PR #
 | AND-09 | implementado sem validação física | Threads CPU ajustáveis, limitadas a 8 e ao número de núcleos; falta benchmark sustentado/topologia. |
 | AND-10 | implementado sem validação física | Retentativas com jitter, pausa sem rede, parada em 401/403 e espera maior em 503; testes de interrupção do Wi-Fi e drenagem permanecem pendentes. |
 | AND-11 | implementado sem validação física | Limites e bateria/temperatura transportados ao Host, revision/capability na prévia; falta relatório sanitizado completo e confirmação de protocolo HELLO/DEVICE_COUNT após cada reconexão. |
-| AND-12 | implementado sem validação física | Regressões de processo morto e memória compartilhada adicionadas. Não há teste físico Android; reproduzir matriz abaixo. |
+| AND-12 | implementado sem validação física | Regressões de processo morto, memória compartilhada, contexto alto e seleção com Guests adicionais adicionadas. Não há teste físico Android; reproduzir matriz abaixo. |
 | AND-13 | já atendido e revalidado | Revisados workflows separados Go, UI Android e APK nativo com assinatura persistente opcional e verificação de proveniência. Build Android completo em release e assinatura dependem do fluxo/secrets. |
 | AND-14 | pendente externo | OpenCL/Adreno e Hexagon/NPU exigem aparelho/driver/SDK compatível, evidência RPC e benchmark; não habilitados sem prova. |
 
@@ -36,7 +36,7 @@ Releases nativas mantêm `rpc_release=nodexlm-rpc-b12255-r1`. O patch candidato 
 
 ## Pendências para aceite integral
 
-P1: validar contexto e batch altos com KV real; reconciliar reservas concorrentes; garantir estado e causa da parada do Android no Host (inclusive falha térmica/rede); esgotar matriz de regressões de túnel e process exit.
+P1: validar estimativa de KV/contexto/batch contra o backend real e arquiteturas diferentes; reconciliar reservas concorrentes; garantir estado e causa da parada do Android no Host (inclusive falha térmica/rede); esgotar matriz de regressões de túnel e process exit.
 
 P2: seleção Host sozinho com medições comparáveis, benchmark real CPU/Vulkan/híbrido e fallback consciente, cache RPC opt-in protegido por quota, auto-tuning CPU, diagnósticos completos, teste de APK nativo e assinatura reprodutível.
 
