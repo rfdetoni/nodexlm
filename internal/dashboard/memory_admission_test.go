@@ -47,7 +47,7 @@ func TestSpeedSelectionCanAddGuestsForKVAdmission(t *testing.T) {
 	guestCapacity := uint64(16) * clusterplan.GiB
 	guests := []RPCGuest{{ID: "fast", CapacityBytes: guestCapacity}, {ID: "additional", CapacityBytes: guestCapacity}}
 	meta := local.GGUFInfo{BlockCount: 40, EmbeddingLength: 8192, HeadCount: 64, KVHeadCount: 16}
-	settings := Settings{ContextTokens: 131072, PlacementStrategy: "speed"}
+	settings := Settings{ContextTokens: 81920, PlacementStrategy: "speed"}
 	selection, err := m.chooseRPC(settings, meta, 2*clusterplan.GiB, 0, guests)
 	if err != nil {
 		t.Fatal(err)
