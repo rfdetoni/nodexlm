@@ -104,7 +104,8 @@ jobs:
           curl -fsSL --retry 3 https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -o tiny.gguf
           echo '270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d  tiny.gguf' | sha256sum -c -
           go build -o nodexlm ./cmd/nodexlm
-          NODEXLM_RPC_DIR="$PWD/native" NODEXLM_TEST_MODEL="$PWD/tiny.gguf" python3 scripts/e2e-rpc.py
+          NODEXLM_TEST_GUEST_COUNT=2 NODEXLM_PARALLEL_RPC_UPLOAD=1 \
+            NODEXLM_RPC_DIR="$PWD/native" NODEXLM_TEST_MODEL="$PWD/tiny.gguf" python3 scripts/e2e-rpc.py
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with: {subject-path: 'dist/*.tar.gz'}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

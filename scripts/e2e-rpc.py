@@ -46,6 +46,8 @@ def main():
     model = pathlib.Path(os.environ['NODEXLM_TEST_MODEL']).resolve()
     assert CLI.is_file() and model.is_file()
     processes = []
+    guest_count = int(os.environ.get('NODEXLM_TEST_GUEST_COUNT','1'))
+    assert guest_count in (1,2)
     with tempfile.TemporaryDirectory(prefix='nodexlm-e2e-') as tmp:
         root = pathlib.Path(tmp)
         host_dir, guest_dir = root/'host', root/'guest'
@@ -64,6 +66,7 @@ def main():
         log_path = root/'host.log'
         log = log_path.open('w+')
         guest_log = (root/'guest.log').open('w+')
+        guest_logs = [guest_log]
         try:
             host = subprocess.Popen([str(CLI),'host','--dir',str(host_dir),
                 '--addr',f'127.0.0.1:{lan_port}','--web-addr',f'127.0.0.1:{web_port}',
@@ -94,12 +97,31 @@ def main():
             guest = subprocess.Popen([str(CLI),'rpc-node','--rpc-device',os.environ.get('NODEXLM_TEST_RPC_DEVICE',''),'--dir',str(guest_dir),'--rpc-bin',str(rpc),'--rpc-addr',('127.0.0.1:0' if os.environ.get('NODEXLM_TEST_RPC_TRANSPORT')=='tcp' else 'auto')],
                 env=env,stdout=guest_log,stderr=guest_log)
             processes.append(guest)
-            nodes = wait_for(lambda: [n for n in json.load(api('/v1/nodes')) if n['runtime']['rpc_ready']],120)
+            if guest_count == 2:
+                # Second independently enrolled Linux worker exercises the
+                # parallel per-device loading path. No shared Guest identity.
+                second_dir = root/'guest2'
+                second_dir.mkdir(mode=0o700)
+                with api('/v1/pairing/start','POST',{}) as resp:
+                    code2 = json.load(resp)['code']
+                subprocess.run([str(CLI),'join','--dir',str(second_dir),'--name','e2e-guest-2',
+                    '--server',f'https://127.0.0.1:{lan_port}','--code',code2,'--fingerprint',fingerprint],
+                    env=env,check=True,capture_output=True,timeout=20)
+                second_log = (root/'guest2.log').open('w+')
+                guest_logs.append(second_log)
+                guest2 = subprocess.Popen([str(CLI),'rpc-node','--rpc-device',os.environ.get('NODEXLM_TEST_RPC_DEVICE',''),
+                    '--dir',str(second_dir),'--rpc-bin',str(rpc),
+                    '--rpc-addr',('127.0.0.1:0' if os.environ.get('NODEXLM_TEST_RPC_TRANSPORT')=='tcp' else 'auto')],
+                    env=env,stdout=second_log,stderr=second_log)
+                processes.append(guest2)
+            nodes = wait_for(lambda: (
+                ready if len(ready)>=guest_count else None
+            ) if (ready:=[n for n in json.load(api('/v1/nodes')) if n['runtime']['rpc_ready']]) else None,120)
             # Exercise the benchmark marker through a genuine enrolled TLS tunnel.
             measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
             assert measurement['mib_per_second'] > 0
             settings = json.load(api('/api/status'))['settings']
-            settings.update(model=model.name,distributed=True,context_tokens=256,threads=2,gpu_layers=os.environ.get('NODEXLM_TEST_GPU_LAYERS','auto'))
+            settings.update(model=model.name,distributed=True,context_tokens=256,threads=2,gpu_layers=os.environ.get('NODEXLM_TEST_GPU_LAYERS','auto'),placement_strategy='capacity')
             api('/api/settings','PUT',settings).close()
             api('/api/load','POST',{}).close()
             def loaded():
@@ -154,7 +176,7 @@ def main():
                 wait_for(loaded,120)
                 result=subprocess.run(['node',os.environ['NODEXLM_UI_CHECK'],base,token],timeout=90)
                 assert result.returncode==0,'Browser console verification failed'
-            print('PASS: pairing, TLS benchmark, native RPC, resident model pool, inference benchmark, SSE and restricted API key')
+            print(f'PASS: {guest_count} Guests, pairing, TLS benchmark, native RPC, resident model pool, inference benchmark, SSE and restricted API key')
         finally:
             for process in reversed(processes):
                 if os.name=='nt':
@@ -169,7 +191,8 @@ def main():
                     process.kill()
                     process.wait()
             log.close()
-            guest_log.close()
+            for guest_log in guest_logs:
+                guest_log.close()
             if any(p.returncode not in (0,-15) for p in processes):
                 print(log_path.read_text()[-12000:])
                 print((root/'guest.log').read_text()[-6000:])
