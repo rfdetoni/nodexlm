@@ -1,0 +1,28 @@
+name: Format RPC stall diagnostics (temporary)
+on:
+  push:
+    branches: [fix/rpc-layer-transfer-stall-diagnostics]
+    paths: ['.github/workflows/format-rpc-stall-temp.yml']
+permissions:
+  contents: write
+jobs:
+  format:
+    if: github.repository == 'rfdetoni/nodexlm' && github.ref == 'refs/heads/fix/rpc-layer-transfer-stall-diagnostics'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: true}
+      - name: gofmt and push formatting only
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(internal/rpcmesh/hub.go internal/rpcmesh/stats.go internal/rpcmesh/relay_test.go internal/rpcmesh/run_unix.go internal/coordinator/server.go internal/dashboard/handler.go internal/dashboard/manager.go internal/dashboard/load_rpc_test.go cmd/nodexlm/main.go)
+          gofmt -w "${files[@]}"
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add "${files[@]}"
+            git commit -m 'style: format RPC transfer diagnostics'
+            git push origin HEAD:fix/rpc-layer-transfer-stall-diagnostics
+          fi
