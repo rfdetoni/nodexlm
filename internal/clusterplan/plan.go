@@ -53,8 +53,12 @@ func Budget(d protocol.Device) uint64 {
 				free = d.AvailableRAMBytes
 			}
 		case g.MemoryType != "dedicated":
-			// Unknown memory type is not proof of separate VRAM.
-			if d.AvailableRAMBytes > 0 && free > d.AvailableRAMBytes {
+			// Unknown memory type is not proof of separate VRAM. An
+			// absent system-availability measurement cannot authorize
+			// allocations based on the driver's GPU heap counter.
+			if d.AvailableRAMBytes == 0 {
+				free = 0
+			} else if free > d.AvailableRAMBytes {
 				free = d.AvailableRAMBytes
 			}
 			if d.RAMBytes > 0 && free > d.RAMBytes {
