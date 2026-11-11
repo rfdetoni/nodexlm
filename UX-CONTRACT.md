@@ -33,3 +33,22 @@ Runtime context is configured before loading. The chat sends prior completed tur
 - Web/Android share a quiet graphite, low-chroma steel-blue visual palette
   and a five-node N symbol. Neither variant adds WebView, UI frameworks, a
   telemetry service or changes the authentication protocol.
+
+## Pareamento temporário — contagem regressiva
+
+- O código de oito caracteres gerado na aba Dispositivos tem prazo de 10 minutos,
+  informado pelo Host no retorno de `POST /v1/pairing/start` como
+  `expires_in_ms` (além de `expires_in` para compatibilidade).
+- O frontend mostra o prazo restante em `mm:ss`, reavaliando pelo relógio a
+  cada segundo; após expirar, o código não pode ser apresentado como válido.
+- O toggle **Renovar automaticamente ao expirar** começa desativado e somente
+  renova um código previamente gerado pelo usuário, com sessão administrativa
+  válida e página visível. Guias em segundo plano não criam novos códigos;
+  quando a aba voltar a ficar visível, poderão renovar um código expirado.
+- A renovação substitui o código temporário no Host e invalida o anterior,
+  mas **não** revoga tokens administrativos ou de dispositivos já pareados.
+- Falhas de renovação têm intervalo mínimo de 30 s antes de nova tentativa;
+  uma requisição pendente impede concorrência. Logout e resposta 401 removem
+  o código do DOM e desligam a renovação automática.
+- O código permanece somente na memória da aba e não é persistido em
+  `localStorage` ou `sessionStorage`.
