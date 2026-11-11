@@ -187,7 +187,9 @@ func serve(args []string) error {
 		return err
 	}
 	excludedGuests, err := parseRPCExclusions(*rpcExclude)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if *debug {
 		stop, err := debuglog.Start(*dir, "host")
 		if err != nil {
