@@ -1,0 +1,43 @@
+name: Merge main into pairing timer PR (temporary)
+on:
+  push:
+    branches: [feat/pairing-countdown-auto-renew]
+    paths:
+      - '.github/workflows/merge-main-pairing-temp.yml'
+permissions:
+  contents: write
+jobs:
+  merge:
+    if: github.repository == 'rfdetoni/nodexlm' && github.ref == 'refs/heads/feat/pairing-countdown-auto-renew'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Combine UI features and reject missing functionality
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-ff -X ours origin/main -m "merge: reconcile pairing timer and adaptive cluster monitoring"
+          python3 - <<'PY'
+          from pathlib import Path
+          checks = {
+            "internal/dashboard/static/index.html": ["flashAttention", "kvCache", "nodeResourceCards", "pairAutoRenew", "pairCountdown"],
+            "internal/dashboard/static/app.js": ["flashAttention", "renderNodeResources", "generatePairingCode", "pairingTick"],
+            "internal/dashboard/static/styles.css": [".resource-cards", ".pairing-session"],
+            "scripts/test-dashboard-models.cjs": ["Telemetry must never", "auto-renew must be off by default"],
+            "internal/dashboard/manager.go": ["FlashAttention", "KVCache"],
+            "cmd/nodexlm/main.go": ["rpc-cache", "15 * time.Second"],
+          }
+          for path, markers in checks.items():
+            data = Path(path).read_text()
+            for marker in markers:
+              if marker not in data:
+                raise SystemExit(f"Lost required feature {marker} in {path}; refusing push")
+          PY
+          git push origin HEAD:feat/pairing-countdown-auto-renew
