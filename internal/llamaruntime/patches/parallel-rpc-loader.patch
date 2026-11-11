@@ -135,7 +135,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
  
      // 4 staging buffers for async uploads, each sized 1MB seems to be a good default for single NVMe drives.
      // NVMe raid configurations might require more / larger buffers.
-@@ -1785,9 +1898,10 @@
+@@ -1785,9 +1901,10 @@
          }
  
          if (progress_callback) {
@@ -149,7 +149,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
          }
  
          size_t n_size = ggml_nbytes(cur);
-@@ -1828,9 +1942,11 @@
+@@ -1828,9 +1945,11 @@
                  mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                  mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
              } else {
@@ -164,7 +164,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
              const auto & file = files.at(weight->idx);
  
              if (ggml_backend_buffer_is_host(cur->buffer)) {
-@@ -1922,10 +2038,12 @@
+@@ -1922,10 +2041,12 @@
              }
          }
  
