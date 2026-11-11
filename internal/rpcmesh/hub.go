@@ -29,6 +29,7 @@ type idleTunnel struct {
 }
 
 type relay struct {
+	nodeID         string
 	listener       net.Listener
 	waiting        []*idleTunnel
 	ready          chan struct{}
@@ -95,7 +96,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 			http.Error(w, "local RPC relay unavailable", 503)
 			return
 		}
-		item = &relay{listener: ln, waiting: make([]*idleTunnel, 0, 8), ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
+		item = &relay{nodeID: nodeID, listener: ln, waiting: make([]*idleTunnel, 0, 8), ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
 		h.nodes[nodeID] = item
 		go item.accept()
 	}
@@ -296,6 +297,7 @@ func (r *relay) accept() {
 				r.finish(guest)
 				return
 			}
+			slog.Debug("RPC native request claimed Guest tunnel", "guest_id", r.nodeID)
 			r.bridge(upstream, guest)
 			r.finish(guest)
 		}()
@@ -320,14 +322,26 @@ type relayWriter struct {
 func (w relayWriter) Write(p []byte) (int, error) {
 	n, err := w.Writer.Write(p)
 	if n > 0 {
+		logTransfer := false
+		var sent uint64
 		w.relay.mu.Lock()
 		if w.toGuest {
+			before := w.relay.bytesToGuest
 			w.relay.bytesToGuest += uint64(n)
+			sent = w.relay.bytesToGuest
+			// Never log individual model buffers. One event after 1 MiB,
+			// then at 32 MiB boundaries is enough for stalled-load diagnosis.
+			logTransfer = (before < 1<<20 && sent >= 1<<20) ||
+				sent/(32<<20) > before/(32<<20)
 		} else {
 			w.relay.bytesFromGuest += uint64(n)
 		}
 		w.relay.lastActivityMS = time.Now().UnixMilli()
 		w.relay.mu.Unlock()
+		if logTransfer {
+			slog.Debug("RPC bytes forwarded Host to Guest", "guest_id", w.relay.nodeID,
+				"total_bytes", sent, "total_mib", sent>>20)
+		}
 	}
 	return n, err
 }
