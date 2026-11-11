@@ -73,6 +73,10 @@ func TestBudgetDedicatedGPUAndUnknownLegacy(t *testing.T) {
 	if got := Budget(d); got != 4*GiB/5 {
 		t.Fatalf("unknown GPU memory was assumed dedicated: %d", got)
 	}
+	d.AvailableRAMBytes = 0
+	if got := Budget(d); got != 0 {
+		t.Fatalf("unknown physical available memory authorized unknown GPU heap: %d", got)
+	}
 }
 
 func TestAggregateDoesNotSumSharedGPUHeaps(t *testing.T) {
