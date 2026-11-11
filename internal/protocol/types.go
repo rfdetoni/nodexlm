@@ -28,8 +28,11 @@ type ChatRequest struct {
 }
 
 type GPUDevice struct {
-	Name          string `json:"name"`
-	Vendor        string `json:"vendor"`
+	Name   string `json:"name"`
+	Vendor string `json:"vendor"`
+	// shared means GPU heaps use system RAM; dedicated means separate VRAM.
+	// Empty is legacy/unknown and must not be treated as dedicated.
+	MemoryType    string `json:"memory_type,omitempty"`
 	VRAMBytes     uint64 `json:"vram_bytes,omitempty"`
 	FreeVRAMBytes uint64 `json:"free_vram_bytes,omitempty"`
 	// Nil means the driver cannot measure this value; 0 means measured idle/empty.
@@ -47,21 +50,29 @@ type RuntimeCapability struct {
 }
 
 type Device struct {
-	ID                string            `json:"id"`
-	Name              string            `json:"name"`
-	Platform          string            `json:"platform"`
-	Architecture      string            `json:"architecture"`
-	CPUCount          int               `json:"cpu_count"`
-	CPUUsagePercent   *float64          `json:"cpu_usage_percent,omitempty"`
-	RAMUsedBytes      *uint64           `json:"ram_used_bytes,omitempty"`
-	RAMBytes          uint64            `json:"ram_bytes,omitempty"`
-	AvailableRAMBytes uint64            `json:"available_ram_bytes,omitempty"`
-	GPUs              []GPUDevice       `json:"gpus,omitempty"`
-	Runtime           RuntimeCapability `json:"runtime"`
-	Models            []string          `json:"models,omitempty"`
-	LastSeen          time.Time         `json:"last_seen"`
-	Status            string            `json:"status"`
-	Busy              bool              `json:"busy"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Platform          string   `json:"platform"`
+	Architecture      string   `json:"architecture"`
+	CPUCount          int      `json:"cpu_count"`
+	CPUUsagePercent   *float64 `json:"cpu_usage_percent,omitempty"`
+	RAMUsedBytes      *uint64  `json:"ram_used_bytes,omitempty"`
+	RAMBytes          uint64   `json:"ram_bytes,omitempty"`
+	AvailableRAMBytes uint64   `json:"available_ram_bytes,omitempty"`
+	// User-defined maximum weight contribution and minimum free OS reserve.
+	MaxContributionBytes uint64 `json:"max_contribution_bytes,omitempty"`
+	MemoryReserveBytes   uint64 `json:"memory_reserve_bytes,omitempty"`
+	// Nil represents unavailable telemetry; zero is a measured value.
+	BatteryPercent  *int              `json:"battery_percent,omitempty"`
+	Charging        *bool             `json:"charging,omitempty"`
+	ThermalStatus   *int              `json:"thermal_status,omitempty"`
+	ThermalHeadroom *float64          `json:"thermal_headroom,omitempty"`
+	GPUs            []GPUDevice       `json:"gpus,omitempty"`
+	Runtime         RuntimeCapability `json:"runtime"`
+	Models          []string          `json:"models,omitempty"`
+	LastSeen        time.Time         `json:"last_seen"`
+	Status          string            `json:"status"`
+	Busy            bool              `json:"busy"`
 }
 
 type Enrollment struct {

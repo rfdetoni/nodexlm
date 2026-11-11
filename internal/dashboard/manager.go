@@ -447,7 +447,7 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		name, _ := os.Hostname()
 		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
-		selection, selectErr := m.chooseRPC(s, model.BlockCount, uint64(size), hostCapacity, guests)
+		selection, selectErr := m.chooseRPC(s, model, uint64(size), hostCapacity, guests)
 		if selectErr != nil {
 			return selectErr
 		}
@@ -467,7 +467,7 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		slog.Info("Distributed model placement planned", "selected_guests", len(selection.Guests),
 			"available_guests", len(guests), "host_layers", localLayers, "total_layers", model.BlockCount,
-			"strategy", s.PlacementStrategy, "parallel_rpc_upload", len(selection.Guests) > 1)
+			"strategy", s.PlacementStrategy, "parallel_rpc_upload", len(selection.Guests) > 1 && llamaruntime.BundledParallelRPCUploadsSupported())
 		m.mu.Lock()
 		m.loadRPCNodes = selectedIDs
 		m.mu.Unlock()
@@ -483,6 +483,22 @@ func (m *Manager) load(ctx context.Context) error {
 			m.loadRPCBaseline = m.rpcStatsProvider()
 		}
 		m.mu.Unlock()
+	} else {
+		// The preview and the actual local load must use the same memory
+		// guard. Do not silently ignore high-context KV on the Host.
+		meta, inspectErr := local.InspectGGUF(path)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		size, sizeErr := local.ModelSize(path)
+		if sizeErr != nil {
+			return sizeErr
+		}
+		name, _ := os.Hostname()
+		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
+		if inspectErr = validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
+			return inspectErr
+		}
 	}
 	m.setPhase("resolving_runtime")
 	var resolved string

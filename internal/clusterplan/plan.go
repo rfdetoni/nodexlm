@@ -14,16 +14,18 @@ const MiB uint64 = 1 << 20
 const GiB uint64 = 1 << 30
 
 type NodeCapacity struct {
-	ID                  string                     `json:"id"`
-	Name                string                     `json:"name"`
-	Platform            string                     `json:"platform"`
-	CPUCount            int                        `json:"cpu_count"`
-	RAMBytes            uint64                     `json:"ram_bytes"`
-	AvailableRAMBytes   uint64                     `json:"available_ram_bytes"`
-	FreeVRAMBytes       uint64                     `json:"free_vram_bytes"`
-	ReservedUsableBytes uint64                     `json:"estimated_model_budget_bytes"`
-	Runtime             protocol.RuntimeCapability `json:"runtime"`
-	Status              string                     `json:"status"`
+	ID                   string                     `json:"id"`
+	Name                 string                     `json:"name"`
+	Platform             string                     `json:"platform"`
+	CPUCount             int                        `json:"cpu_count"`
+	RAMBytes             uint64                     `json:"ram_bytes"`
+	AvailableRAMBytes    uint64                     `json:"available_ram_bytes"`
+	FreeVRAMBytes        uint64                     `json:"free_vram_bytes"`
+	ReservedUsableBytes  uint64                     `json:"estimated_model_budget_bytes"`
+	MaxContributionBytes uint64                     `json:"max_contribution_bytes,omitempty"`
+	MemoryReserveBytes   uint64                     `json:"memory_reserve_bytes,omitempty"`
+	Runtime              protocol.RuntimeCapability `json:"runtime"`
+	Status               string                     `json:"status"`
 }
 type Summary struct {
 	Nodes                  []NodeCapacity `json:"nodes"`
@@ -35,19 +37,50 @@ type Summary struct {
 }
 
 func Budget(d protocol.Device) uint64 {
-	// Conservative resident weight allowance. Reserve 1 GiB for each OS plus
-	// another 20% of the remaining memory for KV cache and working buffers.
+	// This is one whole-node budget, never RAM + VRAM. Shared GPU heaps
+	// cannot increase the physical RAM actually available to the process.
 	avail := d.AvailableRAMBytes
+	if d.RAMBytes > 0 && avail > d.RAMBytes {
+		avail = d.RAMBytes
+	}
 	for _, g := range d.GPUs {
-		// Do not add VRAM to RAM; iGPUs can share physical memory.
-		if g.FreeVRAMBytes > avail {
-			avail = g.FreeVRAMBytes
+		free := g.FreeVRAMBytes
+		switch {
+		case d.Platform == "android" || g.MemoryType == "shared":
+			// A legacy Android GPU report is shared even if not annotated.
+			// Unknown system availability is not unlimited shared VRAM.
+			if free > d.AvailableRAMBytes {
+				free = d.AvailableRAMBytes
+			}
+		case g.MemoryType != "dedicated":
+			// Unknown memory type is not proof of separate VRAM. An
+			// absent system-availability measurement cannot authorize
+			// allocations based on the driver's GPU heap counter.
+			if d.AvailableRAMBytes == 0 {
+				free = 0
+			} else if free > d.AvailableRAMBytes {
+				free = d.AvailableRAMBytes
+			}
+			if d.RAMBytes > 0 && free > d.RAMBytes {
+				free = d.RAMBytes
+			}
+		}
+		if free > avail {
+			avail = free
 		}
 	}
-	if avail <= GiB {
+	reserve := GiB
+	if d.MemoryReserveBytes > reserve {
+		reserve = d.MemoryReserveBytes
+	}
+	if avail <= reserve {
 		return 0
 	}
-	return (avail - GiB) * 80 / 100
+	budget := (avail - reserve) * 80 / 100
+	if d.MaxContributionBytes > 0 && budget > d.MaxContributionBytes {
+		budget = d.MaxContributionBytes
+	}
+	return budget
 }
 func Aggregate(devices []protocol.Device, now time.Time) Summary {
 	out := Summary{Nodes: make([]NodeCapacity, 0, len(devices)), Disclaimer: "Memory estimates are conservative and do not guarantee model compatibility, RPC network throughput, or KV cache fit. Single-model RPC execution is experimental; compatibility and network performance must be validated."}
@@ -68,12 +101,19 @@ func Aggregate(devices []protocol.Device, now time.Time) Summary {
 		}
 		freeVRAM := uint64(0)
 		for _, g := range d.GPUs {
-			freeVRAM += g.FreeVRAMBytes
+			// Multiple shared heaps describe the same physical memory.
+			if d.Platform == "android" || g.MemoryType == "shared" {
+				if g.FreeVRAMBytes > freeVRAM {
+					freeVRAM = g.FreeVRAMBytes
+				}
+			} else if freeVRAM <= ^uint64(0)-g.FreeVRAMBytes {
+				freeVRAM += g.FreeVRAMBytes
+			}
 		}
 		if online && d.Runtime.Installed {
 			out.InferenceReady++
 		}
-		out.Nodes = append(out.Nodes, NodeCapacity{ID: d.ID, Name: d.Name, Platform: d.Platform, CPUCount: d.CPUCount, RAMBytes: d.RAMBytes, AvailableRAMBytes: d.AvailableRAMBytes, FreeVRAMBytes: freeVRAM, ReservedUsableBytes: budget, Runtime: d.Runtime, Status: status})
+		out.Nodes = append(out.Nodes, NodeCapacity{ID: d.ID, Name: d.Name, Platform: d.Platform, CPUCount: d.CPUCount, RAMBytes: d.RAMBytes, AvailableRAMBytes: d.AvailableRAMBytes, FreeVRAMBytes: freeVRAM, ReservedUsableBytes: budget, MaxContributionBytes: d.MaxContributionBytes, MemoryReserveBytes: d.MemoryReserveBytes, Runtime: d.Runtime, Status: status})
 	}
 	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].Name < out.Nodes[j].Name })
 	return out

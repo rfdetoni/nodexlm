@@ -104,7 +104,24 @@ func (m *Managed) Generate(ctx context.Context, request protocol.ChatRequest) (s
 }
 func (m *Managed) ensure(ctx context.Context) error {
 	if m.started != nil {
-		return nil
+		// Wait() is owned by the single reaper goroutine. An exited server
+		// cannot be reused even if its endpoint was previously healthy.
+		if m.processExit != nil {
+			select {
+			case <-m.processExit.done:
+				slog.Warn("Native inference process exited", "backend", EffectiveBackend(m.Backend),
+					"error", m.processExit.err)
+				m.started = nil
+				m.processExit = nil
+				m.endpoint = nil
+			default:
+				return nil
+			}
+		} else {
+			// Do not expose a stale endpoint with no process lifecycle.
+			m.started = nil
+			m.endpoint = nil
+		}
 	}
 	if EffectiveBackend(m.Backend) == BackendLlama && (m.Binary == "" || m.Binary == "llama-server") {
 		executable, err := llamaruntime.AutoExecutable(ctx, config.DefaultDir(), m.Binary)
@@ -180,9 +197,10 @@ func (m *Managed) ensure(ctx context.Context) error {
 	// Without this, startup may fail even when the --help RPC probe passed.
 	if EffectiveBackend(m.Backend) == BackendLlama {
 		cmd.Env = append(llamaruntime.NativeEnvironment(launch.Binary), launch.Env...)
-		// The patched native loader bounds uploads to one mmap-backed worker
-		// per Guest, at most four. Old r1 runtimes ignore this safely.
-		if len(m.RPCServers) > 1 && os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
+		// A candidate patch is not evidence that the pinned release uses it.
+		// Only verified bundles may automatically opt into parallel uploads.
+		if len(m.RPCServers) > 1 && llamaruntime.BundledParallelRPCUploadsSupported() &&
+			os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_PARALLEL_RPC_UPLOAD=1")
 		}
 	} else {

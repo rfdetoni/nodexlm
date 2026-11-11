@@ -266,16 +266,28 @@ class MainActivity : Activity() {
         val minimum = field(settings,getString(R.string.minimum_battery),prefs.getInt("rpc_min_battery",15).toString())
         val startHour = field(settings,getString(R.string.start_hour),prefs.getInt("rpc_start_hour",0).toString())
         val endHour = field(settings,getString(R.string.end_hour),prefs.getInt("rpc_end_hour",0).toString())
-        listOf(minimum,startHour,endHour).forEach { it.inputType = android.text.InputType.TYPE_CLASS_NUMBER }
+        val memoryCap = field(settings,getString(R.string.rpc_memory_cap),prefs.getInt("rpc_max_contribution_mib",0).toString())
+        val memoryReserve = field(settings,getString(R.string.rpc_memory_reserve),prefs.getInt("rpc_memory_reserve_mib",1024).toString())
+        val cpuThreads = field(settings,getString(R.string.rpc_cpu_threads),prefs.getInt("rpc_threads",0).toString())
+        listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
+            it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
         settings.addView(action(getString(R.string.ui_94c7583562e2)) {
             val min = minimum.text.toString().toIntOrNull()
             val from = startHour.text.toString().toIntOrNull()
             val until = endHour.text.toString().toIntOrNull()
-            if (min == null || min !in 5..95 || from == null || from !in 0..23 || until == null || until !in 0..23) {
+            val cap = memoryCap.text.toString().toIntOrNull()
+            val reserve = memoryReserve.text.toString().toIntOrNull()
+            val threads = cpuThreads.text.toString().toIntOrNull()
+            if (min == null || min !in 5..95 || from == null || from !in 0..23 ||
+                until == null || until !in 0..23 || cap == null || cap !in 0..65536 ||
+                reserve == null || reserve !in 1024..65536 || threads == null || threads !in 0..8) {
                 setStatus(getString(R.string.ui_5f20f24e5efa))
             } else {
                 prefs.edit().putBoolean("rpc_only_charging",onlyCharging.isChecked).putInt("rpc_min_battery",min)
-                    .putInt("rpc_start_hour",from).putInt("rpc_end_hour",until).apply()
+                    .putInt("rpc_start_hour",from).putInt("rpc_end_hour",until)
+                    .putInt("rpc_max_contribution_mib",cap).putInt("rpc_memory_reserve_mib",reserve)
+                    .putInt("rpc_threads",threads).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
         })

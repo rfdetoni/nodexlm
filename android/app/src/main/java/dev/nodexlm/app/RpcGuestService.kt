@@ -3,6 +3,7 @@
 package dev.nodexlm.app
 
 import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -13,6 +14,7 @@ import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -29,6 +31,7 @@ import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.util.Collections
+import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -118,7 +121,11 @@ class RpcGuestService : Service() {
         }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
-                val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
+                logPreviousLowMemoryExit()
+                val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+                val requestedThreads = energy.getInt("rpc_threads", 0)
+                val threads = if (requestedThreads == 0) (cores - 1).coerceIn(1, 6)
+                              else requestedThreads.coerceIn(1, minOf(8, cores))
                 checkThermalsAndBattery()
                 val socketFile=File(filesDir,"rpc.sock")
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
@@ -141,17 +148,33 @@ class RpcGuestService : Service() {
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
                         while (running.get()) {
+                            // Avoid a TLS reconnect storm while offline. Preserve
+                            // pinned identity when the active network changes.
+                            val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+                            if (connectivity.activeNetwork == null) {
+                                sleepWhileRunning(2_000L)
+                                continue
+                            }
+                            var retryCeiling = 10_000L
                             var failed = false
                             try {
                                 connectAndRelay(slot, host, port, node, token, sslContext)
                                 backoff = 1000L
+                            } catch (e: SecurityException) {
+                                Log.e(LOG, "RPC Host rejected credentials; stopping Guest", e)
+                                shutdown()
+                                break
                             } catch (e: Exception) {
                                 failed = true
                                 reconnectFailures.incrementAndGet()
+                                // Saturated Host relays need slower retries, not
+                                // eight synchronized attempts every second.
+                                if (e.message?.contains(" 503 ") == true) retryCeiling = 30_000L
                                 if (running.get()) Log.w(LOG, "RPC tunnel $slot: ${e.message}")
                             }
-                            sleepWhileRunning(backoff)
-                            if (failed) backoff = (backoff * 2).coerceAtMost(10_000L)
+                            val jitter = ThreadLocalRandom.current().nextLong(0L, (backoff / 4).coerceAtLeast(250L) + 1L)
+                            sleepWhileRunning(backoff + jitter)
+                            if (failed) backoff = (backoff * 2).coerceAtMost(retryCeiling)
                         }
                     }
                 }
@@ -175,6 +198,22 @@ class RpcGuestService : Service() {
         return START_NOT_STICKY
     }
 
+    private fun logPreviousLowMemoryExit() {
+        if (Build.VERSION.SDK_INT < 30) return
+        try {
+            val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            val previous = manager.getHistoricalProcessExitReasons(packageName, 0, 8)
+                .filter { it.processName == "$packageName:rpc" }
+                .maxByOrNull { it.timestamp }
+            if (previous?.reason == ApplicationExitInfo.REASON_LOW_MEMORY) {
+                Log.w(LOG, "Previous RPC process terminated by Android low-memory killer; " +
+                    "timestamp_ms=${previous.timestamp}. Reduce Guest RAM contribution.")
+            }
+        } catch (e: RuntimeException) {
+            Log.w(LOG, "Prior native process exit information unavailable", e)
+        }
+    }
+
     private fun createNotification() {
         val notifications = getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(NotificationChannel(
@@ -190,7 +229,7 @@ class RpcGuestService : Service() {
             .addAction(Notification.Action.Builder(null, "Parar", stop).build())
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else startForeground(43, notification)
     }
 
@@ -202,9 +241,17 @@ class RpcGuestService : Service() {
         } catch (e: Exception) { Log.w(LOG, "CPU wake lock unavailable", e) }
         try {
             val wifi = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+            // HIGH_PERF can assist screen-off Wi-Fi on API 29-33; on API 34+
+            // Android converts it to LOW_LATENCY, which is ineffective with
+            // screen off. This is an advisory lock, not a Doze exemption.
             @Suppress("DEPRECATION")
-            wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "NodexLM:rpc-wifi")
+            val mode = if (Build.VERSION.SDK_INT < 34) WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                       else WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            wifiLock = wifi.createWifiLock(mode, "NodexLM:rpc-wifi")
                 .apply { setReferenceCounted(false); acquire() }
+            Log.i(LOG, "Wi-Fi lock acquired; API=${Build.VERSION.SDK_INT}, " +
+                "screen_off_supported_by_mode=${Build.VERSION.SDK_INT < 34}; " +
+                "device power policy and OEM may still suspend connectivity")
         } catch (e: Exception) { Log.w(LOG, "Wi-Fi wake lock unavailable", e) }
     }
 
@@ -254,6 +301,13 @@ class RpcGuestService : Service() {
         val available = if (Build.SUPPORTED_ABIS.firstOrNull()?.let { Build.SUPPORTED_32_BIT_ABIS.contains(it) } == true) {
             minOf(memory.availMem, 2L * 1024 * 1024 * 1024)
         } else memory.availMem
+        val power = getSystemService(POWER_SERVICE) as PowerManager
+        val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+            batteryStatus == BatteryManager.BATTERY_STATUS_FULL
         val device = JSONObject()
             .put("name", name.take(80))
             .put("platform", "android")
@@ -261,13 +315,23 @@ class RpcGuestService : Service() {
             .put("cpu_count", Runtime.getRuntime().availableProcessors())
             .put("ram_bytes", memory.totalMem)
             .put("ram_used_bytes", (memory.totalMem - memory.availMem).coerceAtLeast(0L))
-            .put("available_ram_bytes", if (mode == "gpu") 0L else available)
+            // Physical RAM is still available when compute is GPU-only;
+            // disabling CPU does not make physical memory disappear.
+            .put("available_ram_bytes", available)
+            .put("max_contribution_bytes", getSharedPreferences("nodexlm", MODE_PRIVATE)
+                .getInt("rpc_max_contribution_mib", 0).coerceIn(0, 65536).toLong() * 1024L * 1024L)
+            .put("memory_reserve_bytes", getSharedPreferences("nodexlm", MODE_PRIVATE)
+                .getInt("rpc_memory_reserve_mib", 1024).coerceIn(1024, 65536).toLong() * 1024L * 1024L)
+            .put("thermal_status", power.currentThermalStatus)
+            .put("charging", charging)
             // Only expose GPU memory when this worker allows Vulkan offload.
             // A CPU-only Guest must not make the Host allocate layers to GPU.
             .put("gpus", if (mode == "cpu") JSONArray() else try {
                 val gpus = JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
                 for (i in 0 until gpus.length()) {
                     val gpu = gpus.optJSONObject(i) ?: continue
+                    // Vulkan heap counters on Android refer to shared physical RAM.
+                    gpu.put("memory_type", "shared")
                     val total = gpu.optLong("vram_bytes", 0L)
                     val free = gpu.optLong("free_vram_bytes", -1L)
                     if (total > 0L && free >= 0L && free <= total) {
@@ -291,6 +355,14 @@ class RpcGuestService : Service() {
                 .put("benchmark", true)
                 .put("reconnect_failures",reconnectFailures.get())
                 .put("rpc_ready", false))
+        if (percent in 0..100) device.put("battery_percent", percent)
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Android limits polling of thermal headroom. Heartbeats are 15s apart.
+            val headroom = power.getThermalHeadroom(10)
+            if (headroom.isFinite() && headroom >= 0f && headroom <= 10f) {
+                device.put("thermal_headroom", headroom.toDouble())
+            }
+        }
         cpuSampler.sample()?.let { device.put("cpu_usage_percent", it) }
         val connection = java.net.URL(endpoint.trimEnd('/') + "/v1/nodes/heartbeat")
             .openConnection() as HttpsURLConnection
@@ -369,6 +441,9 @@ class RpcGuestService : Service() {
             remote.outputStream.write(request.toByteArray(Charsets.US_ASCII))
             remote.outputStream.flush()
             val status = readStatus(remote.inputStream)
+            if (status.contains(" 401 ") || status.contains(" 403 ")) {
+                throw SecurityException("Host denied authenticated RPC tunnel: ${status.take(80)}")
+            }
             check(status.startsWith("HTTP/1.1 200 ") || status.startsWith("HTTP/1.0 200 ")) {
                 "Host denied RPC tunnel: ${status.take(120)}"
             }

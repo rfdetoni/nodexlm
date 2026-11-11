@@ -3,6 +3,8 @@ package dashboard
 import (
 	"testing"
 	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
 func TestChooseRPCUsesMeasuredInference(t *testing.T) {
@@ -17,7 +19,7 @@ func TestChooseRPCUsesMeasuredInference(t *testing.T) {
 	m.samples["small.gguf@"+slow] = InferenceSample{Model: "small.gguf@" + slow, MeasuredAt: time.Now(), TokensPerSecond: 2}
 	m.samples["small.gguf@"+fast] = InferenceSample{Model: "small.gguf@" + fast, MeasuredAt: time.Now(), TokensPerSecond: 14}
 	guests := []RPCGuest{{ID: slow, CapacityBytes: 8 * gib}, {ID: fast, CapacityBytes: 8 * gib}}
-	selection, err := m.chooseRPC(Settings{Model: "small.gguf", PlacementStrategy: "speed"}, 40, 6*gib, gib, guests)
+	selection, err := m.chooseRPC(Settings{Model: "small.gguf", PlacementStrategy: "speed"}, local.GGUFInfo{BlockCount: 40}, 6*gib, gib, guests)
 	if err != nil {
 		t.Fatal(err)
 	}
