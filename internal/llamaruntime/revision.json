@@ -2,6 +2,12 @@
   "version": "b12255",
   "commit": "940a30ee3b5593e1a66fe0aadc3b731989022552",
   "rpc_release": "nodexlm-rpc-b12255-r1",
-  "published": {},
+  "published": {
+    "darwin/arm64/metal": "2e9e58d3a54e34e65dbe13fa68a1b0a88e4d04b787d754a6badfcde2be09a5b6",
+    "linux/amd64/cpu": "7fd62b38527b873435eed4b1de175f10981f6618848a9cfd3e58d66cd0f4e037",
+    "linux/amd64/vulkan": "b68291729a139048a9ac06e9a1e55032723e2efade93601543caa6ba9a6b881d",
+    "linux/arm64/cpu": "de7bf42431724d75365dc50b898c2af8b51bed985f52f798db5f8a6ad975e20b",
+    "windows/amd64/cpu": "0ebe8b07f76aa0504064b87587b0fc775752324144566075e4b8c546a9ea4c2c"
+  },
   "unix_rpc": true
 }
