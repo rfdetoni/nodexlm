@@ -1,0 +1,49 @@
+name: Reconcile RPC fix with main (temporary)
+on:
+  push:
+    branches: [fix/rpc-layer-transfer-stall-diagnostics]
+    paths: ['.github/workflows/reconcile-rpc-main-temp.yml']
+permissions:
+  contents: write
+jobs:
+  merge:
+    if: github.repository == 'rfdetoni/nodexlm' && github.ref == 'refs/heads/fix/rpc-layer-transfer-stall-diagnostics'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Detect conflicts (do not push when conflicted)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          if ! git merge --no-commit --no-ff origin/main; then
+            echo "::error::Conflicting files:"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+          gofmt -w internal/rpcmesh/hub.go
+          git add internal/rpcmesh/hub.go
+          # Do not silently drop features introduced after this PR branched.
+          python3 - <<'PY'
+          from pathlib import Path
+          checks={
+            'internal/dashboard/manager.go':['Backend string','rpcStatsProvider','loadRPCNodes','m.loadRPCBaseline','Backend:s.Backend'],
+            'internal/dashboard/static/app.js':['renderNodeResources','pairingTick','runtimeBackend','rpc-stall-warning'],
+            'cmd/nodexlm/main.go':['RPCIdleNodes','mistralrs-bin','SetRPCStatsProvider'],
+            'internal/rpcmesh/hub.go':['BytesToGuest','IdleNodes','bridgeTracked'],
+            'internal/local/backend.go':['BackendMistralRS'],
+          }
+          for path,markers in checks.items():
+            source=Path(path).read_text()
+            for marker in markers:
+              if marker not in source:
+                raise SystemExit(f'Feature missing: {path} {marker}')
+          PY
+          git commit -m 'merge: preserve mistral.rs while reconciling RPC stall diagnostics'
+          git push origin HEAD:fix/rpc-layer-transfer-stall-diagnostics
