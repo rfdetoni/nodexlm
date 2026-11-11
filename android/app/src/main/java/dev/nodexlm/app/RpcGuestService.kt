@@ -265,6 +265,13 @@ class RpcGuestService : Service() {
         val available = if (Build.SUPPORTED_ABIS.firstOrNull()?.let { Build.SUPPORTED_32_BIT_ABIS.contains(it) } == true) {
             minOf(memory.availMem, 2L * 1024 * 1024 * 1024)
         } else memory.availMem
+        val power = getSystemService(POWER_SERVICE) as PowerManager
+        val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+            batteryStatus == BatteryManager.BATTERY_STATUS_FULL
         val device = JSONObject()
             .put("name", name.take(80))
             .put("platform", "android")
@@ -279,6 +286,8 @@ class RpcGuestService : Service() {
                 .getInt("rpc_max_contribution_mib", 0).coerceIn(0, 65536).toLong() * 1024L * 1024L)
             .put("memory_reserve_bytes", getSharedPreferences("nodexlm", MODE_PRIVATE)
                 .getInt("rpc_memory_reserve_mib", 1024).coerceIn(1024, 65536).toLong() * 1024L * 1024L)
+            .put("thermal_status", power.currentThermalStatus)
+            .put("charging", charging)
             // Only expose GPU memory when this worker allows Vulkan offload.
             // A CPU-only Guest must not make the Host allocate layers to GPU.
             .put("gpus", if (mode == "cpu") JSONArray() else try {
@@ -310,6 +319,14 @@ class RpcGuestService : Service() {
                 .put("benchmark", true)
                 .put("reconnect_failures",reconnectFailures.get())
                 .put("rpc_ready", false))
+        if (percent in 0..100) device.put("battery_percent", percent)
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Android limits polling of thermal headroom. Heartbeats are 15s apart.
+            val headroom = power.getThermalHeadroom(10)
+            if (headroom.isFinite() && headroom >= 0f && headroom <= 10f) {
+                device.put("thermal_headroom", headroom.toDouble())
+            }
+        }
         cpuSampler.sample()?.let { device.put("cpu_usage_percent", it) }
         val connection = java.net.URL(endpoint.trimEnd('/') + "/v1/nodes/heartbeat")
             .openConnection() as HttpsURLConnection
