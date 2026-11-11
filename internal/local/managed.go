@@ -197,9 +197,10 @@ func (m *Managed) ensure(ctx context.Context) error {
 	// Without this, startup may fail even when the --help RPC probe passed.
 	if EffectiveBackend(m.Backend) == BackendLlama {
 		cmd.Env = append(llamaruntime.NativeEnvironment(launch.Binary), launch.Env...)
-		// The patched native loader bounds uploads to one mmap-backed worker
-		// per Guest, at most four. Old r1 runtimes ignore this safely.
-		if len(m.RPCServers) > 1 && os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
+		// A candidate patch is not evidence that the pinned release uses it.
+		// Only verified bundles may automatically opt into parallel uploads.
+		if len(m.RPCServers) > 1 && llamaruntime.BundledParallelRPCUploadsSupported() &&
+			os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_PARALLEL_RPC_UPLOAD=1")
 		}
 	} else {
