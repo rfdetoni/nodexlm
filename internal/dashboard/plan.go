@@ -59,7 +59,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 			return nil, errors.New("RPC provider unavailable")
 		}
 		guests := provider()
-		selection, selectErr := m.chooseRPC(settings, meta.BlockCount, uint64(size), host, guests)
+		selection, selectErr := m.chooseRPC(settings, meta, uint64(size), host, guests)
 		if selectErr != nil {
 			return nil, selectErr
 		}
@@ -87,8 +87,13 @@ func (m *Manager) Plan() (map[string]any, error) {
 			remaining -= layers
 			total -= guest.CapacityBytes
 		}
-	} else if uint64(size) > host {
-		return nil, errors.New("model weights exceed reported Host budget")
+	} else {
+		if uint64(size) > host {
+			return nil, errors.New("model weights exceed reported Host budget")
+		}
+		if err := validatePlacementMemory(meta, settings, uint64(size), host, nil); err != nil {
+			return nil, err
+		}
 	}
 	nodes = append([]placement{{Name: "Host", Endpoint: "Host", Layers: localLayers, WeightBytes: uint64(size) * uint64(localLayers) / uint64(meta.BlockCount), Budget: host}}, nodes...)
 
@@ -137,7 +142,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if kvType == "" {
 		kvType = "f16"
 	}
-	return map[string]any{"bundled_rpc_release": llamaruntime.BundledRPCRelease(), "bundled_parallel_rpc_uploads_supported": llamaruntime.BundledParallelRPCUploadsSupported(), "estimated_kv_type": kvType, "strategy": strategy, "excluded_guests": excluded, "selection_reason": selectionReason, "model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
+	return map[string]any{"estimated_minimum_runtime_bytes": estimateTransientBytes(meta, settings), "bundled_rpc_release": llamaruntime.BundledRPCRelease(), "bundled_parallel_rpc_uploads_supported": llamaruntime.BundledParallelRPCUploadsSupported(), "estimated_kv_type": kvType, "strategy": strategy, "excluded_guests": excluded, "selection_reason": selectionReason, "model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
 }
 func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 	if len(id) != 64 {
