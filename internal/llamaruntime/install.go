@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -355,21 +356,24 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		return "", "", err
 	}
 	if server, rpc, err := installedDistributed(home, backend); err == nil && (!UnixRPCBundles() || SupportsUnixRPC(ctx, server)) {
+		slog.Info("Using cached verified RPC runtime", "backend", backend, "version", Version)
 		return server, rpc, nil
 	}
 	// Prefer a ready-to-run, pinned RPC pair: ordinary Linux Guests should not
 	// need CMake, a compiler or root access just to join a trusted cluster.
 	var publishedErr error
 	if publishedRPCSupported(backend) {
-		fmt.Fprintln(os.Stderr, "NodexLM: preparando runtime RPC verificado para "+runtime.GOOS+"/"+runtime.GOARCH+"...")
+		slog.Info("Checking verified RPC runtime download", "platform", runtime.GOOS+"/"+runtime.GOARCH, "backend", backend, "release", revision.RPCRelease)
 		var s, p string
 		s, p, publishedErr = fetchPublishedRPC(ctx, home, backend, publishedRPCBaseURL)
 		if publishedErr == nil && SupportsRPC(ctx, s) && (!UnixRPCBundles() || SupportsUnixRPC(ctx, s)) {
+			slog.Info("Verified RPC runtime ready", "backend", backend, "version", Version)
 			return s, p, nil
 		}
 		if publishedErr == nil {
 			publishedErr = errors.New("downloaded runtime lacks RPC support")
 		}
+		slog.Warn("Verified RPC runtime unavailable; trying alternate installation", "backend", backend, "error", publishedErr)
 	}
 	// Existing official archives may already include matching RPC binaries.
 	server, rpc, err := Ensure(ctx, home, backend)
@@ -378,6 +382,8 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	}
 	// Some official releases omit GGML_RPC. Automatically build the missing
 	// backend from exactly the same signed release source for both executables.
+	slog.Warn("Precompiled RPC runtime unavailable; checking native source build prerequisites",
+		"backend", backend, "version", Version)
 	if _, err := exec.LookPath("cmake"); err != nil {
 		if publishedErr != nil {
 			return "", "", fmt.Errorf("precompiled RPC download failed: %v; local fallback requires git, CMake and a C/C++ compiler (Ubuntu/Debian: sudo apt install -y git cmake build-essential)", publishedErr)
@@ -400,6 +406,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	}
 	defer os.RemoveAll(stage)
 	src := filepath.Join(stage, "src")
+	slog.Info("Fetching pinned llama.cpp sources for RPC fallback", "version", Version)
 	fetch := exec.CommandContext(ctx, "git", "clone", "--quiet", "--depth=1", "--branch", Version, "https://github.com/ggml-org/llama.cpp", src)
 	fetch.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := fetch.CombinedOutput(); err != nil {
@@ -421,10 +428,12 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	case "metal":
 		flags = append(flags, "-DGGML_METAL=ON")
 	}
+	slog.Info("Configuring native RPC source fallback", "backend", backend)
 	configure := exec.CommandContext(ctx, "cmake", flags...)
 	if out, err := configure.CombinedOutput(); err != nil {
 		return "", "", fmt.Errorf("configure llama.cpp with RPC: %w: %s", err, string(out))
 	}
+	slog.Info("Compiling native RPC runtime fallback", "backend", backend)
 	compile := exec.CommandContext(ctx, "cmake", "--build", build, "--config", "Release", "--parallel", "2")
 	if out, err := compile.CombinedOutput(); err != nil {
 		return "", "", fmt.Errorf("build llama.cpp with RPC: %w: %s", err, string(out))
