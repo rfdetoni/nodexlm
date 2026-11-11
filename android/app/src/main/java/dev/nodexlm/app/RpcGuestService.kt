@@ -13,6 +13,7 @@ import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -29,6 +30,7 @@ import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.util.Collections
+import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -144,17 +146,33 @@ class RpcGuestService : Service() {
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
                         while (running.get()) {
+                            // Avoid a TLS reconnect storm while offline. Preserve
+                            // pinned identity when the active network changes.
+                            val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+                            if (connectivity.activeNetwork == null) {
+                                sleepWhileRunning(2_000L)
+                                continue
+                            }
+                            var retryCeiling = 10_000L
                             var failed = false
                             try {
                                 connectAndRelay(slot, host, port, node, token, sslContext)
                                 backoff = 1000L
+                            } catch (e: SecurityException) {
+                                Log.e(LOG, "RPC Host rejected credentials; stopping Guest", e)
+                                shutdown()
+                                break
                             } catch (e: Exception) {
                                 failed = true
                                 reconnectFailures.incrementAndGet()
+                                // Saturated Host relays need slower retries, not
+                                // eight synchronized attempts every second.
+                                if (e.message?.contains(" 503 ") == true) retryCeiling = 30_000L
                                 if (running.get()) Log.w(LOG, "RPC tunnel $slot: ${e.message}")
                             }
-                            sleepWhileRunning(backoff)
-                            if (failed) backoff = (backoff * 2).coerceAtMost(10_000L)
+                            val jitter = ThreadLocalRandom.current().nextLong(250L, (backoff / 4).coerceAtLeast(251L))
+                            sleepWhileRunning(backoff + jitter)
+                            if (failed) backoff = (backoff * 2).coerceAtMost(retryCeiling)
                         }
                     }
                 }
@@ -405,6 +423,9 @@ class RpcGuestService : Service() {
             remote.outputStream.write(request.toByteArray(Charsets.US_ASCII))
             remote.outputStream.flush()
             val status = readStatus(remote.inputStream)
+            if (status.contains(" 401 ") || status.contains(" 403 ")) {
+                throw SecurityException("Host denied authenticated RPC tunnel: ${status.take(80)}")
+            }
             check(status.startsWith("HTTP/1.1 200 ") || status.startsWith("HTTP/1.0 200 ")) {
                 "Host denied RPC tunnel: ${status.take(120)}"
             }
