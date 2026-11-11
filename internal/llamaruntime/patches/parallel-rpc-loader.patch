@@ -1,7 +1,7 @@
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -7,7 +7,13 @@
+@@ -7,7 +7,14 @@
  #include "llama.h"
  
  #include <algorithm>
@@ -9,6 +9,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +#include <array>
 +#include <condition_variable>
 +#include <cstdlib>
++#include <deque>
 +#include <memory>
 +#include <mutex>
 +#include <thread>
@@ -16,15 +17,16 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
  #include <cinttypes>
  #include <cstdint>
  #include <cstring>
-@@ -1658,7 +1664,113 @@
+@@ -1658,7 +1665,116 @@
      }
      GGML_ASSERT(size_data != 0 && "call init_mappings() first");
  
 -    std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
 +    std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
 +
-+    // NodexLM: one long-lived worker per RPC device, and at most one queued
-+    // tensor per worker. GGUF mappings remain valid until all workers finish.
++    // NodexLM: one long-lived worker per RPC device, each with a bounded
++    // queue of lightweight tensor descriptors (never tensor payload copies).
++    // GGUF mappings remain valid until all workers finish.
 +    // Uploads to different Guests overlap; commands to the same Guest remain
 +    // ordered. No tensor payload is copied into an additional staging buffer.
 +    struct rpc_upload_worker {
@@ -35,7 +37,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +        };
 +        std::mutex mutex;
 +        std::condition_variable wake;
-+        task pending;
++        std::deque<task> pending;
 +        bool stopping = false;
 +        std::exception_ptr failure;
 +        std::thread worker;
@@ -43,12 +45,12 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +        rpc_upload_worker() : worker([this] {
 +            for (;;) {
 +                std::unique_lock<std::mutex> lock(mutex);
-+                wake.wait(lock, [this] { return stopping || pending.tensor != nullptr; });
-+                if (pending.tensor == nullptr && stopping) {
++                wake.wait(lock, [this] { return stopping || !pending.empty(); });
++                if (pending.empty() && stopping) {
 +                    return;
 +                }
-+                const task next = pending;
-+                pending = {};
++                const task next = pending.front();
++                pending.pop_front();
 +                wake.notify_all();
 +                lock.unlock();
 +                try {
@@ -57,7 +59,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +                    lock.lock();
 +                    failure = std::current_exception();
 +                    stopping = true;
-+                    pending = {};
++                    pending.clear();
 +                    wake.notify_all();
 +                    return;
 +                }
@@ -66,14 +68,16 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +
 +        void submit(ggml_tensor * tensor, const void * data, size_t size) {
 +            std::unique_lock<std::mutex> lock(mutex);
-+            wake.wait(lock, [this] { return pending.tensor == nullptr || failure != nullptr; });
++            // Bounded metadata queue: even if layers are grouped by Guest,
++            // the producer can enqueue them before scheduling other Guests.
++            wake.wait(lock, [this] { return pending.size() < 8192 || failure != nullptr; });
 +            if (failure) {
 +                std::rethrow_exception(failure);
 +            }
 +            if (stopping) {
 +                throw std::runtime_error("RPC tensor worker is stopped");
 +            }
-+            pending = {tensor, data, size};
++            pending.push_back({tensor, data, size});
 +            wake.notify_all();
 +        }
 +
@@ -131,7 +135,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
  
      // 4 staging buffers for async uploads, each sized 1MB seems to be a good default for single NVMe drives.
      // NVMe raid configurations might require more / larger buffers.
-@@ -1785,9 +1897,10 @@
+@@ -1785,9 +1898,10 @@
          }
  
          if (progress_callback) {
@@ -145,7 +149,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
          }
  
          size_t n_size = ggml_nbytes(cur);
-@@ -1828,9 +1941,11 @@
+@@ -1828,9 +1942,11 @@
                  mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                  mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
              } else {
@@ -160,7 +164,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
              const auto & file = files.at(weight->idx);
  
              if (ggml_backend_buffer_is_host(cur->buffer)) {
-@@ -1922,10 +2037,12 @@
+@@ -1922,10 +2038,12 @@
              }
          }
  
