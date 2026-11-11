@@ -112,7 +112,14 @@ func (d *Dashboard) chat(w http.ResponseWriter, r *http.Request) {
 		failure(w, 404, errors.New("requested model is not loaded"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	// Distributed prefill/first-token latency can exceed the legacy
+	// 3-minute backend Client.Timeout. Bound the whole request at the
+	// API boundary, retaining prompt cancellation and a finite deadline.
+	limit := 4 * time.Minute
+	if d.Manager.Settings().Distributed {
+		limit = 20 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), limit)
 	defer cancel()
 	if req.Stream {
 		started := false
@@ -140,7 +147,11 @@ func (d *Dashboard) chat(w http.ResponseWriter, r *http.Request) {
 
 	raw, err := d.Manager.Complete(ctx, req)
 	if err != nil {
-		failure(w, 502, err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			failure(w, http.StatusGatewayTimeout, fmt.Errorf("inference exceeded %s; check RPC Guest availability and /api/status rpc_transfer before retrying: %w", limit, err))
+		} else {
+			failure(w, 502, err)
+		}
 		return
 	}
 	if r.URL.Path == "/api/chat" {

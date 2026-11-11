@@ -5,12 +5,14 @@ package local
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
@@ -116,5 +118,33 @@ func TestModelSizeRequiresCompleteShardedGGUF(t *testing.T) {
 	models, err := Models(dir)
 	if err != nil || len(models) != 1 || models[0].Name != "tiny-00001-of-00002.gguf" || models[0].Size != size {
 		t.Fatalf("models=%+v err=%v", models, err)
+	}
+}
+
+// Model inference has a bounded API request context, not a hidden fixed
+// http.Client timeout that can abort slow distributed prefill prematurely.
+func TestEngineUsesRequestDeadlineInsteadOfFixedClientTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Bound the fixture independently of transport cancellation: some Go
+		// versions do not cancel the server-side context until the handler
+		// finishes or the underlying socket is closed.
+		time.Sleep(150 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+			"message": protocol.Message{Role: "assistant", Content: "finished"},
+		}}})
+	}))
+	defer server.Close()
+	engine, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine.HTTP.Timeout != 0 {
+		t.Fatalf("global client deadline must be disabled, got %s", engine.HTTP.Timeout)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	_, err = engine.Complete(ctx, protocol.ChatRequest{Messages: []protocol.Message{{Role: "user", Content: "test"}}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("caller deadline must still abort generation; got %v", err)
 	}
 }

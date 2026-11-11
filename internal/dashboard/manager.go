@@ -471,6 +471,18 @@ func (m *Manager) load(ctx context.Context) error {
 		m.mu.Lock()
 		m.loadRPCNodes = selectedIDs
 		m.mu.Unlock()
+		m.setPhase("verifying_rpc_guests")
+		if err := preflightRPCGuests(ctx, selection.Guests, rpcEndpoints); err != nil {
+			return err
+		}
+		// HELLO and DEVICE_COUNT are not model tensor uploads. Reset the
+		// transfer baseline so the dashboard only shows bytes from actual
+		// model loading, not from the preflight handshake.
+		m.mu.Lock()
+		if m.rpcStatsProvider != nil {
+			m.loadRPCBaseline = m.rpcStatsProvider()
+		}
+		m.mu.Unlock()
 	}
 	m.setPhase("resolving_runtime")
 	var resolved string

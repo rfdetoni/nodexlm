@@ -221,29 +221,38 @@ func (m *Managed) ensure(ctx context.Context) error {
 			return fmt.Errorf("%s exited while loading the model: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 		default:
 		}
-		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+launch.ReadyPath, nil)
-		if err == nil {
+		// Each /health probe has its own short deadline, independent of the
+		// potentially long distributed model load. A hung health response
+		// must not block the startup loop for minutes.
+		ready := func() bool {
+			checkCtx, stopCheck := context.WithTimeout(startup, 5*time.Second)
+			defer stopCheck()
+			req, reqErr := http.NewRequestWithContext(checkCtx, "GET", endpoint.BackendURL+launch.ReadyPath, nil)
+			if reqErr != nil {
+				return false
+			}
 			if launch.APIKey != "" {
 				req.Header.Set("Authorization", "Bearer "+launch.APIKey)
 			}
 			res, requestErr := endpoint.HTTP.Do(req)
-			if requestErr == nil {
-				ready := backendIsReady(EffectiveBackend(m.Backend), res)
-				res.Body.Close()
-				if ready {
-					select {
-					case <-exit.done:
-						return fmt.Errorf("%s exited before becoming ready: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
-					default:
-					}
-					m.started = cmd
-					m.processExit = exit
-					m.endpoint = endpoint
-					slog.Info("Native inference model ready", "backend", EffectiveBackend(m.Backend),
-						"elapsed_seconds", int(time.Since(startedAt).Seconds()), "rpc_guests", len(m.RPCServers))
-					return nil
-				}
+			if requestErr != nil {
+				return false
 			}
+			defer res.Body.Close()
+			return backendIsReady(EffectiveBackend(m.Backend), res)
+		}()
+		if ready {
+			select {
+			case <-exit.done:
+				return fmt.Errorf("%s exited before becoming ready: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
+			default:
+			}
+			m.started = cmd
+			m.processExit = exit
+			m.endpoint = endpoint
+			slog.Info("Native inference model ready", "backend", EffectiveBackend(m.Backend),
+				"elapsed_seconds", int(time.Since(startedAt).Seconds()), "rpc_guests", len(m.RPCServers))
+			return nil
 		}
 		select {
 		case <-exit.done:
