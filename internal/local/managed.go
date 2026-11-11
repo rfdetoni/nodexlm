@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"log/slog"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -175,7 +176,13 @@ func (m *Managed) ensure(ctx context.Context) error {
 		return err
 	}
 	cmd := exec.Command(launch.Binary, launch.Args...)
-	cmd.Env = append(os.Environ(), launch.Env...)
+	// Bundled llama.cpp binaries load libggml.so from their own directory.
+	// Without this, startup may fail even when the --help RPC probe passed.
+	if EffectiveBackend(m.Backend) == BackendLlama {
+		cmd.Env = append(llamaruntime.NativeEnvironment(launch.Binary), launch.Env...)
+	} else {
+		cmd.Env = append(os.Environ(), launch.Env...)
+	}
 	process.KillWithParent(cmd)
 	cmd.Stdout = io.Discard
 	stderr := &nativeLogTail{}
@@ -183,6 +190,9 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to launch %s: %w", EffectiveBackend(m.Backend), err)
 	}
+	slog.Info("Native inference process started", "backend", EffectiveBackend(m.Backend),
+		"pid", cmd.Process.Pid, "rpc_guests", len(m.RPCServers), "model", filepath.Base(m.ModelPath))
+	startedAt := time.Now()
 	exit := &nativeProcessExit{done: make(chan struct{})}
 	go func() {
 		exit.err = cmd.Wait()
@@ -225,6 +235,8 @@ func (m *Managed) ensure(ctx context.Context) error {
 					m.started = cmd
 					m.processExit = exit
 					m.endpoint = endpoint
+					slog.Info("Native inference model ready", "backend", EffectiveBackend(m.Backend),
+						"elapsed_seconds", int(time.Since(startedAt).Seconds()), "rpc_guests", len(m.RPCServers))
 					return nil
 				}
 			}

@@ -24,7 +24,9 @@ func applyRPCPatch(ctx context.Context, source string) error {
 func SupportsUnixRPC(ctx context.Context, binary string) bool {
 	check, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, _ := exec.CommandContext(check, binary, "--help").CombinedOutput()
+	cmd := exec.CommandContext(check, binary, "--help")
+	cmd.Env = NativeEnvironment(binary)
+	out, _ := cmd.CombinedOutput()
 	return bytes.Contains(out, []byte("unix:/")) || bytes.Contains(out, []byte("--socket PATH"))
 }
 func UnixRPCBundles() bool { return revision.UnixRPC }

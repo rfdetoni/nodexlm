@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"log/slog"
 	"runtime"
 	"strings"
 	"time"
@@ -319,13 +320,7 @@ func SupportsRPC(ctx context.Context, server string) bool {
 	testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(testCtx, server, "--help")
-	if runtime.GOOS == "linux" {
-		p := filepath.Dir(server)
-		if prev := os.Getenv("LD_LIBRARY_PATH"); prev != "" {
-			p += string(os.PathListSeparator) + prev
-		}
-		cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+p)
-	}
+	cmd.Env = NativeEnvironment(server)
 	out, err := cmd.CombinedOutput()
 	// llama-server commonly prints help to stderr and exits 0 or 1.
 	return (err == nil || len(out) > 0) && strings.Contains(string(out), "--rpc")
