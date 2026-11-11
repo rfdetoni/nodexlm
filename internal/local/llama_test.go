@@ -125,7 +125,13 @@ func TestModelSizeRequiresCompleteShardedGGUF(t *testing.T) {
 // http.Client timeout that can abort slow distributed prefill prematurely.
 func TestEngineUsesRequestDeadlineInsteadOfFixedClientTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+		// Bound the fixture independently of transport cancellation: some Go
+		// versions do not cancel the server-side context until the handler
+		// finishes or the underlying socket is closed.
+		time.Sleep(150 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+			"message": protocol.Message{Role: "assistant", Content: "finished"},
+		}}})
 	}))
 	defer server.Close()
 	engine, err := New(server.URL)
