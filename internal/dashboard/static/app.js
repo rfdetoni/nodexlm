@@ -183,9 +183,11 @@ function renderLoadStatus(status){
   const sent=channels.reduce((sum,[,node])=>sum+(Number(node.to_guest_bytes)||0),0);
   const last=Math.max(0,...channels.map(([,node])=>Number(node.last_activity_ms)||0));
   const idleFor=last>0?Math.max(0,Math.floor((Date.now()-last)/1000)):null;
-  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados aos Guests selecionados durante este carregamento.'));
+  const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
+  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados aos Guests selecionados durante este carregamento · média '+(sent/1048576/seconds).toFixed(2)+' MiB/s.'));
   for(const [id,node] of channels){
-   box.append(el('p','rpc-node-transfer',id.slice(0,12)+'… · '+fmt(Number(node.to_guest_bytes)||0)+' enviados · '+(Number(node.connected)||0)+' túneis, '+(Number(node.idle)||0)+' livres'));
+   const bytes=Number(node.to_guest_bytes)||0;
+    box.append(el('p','rpc-node-transfer',id.slice(0,12)+'… · '+fmt(bytes)+' enviados · '+(bytes/1048576/seconds).toFixed(2)+' MiB/s médios · '+(Number(node.connected)||0)+' túneis, '+(Number(node.idle)||0)+' livres'));
   }
   if(runtime.phase==='loading_model' && Number(runtime.phase_elapsed_seconds)>120 && (last===0 || idleFor>120)){
    box.append(el('p','rpc-stall-warning','Sem transferência RPC recente há mais de 2 min. Verifique os túneis e logs nativos do Host/Guest; cancele se estiver travado.'));
