@@ -20,6 +20,10 @@ const {chromium} = require('playwright');
     await page.locator('#secret').fill(token);
     await page.locator('#login button').click();
     await page.locator('#app').waitFor({state: 'visible'});
+    // The desktop and mobile consoles use separate, hidden workspaces.
+    // A field existing in the DOM does not make it visible to Playwright.
+    await page.locator('#nav-chat').click();
+    await page.locator('#view-chat').waitFor({state: 'visible'});
     await page.waitForFunction(() => document.querySelector('#chatModel').options.length > 0);
     await page.locator('#chatTokens').fill('8');
     for (const prompt of ['Once upon a time', 'Then the little bird']) {
@@ -30,12 +34,20 @@ const {chromium} = require('playwright');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('nodexlm-chat')).length), 4);
     await page.reload();
     await page.locator('#app').waitFor({state: 'visible'});
+    await page.locator('#nav-chat').click();
+    await page.locator('#view-chat').waitFor({state: 'visible'});
     await page.locator('#chatOutput').getByText('Then the little bird', {exact:true}).waitFor();
+    await page.locator('#nav-inference').click();
+    await page.locator('#view-inference').waitFor({state: 'visible'});
     await page.locator('#previewPlan').click();
     await page.locator('#planOutput').getByText('KV F16 estimado:', {exact: false}).waitFor();
+    await page.locator('#nav-observability').click();
+    await page.locator('#view-observability').waitFor({state: 'visible'});
     await page.locator('#refreshObservations').click();
     await page.locator('#observations').getByText('tokens/s', {exact: false}).first().waitFor();
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('nodexlm-chat')).length), 4);
+    await page.locator('#nav-chat').click();
+    await page.locator('#view-chat').waitFor({state: 'visible'});
     await page.locator('#clearChat').click();
     await page.locator('#confirmation button[value="cancel"]').click();
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('nodexlm-chat')).length), 4);
