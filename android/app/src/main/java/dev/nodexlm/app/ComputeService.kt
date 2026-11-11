@@ -98,6 +98,7 @@ class ComputeService : Service() {
             val token=NodeSecrets.read(this)
             if (id.isEmpty()||token.isEmpty()) error("Device not paired; enter the host's pairing code in the app first")
             var loaded=false
+            val cpuSampler = CpuUsageSampler()
             var lastInference=android.os.SystemClock.elapsedRealtime()
             while(running.get()) {
                 try {
@@ -105,6 +106,8 @@ class ComputeService : Service() {
                     (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
                     val payload=JSONObject().put("models",JSONArray().put(prefs.getString("model","model.gguf")))
                         .put("ram_bytes",memory.totalMem).put("available_ram_bytes",memory.availMem)
+                        .put("ram_used_bytes",(memory.totalMem-memory.availMem).coerceAtLeast(0L))
+                    cpuSampler.sample()?.let { payload.put("cpu_usage_percent", it) }
                     val job=request(coordinator+"/v1/nodes/lease",token,id,payload)
                     if(job.length()==0) {
                         if(loaded && android.os.SystemClock.elapsedRealtime()-lastInference>120_000L) {

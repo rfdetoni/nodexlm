@@ -43,6 +43,22 @@ vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
 async function main(){
+  // Telemetry must never turn an unknown CPU/GPU counter into a claimed idle reading.
+  const device = {
+    id:'guest-1',name:'Guest Linux',platform:'linux',status:'online',
+    last_seen:new Date().toISOString(),
+    cpu_usage_percent:0,ram_bytes:1000,ram_used_bytes:500,
+    gpus:[{name:'AMD GPU',vram_bytes:1000,vram_used_bytes:250}]
+  };
+  vm.runInContext('renderNodeResources('+JSON.stringify([device])+')',sandbox);
+  let resourceCard=get('nodeResourceCards').children[0];
+  assert.ok(resourceCard.textContent.includes('0.0%'),'measured idle CPU should be rendered as 0%');
+  assert.ok(resourceCard.textContent.includes('Indisponível'),'missing GPU busy must not be invented');
+  const offline={...device,status:'offline'};
+  vm.runInContext('renderNodeResources('+JSON.stringify([offline])+')',sandbox);
+  resourceCard=get('nodeResourceCards').children[0];
+  assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
+  assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
   assert.equal(get('view-overview').hidden,false,'overview should be visible at startup');
   assert.equal(get('view-models').hidden,true,'secondary workspaces should be hidden');
   get('overviewPrompt').value='Explain Q4 quantization';

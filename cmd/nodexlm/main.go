@@ -977,7 +977,7 @@ func rpcNode(args []string) error {
 	// Report immediately, before the first RPC tunnel begins serving layers.
 	heartbeat()
 	go func() {
-		tick := time.NewTicker(30 * time.Second)
+		tick := time.NewTicker(15 * time.Second)
 		defer tick.Stop()
 		for {
 			select {
