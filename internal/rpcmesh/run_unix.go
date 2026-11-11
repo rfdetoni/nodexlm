@@ -77,7 +77,9 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 				} else if err == nil {
 					delay = time.Second
 				}
-				if runCtx.Err() != nil { return }
+				if runCtx.Err() != nil {
+					return
+				}
 				select {
 				case <-runCtx.Done():
 					return
@@ -85,7 +87,9 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 				}
 				if err != nil && delay < 10*time.Second {
 					delay *= 2
-					if delay > 10*time.Second { delay = 10*time.Second }
+					if delay > 10*time.Second {
+						delay = 10 * time.Second
+					}
 				}
 			}
 		}()

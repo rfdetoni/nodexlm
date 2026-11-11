@@ -133,6 +133,7 @@ func (m *Manager) SetRPCProvider(provider func() []RPCGuest) {
 	defer m.mu.Unlock()
 	m.rpcEndpoints = provider
 }
+
 // SetRPCStatsProvider exposes only local relay counters, never RPC payloads.
 func (m *Manager) SetRPCStatsProvider(provider func() map[string]rpcmesh.TunnelStats) {
 	m.mu.Lock()
@@ -160,13 +161,19 @@ func (m *Manager) State() map[string]any {
 			for _, id := range m.loadRPCNodes {
 				now, baseline := current[id], m.loadRPCBaseline[id]
 				sent, received := uint64(0), uint64(0)
-				if now.BytesToGuest >= baseline.BytesToGuest { sent = now.BytesToGuest - baseline.BytesToGuest }
-				if now.BytesFromGuest >= baseline.BytesFromGuest { received = now.BytesFromGuest - baseline.BytesFromGuest }
+				if now.BytesToGuest >= baseline.BytesToGuest {
+					sent = now.BytesToGuest - baseline.BytesToGuest
+				}
+				if now.BytesFromGuest >= baseline.BytesFromGuest {
+					received = now.BytesFromGuest - baseline.BytesFromGuest
+				}
 				last := now.LastActivityMS
-				if last < m.loadStartedAt.UnixMilli() { last = 0 }
-				nodes[id] = map[string]any{"to_guest_bytes":sent,"from_guest_bytes":received,
-					"connected":now.Connected,"idle":now.Idle,"last_activity_ms":last,
-					"wait_timeouts":now.WaitTimeouts-min(now.WaitTimeouts,baseline.WaitTimeouts)}
+				if last < m.loadStartedAt.UnixMilli() {
+					last = 0
+				}
+				nodes[id] = map[string]any{"to_guest_bytes": sent, "from_guest_bytes": received,
+					"connected": now.Connected, "idle": now.Idle, "last_activity_ms": last,
+					"wait_timeouts": now.WaitTimeouts - min(now.WaitTimeouts, baseline.WaitTimeouts)}
 			}
 			state["rpc_transfer"] = nodes
 		}

@@ -562,10 +562,10 @@ func (s *Server) Cleanup(ctx context.Context) {
 
 // RPCEndpoints returns the loopback-only RPC endpoints whose Guests have
 // active authenticated connections. Each endpoint represents one remote node.
-func (s *Server) RPCEndpoints() []string      { return s.rpcHub.Endpoints() }
-func (s *Server) RPCNodes() map[string]string { return s.rpcHub.ReadyNodes() }
+func (s *Server) RPCEndpoints() []string                   { return s.rpcHub.Endpoints() }
+func (s *Server) RPCNodes() map[string]string              { return s.rpcHub.ReadyNodes() }
 func (s *Server) RPCStats() map[string]rpcmesh.TunnelStats { return s.rpcHub.Stats() }
-func (s *Server) CloseRPC()                   { s.rpcHub.Close() }
+func (s *Server) CloseRPC()                                { s.rpcHub.Close() }
 func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 	_, id := s.identify(r)
 	if id == "" {

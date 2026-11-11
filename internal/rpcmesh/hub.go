@@ -29,19 +29,19 @@ type idleTunnel struct {
 }
 
 type relay struct {
-	listener  net.Listener
-	waiting   []*idleTunnel
-	ready     chan struct{}
-	closed    chan struct{}
-	mu        sync.Mutex
-	available int
-	accepted  uint64
-	rejected  uint64
-	timeouts  uint64
+	listener       net.Listener
+	waiting        []*idleTunnel
+	ready          chan struct{}
+	closed         chan struct{}
+	mu             sync.Mutex
+	available      int
+	accepted       uint64
+	rejected       uint64
+	timeouts       uint64
 	bytesToGuest   uint64
 	bytesFromGuest uint64
 	lastActivityMS int64
-	peers     map[net.Conn]struct{}
+	peers          map[net.Conn]struct{}
 }
 
 type Hub struct {
@@ -313,9 +313,10 @@ var rpcCopyBuffers = sync.Pool{
 // counts). The lock is per buffered write rather than per RPC byte.
 type relayWriter struct {
 	io.Writer
-	relay *relay
+	relay   *relay
 	toGuest bool
 }
+
 func (w relayWriter) Write(p []byte) (int, error) {
 	n, err := w.Writer.Write(p)
 	if n > 0 {
