@@ -3,6 +3,7 @@
 package dev.nodexlm.app
 
 import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -120,6 +121,7 @@ class RpcGuestService : Service() {
         }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
+                logPreviousLowMemoryExit()
                 val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
                 val requestedThreads = energy.getInt("rpc_threads", 0)
                 val threads = if (requestedThreads == 0) (cores - 1).coerceIn(1, 6)
@@ -194,6 +196,22 @@ class RpcGuestService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun logPreviousLowMemoryExit() {
+        if (Build.VERSION.SDK_INT < 30) return
+        try {
+            val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            val previous = manager.getHistoricalProcessExitReasons(packageName, 0, 8)
+                .filter { it.processName == "$packageName:rpc" }
+                .maxByOrNull { it.timestamp }
+            if (previous?.reason == ApplicationExitInfo.REASON_LOW_MEMORY) {
+                Log.w(LOG, "Previous RPC process terminated by Android low-memory killer; " +
+                    "timestamp_ms=${previous.timestamp}. Reduce Guest RAM contribution.")
+            }
+        } catch (e: RuntimeException) {
+            Log.w(LOG, "Prior native process exit information unavailable", e)
+        }
     }
 
     private fun createNotification() {
