@@ -869,13 +869,15 @@ func localChat(args []string) error {
 	case local.BackendLlama:
 		var resolveErr error
 		resolved, resolveErr = llamaruntime.AutoExecutable(context.Background(), config.DefaultDir(), *bin)
-		if resolveErr != nil {return resolveErr}
+		if resolveErr != nil {
+			return resolveErr
+		}
 	case local.BackendMistralRS:
 		resolved = *mistralBin
 	default:
-		return fmt.Errorf("unknown inference engine: %s",*engineName)
+		return fmt.Errorf("unknown inference engine: %s", *engineName)
 	}
-	engine := &local.Managed{Backend:*engineName, Binary: resolved, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 	defer engine.Close()
 	c, cancel := ctx()
 	defer cancel()
