@@ -92,6 +92,19 @@ async function main(){
   vm.runInContext('renderLoadStatus('+JSON.stringify(transferring)+')',sandbox);
   assert.ok(get('loadingStatus').textContent.includes('RPC real'),
     'measured bytes must appear independently of planned layer count');
+  assert.ok(get('loadingStatus').textContent.includes('MiB/s'),
+    'real transfer rate must be exposed separately from planned layers');
+  get('chatEffort').value='none';
+  get('chatThinkingBudget').value='500';
+  get('chatEffort').handlers.change();
+  assert.equal(get('chatThinkingBudget').disabled,true,
+    'thinking budget must be disabled when reasoning is off');
+  assert.equal(get('chatThinkingBudget').value,'0',
+    'disabled thinking must clear any old budget');
+  get('chatEffort').value='high';
+  get('chatEffort').handlers.change();
+  assert.equal(get('chatThinkingBudget').disabled,false,
+    'reasoning budget must be editable for thinking-capable models');
   assert.ok(!get('loadingStatus').textContent.includes('Sem transferência RPC recente'),
     'active transfer should not warn about a stall');
   // The pairing code is not an admin session token. Its TTL comes from the Host.
