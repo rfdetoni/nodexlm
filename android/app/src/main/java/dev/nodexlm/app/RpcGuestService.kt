@@ -29,6 +29,9 @@ import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.util.Collections
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
@@ -59,7 +62,11 @@ class RpcGuestService : Service() {
     private lateinit var rpcSocket: String
     private val localSockets = Collections.synchronizedSet(mutableSetOf<android.net.LocalSocket>())
     private lateinit var energyPolicy: EnergyPolicy
-    private val reconnectFailures=java.util.concurrent.atomic.AtomicLong()
+    private val reconnectFailures=AtomicLong()
+    // A single shared daemon handles diagnostics for claimed (not idle) tunnels.
+    private val diagnostics = ScheduledThreadPoolExecutor(1) { task ->
+        Thread(task, "nodexlm-rpc-watchdog").apply { isDaemon = true }
+    }.apply { removeOnCancelPolicy = true }
     private val running = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
     private val cpuSampler = CpuUsageSampler()
@@ -119,6 +126,7 @@ class RpcGuestService : Service() {
                 val message = NativeRpc.start(threads, mode, rpcSocket)
                 check(message.isEmpty()) { message }
                 awaitNativeRPC()
+                Log.i(LOG, "Native GGML RPC socket ready; mode=$mode, threads=$threads")
                 val sslContext = pinnedSSLContext()
                 // Share measured Vulkan heap counters; on mobile GPUs memory can
                 // be shared with RAM and must never be counted twice by the Host.
@@ -135,7 +143,7 @@ class RpcGuestService : Service() {
                         while (running.get()) {
                             var failed = false
                             try {
-                                connectAndRelay(host, port, node, token, sslContext)
+                                connectAndRelay(slot, host, port, node, token, sslContext)
                                 backoff = 1000L
                             } catch (e: Exception) {
                                 failed = true
@@ -322,7 +330,7 @@ class RpcGuestService : Service() {
         error("Oversized CONNECT response")
     }
 
-    private fun connectAndRelay(host: String, port: Int, node: String,
+    private fun connectAndRelay(slot: Int, host: String, port: Int, node: String,
                                 token: String, ssl: SSLContext) {
         // Keep the concrete SSLSocket type: the generic socket tracker returns
         // Socket and would erase SSL parameters/handshake APIs at compile time.
@@ -385,27 +393,80 @@ class RpcGuestService : Service() {
                 return
             }
             check(marker == 1) { "Missing Host RPC relay marker" }
+            Log.i(LOG, "RPC tunnel $slot claimed by Host; opening private native RPC socket")
             val local = android.net.LocalSocket()
             localSockets.add(local)
             try {
                 local.connect(android.net.LocalSocketAddress(rpcSocket,android.net.LocalSocketAddress.Namespace.FILESYSTEM))
-                // The two copy loops do not parse or modify the llama.cpp RPC
-                // protocol. The TLS session is pinned to the previously paired Host.
-                val sender = thread(name = "nodexlm-rpc-stream-up", isDaemon = true) {
-                    try { local.getInputStream().copyTo(remote.outputStream) }
-                    catch (_: Exception) { }
-                    finally { try { remote.close() } catch (_: Exception) {} }
-                }
-                try { remote.inputStream.copyTo(local.getOutputStream()) }
-                catch (_: Exception) { }
-                finally {
-                    try { local.close() } catch (_: Exception) {}
-                    try { remote.close() } catch (_: Exception) {}
-                    sender.join(1000)
+                Log.i(LOG, "RPC tunnel $slot connected to native GGML RPC server")
+                val toNative = AtomicLong(0)
+                val fromNative = AtomicLong(0)
+                val activatedAt = android.os.SystemClock.elapsedRealtime()
+                // This timer observes only claimed RPC sessions. It never blocks,
+                // disconnects, or retries a legitimate slow model initialization.
+                // Report the actual first request/response bytes so a stuck HELLO
+                // can be distinguished from TLS CONNECT and an idle tunnel.
+                val watchdog = diagnostics.scheduleAtFixedRate({
+                    val sent = toNative.get()
+                    val received = fromNative.get()
+                    if (running.get() && sent > 0L && received == 0L) {
+                        Log.w(LOG, "RPC tunnel $slot: native server has not replied " +
+                            "after ${(android.os.SystemClock.elapsedRealtime() - activatedAt) / 1000}s; " +
+                            "host_to_native_bytes=$sent, native_to_host_bytes=$received")
+                    }
+                }, 20L, 30L, TimeUnit.SECONDS)
+                try {
+                    val sender = thread(name = "nodexlm-rpc-stream-up-$slot", isDaemon = true) {
+                        try {
+                            val input = local.getInputStream()
+                            val output = remote.outputStream
+                            val buffer = ByteArray(32 * 1024)
+                            while (running.get()) {
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                if (n == 0) continue
+                                output.write(buffer, 0, n)
+                                if (fromNative.getAndAdd(n.toLong()) == 0L) {
+                                    Log.i(LOG, "RPC tunnel $slot received first native response ($n bytes)")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            if (running.get()) Log.w(LOG, "RPC tunnel $slot native->Host relay failed", e)
+                        } finally {
+                            try { remote.close() } catch (_: Exception) { }
+                        }
+                    }
+                    try {
+                        val input = remote.inputStream
+                        val output = local.getOutputStream()
+                        val buffer = ByteArray(32 * 1024)
+                        while (running.get()) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            if (n == 0) continue
+                            output.write(buffer, 0, n)
+                            if (toNative.getAndAdd(n.toLong()) == 0L) {
+                                Log.i(LOG, "RPC tunnel $slot delivered first Host request to native server ($n bytes)")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (running.get()) Log.w(LOG, "RPC tunnel $slot Host->native relay failed", e)
+                    } finally {
+                        try { local.close() } catch (_: Exception) { }
+                        try { remote.close() } catch (_: Exception) { }
+                        sender.join(1000)
+                    }
+                } finally {
+                    watchdog.cancel(false)
+                    val sent = toNative.get()
+                    val received = fromNative.get()
+                    if (sent > 0L || received > 0L) {
+                        Log.i(LOG, "RPC tunnel $slot closed; host_to_native_bytes=$sent, native_to_host_bytes=$received")
+                    }
                 }
             } finally {
                 localSockets.remove(local)
-                try { local.close() } catch (_: Exception) {}
+                try { local.close() } catch (_: Exception) { }
             }
         } finally {
             sockets.remove(remote)
@@ -415,6 +476,7 @@ class RpcGuestService : Service() {
 
     private fun shutdown() {
         if (!stopping.compareAndSet(false, true)) return
+        diagnostics.shutdownNow()
         running.set(false)
         synchronized(localSockets){localSockets.forEach {try{it.close()}catch(_:Exception){}};localSockets.clear()}
         synchronized(sockets) {

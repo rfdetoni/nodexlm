@@ -210,3 +210,36 @@ Guest nativo travado ou falha no transporte. Não infira a causa apenas pela
 quantidade de bytes. Reproduza com **um Guest por vez** e compare os logs
 em ambos os lados. O `llama-server` agora preserva tanto stdout quanto
 stderr no arquivo de debug do Host, em vez de descartar stdout.
+
+
+## Android: Host encaminha 33 bytes ao Guest, sem resposta nativa
+
+Quando um Android aparece em `rpc_transfer` com `to_guest_bytes` pequeno,
+`from_guest_bytes=0` e uma conexão ocupada, isso significa que houve
+uma tentativa de RPC, **não** que os pesos foram distribuídos. O diagnóstico
+Android distingue o início do túnel do recebimento de uma resposta do GGML:
+
+- `RPC tunnel N claimed by Host`: o Host selecionou a sessão TLS
+- `RPC tunnel N connected to native GGML RPC server`: o aplicativo alcançou o socket Unix privado
+- `RPC tunnel N delivered first Host request`: o primeiro pedido chegou ao socket local
+- `RPC tunnel N received first native response`: o GGML respondeu pela primeira vez
+- `native server has not replied after ...`: houve pedido sem resposta após 20s; apenas alerta, sem encerramento automático
+
+Conecte o celular ao computador com depuração USB autorizada:
+
+```sh
+adb devices
+adb logcat -v time -s NodexLM-RpcGuest:V NodexLM-RPC:V AndroidRuntime:E
+```
+
+Inicie o Guest RPC na aba **Cluster** e tente um carregamento do Host.
+Para testar o Redmi 9 ou outro aparelho com Vulkan instável, troque
+temporariamente o backend do Android para **Somente CPU**, pare e reinicie
+o Guest RPC antes de repetir. A seleção `Auto` pode habilitar simultaneamente
+CPU e Vulkan; os logs devem indicar se o problema é conexão TLS, socket
+Unix ou ausência de resposta do servidor nativo.
+
+A versão exibida em `runtime.version` é a revisão de llama.cpp (`b12255`),
+não o número do APK. Confirme que o APK instalado é realmente o build
+atualizado, pois duas versões distintas do NodexLM podem anunciar a mesma
+revisão de runtime.
