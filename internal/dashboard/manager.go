@@ -30,6 +30,7 @@ import (
 // Settings are persisted independently of the UI. The model weights live only
 // in the llama-server child process and can be unloaded without stopping NodexLM.
 type Settings struct {
+	Backend string `json:"backend,omitempty"`
 	Model             string `json:"model"`
 	Threads           int    `json:"threads"`
 	ContextTokens     int    `json:"context_tokens"`
@@ -137,7 +138,7 @@ func (m *Manager) State() map[string]any {
 	if phase == "" {
 		phase = "idle"
 	}
-	state := map[string]any{"model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
+	state := map[string]any{"backend":local.EffectiveBackend(m.settings.Backend),"model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
 	if m.loading {
 		state["started_at"] = m.loadStartedAt.UTC().Format(time.RFC3339)
 		state["elapsed_seconds"] = int(time.Since(m.loadStartedAt).Seconds())
@@ -155,6 +156,13 @@ func (m *Manager) DownloadState() *Download {
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
+	backend:=local.EffectiveBackend(s.Backend)
+	if backend!=local.BackendLlama && backend!=local.BackendMistralRS {
+		return errors.New("unsupported backend; select llama.cpp or mistralrs")
+	}
+	if backend==local.BackendMistralRS && s.Distributed {
+		return errors.New("mistral.rs cannot distribute GGUF over NodexLM RPC Guests; select llama.cpp for distributed inference")
+	}
 	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 || (s.PlacementStrategy != "" && s.PlacementStrategy != "capacity" && s.PlacementStrategy != "speed") {
 		return errors.New("invalid runtime limits or conflicting MoE settings")
 	}
@@ -214,7 +222,7 @@ func (m *Manager) Update(s Settings) error {
 	// Benchmarks are only comparable when the native inference configuration
 	// is unchanged. Do not allow stale tokens/s to drive placement decisions.
 	old := m.settings
-	if old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
+	if old.Backend!=s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
 		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
 		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB ||
 		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
@@ -402,7 +410,10 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 	}
 	var resolved string
-	if s.Distributed && (m.binary == "" || m.binary == "llama-server") {
+	if local.EffectiveBackend(s.Backend)==local.BackendMistralRS {
+		// This opt-in backend is separately resolved by local.Managed.
+		resolved=""
+	} else if s.Distributed && (m.binary == "" || m.binary == "llama-server") {
 		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, "auto")
 	} else {
 		resolved, err = llamaruntime.AutoExecutable(ctx, m.dir, m.binary)
@@ -418,7 +429,7 @@ func (m *Manager) load(ctx context.Context) error {
 		return err
 	}
 	m.setPhase("loading_model")
-	engine := &local.Managed{Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType, BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
+	engine := &local.Managed{Backend:s.Backend, Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType, BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
 	if s.Distributed {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers

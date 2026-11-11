@@ -81,7 +81,7 @@ function setDraftModels(items, chosen){
  select.value=items.some(m=>m.name===chosen)?chosen:'';
 }
 function settingsFromForm(model) {
- return {model, threads:+$('threads').value, context_tokens:+$('contextTokens').value,
+ return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, context_tokens:+$('contextTokens').value,
   gpu_layers:$('gpuLayers').value, moe_cpu:$('moeCPU').checked,
   distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
   moe_cache_mib:+$('moeCache').value, flash_attention:$('flashAttention').value,
@@ -356,6 +356,7 @@ async function refresh(){
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
   for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib})) $(id).value=v;
+  $('runtimeBackend').value=s.backend||'llama.cpp';
   $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'capacity'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
  }
  renderLocalModels(models,status);renderCatalog();
@@ -428,6 +429,15 @@ $('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').va
 $('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
+function configureBackendUI(){
+ const other=$('runtimeBackend').value==='mistralrs';
+ $('distributed').disabled=other;
+ if(other && $('distributed').checked){
+  $('distributed').checked=false;
+  notice('mistral.rs experimental usa apenas o Host; Guests RPC permanecem no llama.cpp.');
+ }
+}
+$('runtimeBackend').addEventListener('change',configureBackendUI);
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',settingsFromForm($('modelSelect').value));notice('Configuração salva');settingsInitialized=false;await refresh()})});
 $('load').addEventListener('click',()=>guard(async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
 $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
