@@ -180,6 +180,7 @@ func validDevice(d protocol.Device) bool {
 		len(d.Architecture) > 100 || len(d.Models) > 128 ||
 		len(d.GPUs) > 16 || d.CPUCount < 1 || d.CPUCount > 4096 ||
 		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
+		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
 		!validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
 		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 {
 		return false
@@ -191,6 +192,7 @@ func validDevice(d protocol.Device) bool {
 	}
 	for _, gpu := range d.GPUs {
 		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+			(gpu.MemoryType != "" && gpu.MemoryType != "shared" && gpu.MemoryType != "dedicated" && gpu.MemoryType != "unknown") ||
 			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes ||
 			!validUsage(gpu.UsagePercent) || (gpu.VRAMUsedBytes != nil && *gpu.VRAMUsedBytes > gpu.VRAMBytes) {
 			return false
@@ -256,6 +258,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Models) > 128 || len(req.GPUs) > 16 ||
 		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
+		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
 		!validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
 		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 {
 		fail(w, 400, "invalid node resources")
@@ -269,6 +272,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, gpu := range req.GPUs {
 		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+			(gpu.MemoryType != "" && gpu.MemoryType != "shared" && gpu.MemoryType != "dedicated" && gpu.MemoryType != "unknown") ||
 			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes ||
 			!validUsage(gpu.UsagePercent) || (gpu.VRAMUsedBytes != nil && *gpu.VRAMUsedBytes > gpu.VRAMBytes) {
 			fail(w, 400, "invalid GPU resource report")
@@ -298,6 +302,8 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		if req.RAMBytes > 0 && req.RAMBytes < 1<<50 && req.AvailableRAMBytes <= req.RAMBytes {
 			n.device.RAMBytes = req.RAMBytes
 			n.device.AvailableRAMBytes = req.AvailableRAMBytes
+			n.device.MaxContributionBytes = req.MaxContributionBytes
+			n.device.MemoryReserveBytes = req.MemoryReserveBytes
 		}
 		if req.GPUs != nil {
 			valid := true
