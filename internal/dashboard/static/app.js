@@ -358,6 +358,7 @@ async function refresh(){
   for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib})) $(id).value=v;
   $('runtimeBackend').value=s.backend||'llama.cpp';
   $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'capacity'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
+  configureBackendUI();
  }
  renderLocalModels(models,status);renderCatalog();
  const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
