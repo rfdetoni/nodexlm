@@ -363,7 +363,7 @@ func (h *Hub) Endpoints() []string {
 	defer h.mu.Unlock()
 	out := []string{}
 	for _, r := range h.nodes {
-		if r.idleCount() > 0 {
+		if r.count() > 0 {
 			out = append(out, relayAddress(r.listener))
 		}
 	}
@@ -371,6 +371,19 @@ func (h *Hub) Endpoints() []string {
 	return out
 }
 func (h *Hub) ReadyNodes() map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := map[string]string{}
+	for id, r := range h.nodes {
+		if r.count() > 0 {
+			out[id] = relayAddress(r.listener)
+		}
+	}
+	return out
+}
+// IdleNodes is used to admit NEW model loads. Busy Guests remain connected
+// but should not be selected for another load without an available RPC tunnel.
+func (h *Hub) IdleNodes() map[string]string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := map[string]string{}

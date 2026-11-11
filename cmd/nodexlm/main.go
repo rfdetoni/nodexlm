@@ -285,7 +285,7 @@ func serve(args []string) error {
 		defer manager.Close()
 		manager.SetRPCStatsProvider(s.RPCStats)
 		manager.SetRPCProvider(func() []dashboard.RPCGuest {
-			ready := s.RPCNodes()
+			ready := s.RPCIdleNodes()
 			profiles := s.DevicesSnapshot()
 			out := make([]dashboard.RPCGuest, 0, len(ready))
 			for _, profile := range profiles {
