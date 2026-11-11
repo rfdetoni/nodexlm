@@ -118,7 +118,10 @@ class RpcGuestService : Service() {
         }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
-                val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
+                val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+                val requestedThreads = energy.getInt("rpc_threads", 0)
+                val threads = if (requestedThreads == 0) (cores - 1).coerceIn(1, 6)
+                              else requestedThreads.coerceIn(1, minOf(16, cores))
                 checkThermalsAndBattery()
                 val socketFile=File(filesDir,"rpc.sock")
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
