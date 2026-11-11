@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package clusterplan
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/protocol"
+)
 
 func TestLocalLayerPlacement(t *testing.T) {
 	const gib = uint64(1 << 30)
@@ -26,5 +31,59 @@ func TestLocalLayerPlacement(t *testing.T) {
 				t.Fatalf("got=%d err=%v; want=%d fail=%v", got, err, tt.want, tt.fail)
 			}
 		})
+	}
+}
+
+func TestBudgetHonorsMobileSharedMemoryAndUserLimits(t *testing.T) {
+	shared := protocol.Device{
+		Platform: "android", RAMBytes: 8 * GiB, AvailableRAMBytes: 2 * GiB,
+		GPUs: []protocol.GPUDevice{{MemoryType: "shared", VRAMBytes: 6 * GiB, FreeVRAMBytes: 5 * GiB}},
+	}
+	const want = 4 * GiB / 5 // 80% after reserving 1 GiB
+	if got := Budget(shared); got != want {
+		t.Fatalf("shared GPU inflated physical RAM: got %d, want %d", got, want)
+	}
+	shared.GPUs[0].MemoryType = "" // Older Android clients are still shared.
+	if got := Budget(shared); got != want {
+		t.Fatalf("legacy mobile GPU overcommit: %d", got)
+	}
+	shared.MaxContributionBytes = 512 * MiB
+	if got := Budget(shared); got != 512*MiB {
+		t.Fatalf("user memory cap ignored: %d", got)
+	}
+	shared.MemoryReserveBytes = 2 * GiB
+	if got := Budget(shared); got != 0 {
+		t.Fatalf("OS reserve ignored: %d", got)
+	}
+	shared.MemoryReserveBytes = 0
+	shared.MaxContributionBytes = 0
+	shared.AvailableRAMBytes = 0 // Never infer shared VRAM from absent physical data.
+	if got := Budget(shared); got != 0 {
+		t.Fatalf("unknown physical availability accepted: %d", got)
+	}
+}
+
+func TestBudgetDedicatedGPUAndUnknownLegacy(t *testing.T) {
+	d := protocol.Device{Platform: "linux", RAMBytes: 8 * GiB, AvailableRAMBytes: 2 * GiB,
+		GPUs: []protocol.GPUDevice{{VRAMBytes: 6 * GiB, FreeVRAMBytes: 5 * GiB, MemoryType: "dedicated"}}}
+	if got := Budget(d); got != 16*GiB/5 {
+		t.Fatalf("dedicated GPU not recognized: %d", got)
+	}
+	d.GPUs[0].MemoryType = ""
+	if got := Budget(d); got != 4*GiB/5 {
+		t.Fatalf("unknown GPU memory was assumed dedicated: %d", got)
+	}
+}
+
+func TestAggregateDoesNotSumSharedGPUHeaps(t *testing.T) {
+	d := protocol.Device{ID: "android", Name: "phone", Platform: "android", RAMBytes: 8 * GiB,
+		AvailableRAMBytes: 2 * GiB, LastSeen: time.Now(), Status: "online",
+		GPUs: []protocol.GPUDevice{
+			{MemoryType: "shared", FreeVRAMBytes: 4 * GiB},
+			{MemoryType: "shared", FreeVRAMBytes: 3 * GiB},
+		}}
+	summary := Aggregate([]protocol.Device{d}, time.Now())
+	if summary.AggregateBudgetBytes != Budget(d) || summary.Nodes[0].FreeVRAMBytes != 4*GiB {
+		t.Fatalf("shared memory double counted: %+v", summary)
 	}
 }
