@@ -80,8 +80,20 @@ jobs:
             }
           done
           (cd dist && sha256sum NodexLM-android10-plus-debug.apk > SHA256SUMS.txt)
+          source_sha="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.head_sha')"
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Android build source commit could not be verified"
+            exit 1
+          fi
+          {
+            echo "source_commit=$source_sha"
+            echo "android_workflow_run=$run_id"
+            echo "package=NodexLM-android10-plus-debug.apk"
+            echo "min_sdk=29"
+            echo "abis=armeabi-v7a,arm64-v8a"
+          } > dist/BUILD_INFO.txt
           echo "available=true" >> "$GITHUB_OUTPUT"
-          echo "Published from Android APK workflow run: $run_id" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published Android APK from source commit \`$source_sha\`, build run $run_id" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish downloadable APK in public GitHub prerelease
         if: steps.download.outputs.available == 'true'
@@ -92,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="android-debug"
-          files=(dist/NodexLM-android10-plus-debug.apk dist/SHA256SUMS.txt)
+          files=(dist/NodexLM-android10-plus-debug.apk dist/SHA256SUMS.txt dist/BUILD_INFO.txt)
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$tag" "${files[@]}" --repo "$GH_REPO" --clobber
           else
