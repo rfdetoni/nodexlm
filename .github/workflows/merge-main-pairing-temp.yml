@@ -26,6 +26,42 @@ jobs:
           git merge --no-ff -X ours origin/main -m "merge: reconcile pairing timer and adaptive cluster monitoring"
           python3 - <<'PY'
           from pathlib import Path
+          import subprocess
+
+          def from_main(path):
+            return subprocess.check_output(['git', 'show', 'origin/main:'+path], text=True)
+
+          html_path = Path('internal/dashboard/static/index.html')
+          html = html_path.read_text()
+          if 'id="nodeResourceCards"' not in html:
+            main = from_main(str(html_path))
+            a = main.index('<div class="sectionhead telemetry-heading">')
+            b = main.index('<div class="scroll"><table>', a)
+            telemetry = main[a:b].rstrip()
+            after_pair = html.index('id="pairingSession"')
+            table = html.index('<div class="scroll"><table>', after_pair)
+            html = html[:table] + telemetry + '\n' + html[table:]
+            html_path.write_text(html)
+
+          test_path = Path('scripts/test-dashboard-models.cjs')
+          test = test_path.read_text()
+          if 'Telemetry must never' not in test:
+            main = from_main(str(test_path))
+            start = main.index('  // Telemetry must never')
+            stop = main.index('  assert.equal(get(\'view-overview\').hidden,false',start)
+            telemetry_tests = main[start:stop]
+            before = test.index('  // The pairing code is not an admin session token.')
+            test = test[:before] + telemetry_tests + test[before:]
+            test_path.write_text(test)
+          PY
+          node --check internal/dashboard/static/app.js
+          node scripts/test-dashboard-models.cjs
+          git add internal/dashboard/static/index.html scripts/test-dashboard-models.cjs
+          if ! git diff --cached --quiet; then
+            git commit -m "fix(web): preserve resource dashboard and pairing timer together"
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
           checks = {
             "internal/dashboard/static/index.html": ["flashAttention", "kvCache", "nodeResourceCards", "pairAutoRenew", "pairCountdown"],
             "internal/dashboard/static/app.js": ["flashAttention", "renderNodeResources", "generatePairingCode", "pairingTick"],
