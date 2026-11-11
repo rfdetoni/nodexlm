@@ -261,3 +261,7 @@ progress.resource-meter::-moz-progress-bar{background:#8498a8;border-radius:4px}
 .resource-gpu-title{font-size:12px;color:#c9d3dc;font-weight:600;margin-top:14px;padding-top:12px;border-top:1px solid #373e44;overflow-wrap:anywhere}
 .resource-empty{font-size:11px;color:#9da8b1;margin:12px 0 0}
 @media(max-width:550px){.telemetry-heading{align-items:flex-start;flex-direction:column}.telemetry-heading small{text-align:left}}
+
+/* Measured transport activity, distinct from estimated layer allocation. */
+.rpc-node-transfer{margin:7px 0;font-size:12px;color:#a6b5c1;overflow-wrap:anywhere}
+.rpc-stall-warning{margin:10px 0;padding:10px 13px;border:1px solid #736454;border-radius:7px;background:#343332;color:#d8c2a5;font-size:12px;line-height:1.5}

@@ -283,6 +283,7 @@ func serve(args []string) error {
 			return err
 		}
 		defer manager.Close()
+		manager.SetRPCStatsProvider(s.RPCStats)
 		manager.SetRPCProvider(func() []dashboard.RPCGuest {
 			ready := s.RPCNodes()
 			profiles := s.DevicesSnapshot()

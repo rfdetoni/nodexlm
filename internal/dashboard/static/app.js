@@ -177,6 +177,24 @@ function renderLoadStatus(status){
  const activity=el('progress','download-bar');
  activity.setAttribute('aria-label','Carregamento em andamento: progresso real indisponível');
  box.append(activity,el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s · progresso real não informado pelo llama.cpp'));
+ const transfer=runtime.rpc_transfer||{};
+ const channels=Object.entries(transfer);
+ if(channels.length){
+  const sent=channels.reduce((sum,[,node])=>sum+(Number(node.to_guest_bytes)||0),0);
+  const last=Math.max(0,...channels.map(([,node])=>Number(node.last_activity_ms)||0));
+  const idleFor=last>0?Math.max(0,Math.floor((Date.now()-last)/1000)):null;
+  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados aos Guests selecionados durante este carregamento.'));
+  for(const [id,node] of channels){
+   box.append(el('p','rpc-node-transfer',id.slice(0,12)+'… · '+fmt(Number(node.to_guest_bytes)||0)+' enviados · '+(Number(node.connected)||0)+' túneis, '+(Number(node.idle)||0)+' livres'));
+  }
+  if(runtime.phase==='loading_model' && Number(runtime.phase_elapsed_seconds)>120 && (last===0 || idleFor>120)){
+   box.append(el('p','rpc-stall-warning','Sem transferência RPC recente há mais de 2 min. Verifique os túneis e logs nativos do Host/Guest; cancele se estiver travado.'));
+  } else if(runtime.phase==='loading_model' && last>0){
+   box.append(el('p','muted','Última atividade RPC há '+idleFor+' s. Bytes transmitidos não equivalem a camadas confirmadas.'));
+  } else {
+   box.append(el('p','muted','Aguardando o início da transferência real aos Guests.'));
+  }
+ }
  if(!loadingPlan || loadingPlanModel!==status.settings.model){
   box.append(el('p','muted','Calculando distribuição estimada das camadas…'));return;
  }
