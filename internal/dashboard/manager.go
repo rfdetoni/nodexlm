@@ -24,6 +24,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 	"github.com/rfdetoni/nodexlm/internal/safedownload"
 )
 
@@ -80,6 +81,10 @@ type Manager struct {
 	loadPhase             string
 	loadError             string
 	loadStartedAt         time.Time
+	phaseStartedAt        time.Time
+	loadRPCNodes          []string
+	loadRPCBaseline       map[string]rpcmesh.TunnelStats
+	rpcStatsProvider      func() map[string]rpcmesh.TunnelStats
 	loadCancel            context.CancelFunc
 	loadDone              chan struct{}
 	generationCancel      context.CancelFunc
@@ -129,6 +134,13 @@ func (m *Manager) SetRPCProvider(provider func() []RPCGuest) {
 	defer m.mu.Unlock()
 	m.rpcEndpoints = provider
 }
+
+// SetRPCStatsProvider exposes only local relay counters, never RPC payloads.
+func (m *Manager) SetRPCStatsProvider(provider func() map[string]rpcmesh.TunnelStats) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rpcStatsProvider = provider
+}
 func (m *Manager) Models() ([]protocol.ModelRecord, error) { return local.Models(m.modelDir) }
 func (m *Manager) Settings() Settings                      { m.mu.Lock(); defer m.mu.Unlock(); return m.settings }
 func (m *Manager) State() map[string]any {
@@ -143,6 +155,29 @@ func (m *Manager) State() map[string]any {
 		state["started_at"] = m.loadStartedAt.UTC().Format(time.RFC3339)
 		state["elapsed_seconds"] = int(time.Since(m.loadStartedAt).Seconds())
 		state["progress_known"] = false // GGML does not report per-Guest tensor transfer progress.
+		state["phase_elapsed_seconds"] = int(time.Since(m.phaseStartedAt).Seconds())
+		if m.rpcStatsProvider != nil && len(m.loadRPCNodes) > 0 {
+			current := m.rpcStatsProvider()
+			nodes := make(map[string]map[string]any, len(m.loadRPCNodes))
+			for _, id := range m.loadRPCNodes {
+				now, baseline := current[id], m.loadRPCBaseline[id]
+				sent, received := uint64(0), uint64(0)
+				if now.BytesToGuest >= baseline.BytesToGuest {
+					sent = now.BytesToGuest - baseline.BytesToGuest
+				}
+				if now.BytesFromGuest >= baseline.BytesFromGuest {
+					received = now.BytesFromGuest - baseline.BytesFromGuest
+				}
+				last := now.LastActivityMS
+				if last < m.loadStartedAt.UnixMilli() {
+					last = 0
+				}
+				nodes[id] = map[string]any{"to_guest_bytes": sent, "from_guest_bytes": received,
+					"connected": now.Connected, "idle": now.Idle, "last_activity_ms": last,
+					"wait_timeouts": now.WaitTimeouts - min(now.WaitTimeouts, baseline.WaitTimeouts)}
+			}
+			state["rpc_transfer"] = nodes
+		}
 	}
 	return state
 }
@@ -313,6 +348,12 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	}
 	m.loading = true
 	m.loadStartedAt = time.Now()
+	m.phaseStartedAt = m.loadStartedAt
+	m.loadRPCNodes = nil
+	m.loadRPCBaseline = nil
+	if m.rpcStatsProvider != nil {
+		m.loadRPCBaseline = m.rpcStatsProvider()
+	}
 	m.loadPhase = "preparing_runtime"
 	m.loadError = ""
 	m.loadCancel = cancel
@@ -351,6 +392,7 @@ func (m *Manager) runLoad(ctx context.Context) error {
 func (m *Manager) setPhase(phase string) {
 	m.mu.Lock()
 	m.loadPhase = phase
+	m.phaseStartedAt = time.Now()
 	m.mu.Unlock()
 }
 
@@ -400,7 +442,9 @@ func (m *Manager) load(ctx context.Context) error {
 			return selectErr
 		}
 		localLayers = selection.LocalLayers
+		selectedIDs := make([]string, 0, len(selection.Guests))
 		for _, candidate := range selection.Guests {
+			selectedIDs = append(selectedIDs, candidate.ID)
 			for _, guest := range guests {
 				if guest.ID == candidate.ID {
 					rpcEndpoints = append(rpcEndpoints, guest.Endpoint)
@@ -408,6 +452,12 @@ func (m *Manager) load(ctx context.Context) error {
 				}
 			}
 		}
+		if len(rpcEndpoints) != len(selection.Guests) {
+			return errors.New("RPC relay became unavailable while planning layers; reconnect the selected Guests")
+		}
+		m.mu.Lock()
+		m.loadRPCNodes = selectedIDs
+		m.mu.Unlock()
 	}
 	var resolved string
 	if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {

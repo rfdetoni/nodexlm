@@ -29,16 +29,19 @@ type idleTunnel struct {
 }
 
 type relay struct {
-	listener  net.Listener
-	waiting   []*idleTunnel
-	ready     chan struct{}
-	closed    chan struct{}
-	mu        sync.Mutex
-	available int
-	accepted  uint64
-	rejected  uint64
-	timeouts  uint64
-	peers     map[net.Conn]struct{}
+	listener       net.Listener
+	waiting        []*idleTunnel
+	ready          chan struct{}
+	closed         chan struct{}
+	mu             sync.Mutex
+	available      int
+	accepted       uint64
+	rejected       uint64
+	timeouts       uint64
+	bytesToGuest   uint64
+	bytesFromGuest uint64
+	lastActivityMS int64
+	peers          map[net.Conn]struct{}
 }
 
 type Hub struct {
@@ -293,7 +296,7 @@ func (r *relay) accept() {
 				r.finish(guest)
 				return
 			}
-			bridge(upstream, guest)
+			r.bridge(upstream, guest)
 			r.finish(guest)
 		}()
 	}
@@ -306,20 +309,52 @@ var rpcCopyBuffers = sync.Pool{
 	},
 }
 
+// relayWriter measures successfully forwarded bytes (not planned layer
+// counts). The lock is per buffered write rather than per RPC byte.
+type relayWriter struct {
+	io.Writer
+	relay   *relay
+	toGuest bool
+}
+
+func (w relayWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if n > 0 {
+		w.relay.mu.Lock()
+		if w.toGuest {
+			w.relay.bytesToGuest += uint64(n)
+		} else {
+			w.relay.bytesFromGuest += uint64(n)
+		}
+		w.relay.lastActivityMS = time.Now().UnixMilli()
+		w.relay.mu.Unlock()
+	}
+	return n, err
+}
+
+func (r *relay) bridge(host, guest net.Conn) { bridgeTracked(host, guest, r) }
+
 // Bridge only forwards native GGML bytes; reuse bounded buffers so repeated
 // tensor transfers do not allocate a new 32 KiB buffer per direction.
-func bridge(a, b net.Conn) {
+// Guest-side forwarding has no Host relay to measure.
+func bridge(a, b net.Conn) { bridgeTracked(a, b, nil) }
+
+func bridgeTracked(a, b net.Conn, stats *relay) {
 	var once sync.Once
 	done := make(chan struct{}, 2)
-	pump := func(dst, src net.Conn) {
+	pump := func(dst, src net.Conn, toGuest bool) {
 		buffer := rpcCopyBuffers.Get().(*[]byte)
-		_, _ = io.CopyBuffer(dst, src, *buffer)
+		var out io.Writer = dst
+		if stats != nil {
+			out = relayWriter{Writer: dst, relay: stats, toGuest: toGuest}
+		}
+		_, _ = io.CopyBuffer(out, src, *buffer)
 		rpcCopyBuffers.Put(buffer)
 		once.Do(func() { _ = a.Close(); _ = b.Close() })
 		done <- struct{}{}
 	}
-	go pump(a, b)
-	go pump(b, a)
+	go pump(a, b, false) // Guest -> Host
+	go pump(b, a, true)  // Host -> Guest, including tensor uploads
 	<-done
 	<-done
 }
@@ -341,6 +376,20 @@ func (h *Hub) ReadyNodes() map[string]string {
 	out := map[string]string{}
 	for id, r := range h.nodes {
 		if r.count() > 0 {
+			out[id] = relayAddress(r.listener)
+		}
+	}
+	return out
+}
+
+// IdleNodes is used to admit NEW model loads. Busy Guests remain connected
+// but should not be selected for another load without an available RPC tunnel.
+func (h *Hub) IdleNodes() map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := map[string]string{}
+	for id, r := range h.nodes {
+		if r.idleCount() > 0 {
 			out[id] = relayAddress(r.listener)
 		}
 	}

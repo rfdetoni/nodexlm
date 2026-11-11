@@ -3,6 +3,7 @@ package rpcmesh
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os/exec"
 	"strings"
@@ -67,14 +68,28 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			delay := time.Second
 			for runCtx.Err() == nil {
-				if err := Connect(runCtx, client, address); err != nil && runCtx.Err() == nil {
+				err := Connect(runCtx, client, address)
+				if err != nil && runCtx.Err() == nil {
 					client.ReconnectFailures.Add(1)
+					slog.Warn("RPC Unix tunnel disconnected", "error", err)
+				} else if err == nil {
+					delay = time.Second
+				}
+				if runCtx.Err() != nil {
+					return
 				}
 				select {
 				case <-runCtx.Done():
 					return
-				case <-time.After(time.Second):
+				case <-time.After(delay):
+				}
+				if err != nil && delay < 10*time.Second {
+					delay *= 2
+					if delay > 10*time.Second {
+						delay = 10 * time.Second
+					}
 				}
 			}
 		}()
