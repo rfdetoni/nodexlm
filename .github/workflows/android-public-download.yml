@@ -29,19 +29,38 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Download APK from successful Android build
+        id: download
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           REQUESTED_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          AUTOMATIC_EVENT: ${{ github.event_name == 'workflow_run' }}
         run: |
           set -euo pipefail
           run_id="$REQUESTED_RUN_ID"
           if [[ -z "$run_id" ]]; then
-            run_id="$(gh run list --repo "$GH_REPO" --workflow android-apk.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+            # Manual invocation: locate the newest non-expired debug artifact,
+            # not merely a successful run whose build job was skipped.
+            run_id="$(gh api "repos/$GH_REPO/actions/artifacts?name=nodexlm-android-debug&per_page=100" --jq '[.artifacts[] | select(.expired == false)] | .[0].workflow_run.id // empty')"
           fi
           if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
-            echo "::error::No successful Android APK build found"
+            echo "::error::No Android APK build artifact available"
+            exit 1
+          fi
+          run_status="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          if [[ "$run_status" != "success" ]]; then
+            echo "::error::Android APK run $run_id did not succeed"
+            exit 1
+          fi
+          available="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts?per_page=100" --jq '[.artifacts[] | select(.name == "nodexlm-android-debug" and .expired == false)] | length')"
+          if [[ "$available" -eq 0 && "$AUTOMATIC_EVENT" == "true" ]]; then
+            echo "No APK artifact in run $run_id (native/launcher unchanged); skipping public release without rebuilding."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$available" -eq 0 ]]; then
+            echo "::error::Specified successful run $run_id has no debug APK"
             exit 1
           fi
           mkdir -p dist
@@ -61,9 +80,11 @@ jobs:
             }
           done
           (cd dist && sha256sum NodexLM-android10-plus-debug.apk > SHA256SUMS.txt)
+          echo "available=true" >> "$GITHUB_OUTPUT"
           echo "Published from Android APK workflow run: $run_id" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish downloadable APK in public GitHub prerelease
+        if: steps.download.outputs.available == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
