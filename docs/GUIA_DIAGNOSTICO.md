@@ -243,3 +243,49 @@ A versão exibida em `runtime.version` é a revisão de llama.cpp (`b12255`),
 não o número do APK. Confirme que o APK instalado é realmente o build
 atualizado, pois duas versões distintas do NodexLM podem anunciar a mesma
 revisão de runtime.
+
+## Linux: timeout de 3 minutos ao gerar resposta com RPC
+
+Se o chat exibir `context deadline exceeded (Client.Timeout or context
+cancellation while reading body)`, isso indica o término de uma requisição
+HTTP interna à inferência. Não prova, isoladamente, perda dos túneis RPC.
+
+O cliente HTTP do llama.cpp não deve ter prazo global fixo: a requisição de
+chat já possui contexto com prazo e cancelamento explícitos. O NodexLM usa
+até 4 minutos para chat local e até 20 minutos para chat distribuído;
+as aplicações OpenAI que se conectam ao Host podem definir um prazo próprio.
+
+Antes de iniciar o modelo distribuído, o Host agora testa os comandos nativos
+`RPC_CMD_HELLO` e `RPC_CMD_DEVICE_COUNT` em cada Guest selecionado, com
+limite de 6 segundos por Guest (em paralelo). As mensagens do Host informam
+o identificador do dispositivo que não respondeu, recusando o carregamento
+antes de iniciar uma inferência bloqueada. Essa verificação não baixa o
+modelo nem envia tensores; ela soma **42 bytes de requisição e 48 bytes de
+resposta** quando ambas as trocas são concluídas com sucesso.
+
+Acompanhe os logs:
+
+```sh
+nodexlm host --debug --web-addr 127.0.0.1:8788
+tail -F ~/.nodexlm/logs/host.log
+```
+
+Em cada Guest Linux, confirme que o processo anterior foi encerrado antes
+de reiniciar em modo debug:
+
+```sh
+nodexlm guest --backend cpu --debug
+tail -F ~/.nodexlm/logs/guest.log
+```
+
+Se a preflight indicar `Guest <ID> cannot complete GGML RPC HELLO/DEVICE_COUNT`,
+verifique o log desse Guest, sua versão de runtime e se há um worker nativo
+atolado. Uma opção de isolamento é iniciar o Host com
+`--rpc-exclude-ids ID_COMPLETO`, sem revogar o pareamento, e repetir com
+um modelo GGUF menor. Se o HELLO passar mas o carregamento ainda parar
+após algumas dezenas de bytes, verifique `rpc_transfer` e o log nativo
+do `llama-server`: nesse caso o problema está além da preflight.
+
+A passagem de `HELLO` confirma apenas a disponibilidade inicial do
+worker. Não garante RAM suficiente para o modelo de 27B, transferência
+de pesos ou desempenho de inferência.
