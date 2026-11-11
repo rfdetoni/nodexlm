@@ -1,0 +1,52 @@
+name: Native RPC loader PR checks
+
+on:
+  pull_request:
+    paths:
+      - 'internal/llamaruntime/patches/parallel-rpc-loader.patch'
+      - 'internal/llamaruntime/patch.go'
+      - '.github/workflows/rpc-runtime.yml'
+      - '.github/workflows/rpc-native-pr-checks.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nodexlm-native-rpc-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-rpc:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify pinned upstream and patch applicability
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          r=json.load(open("internal/llamaruntime/revision.json"))
+          print("LLAMA_VERSION="+r["version"])
+          print("LLAMA_COMMIT="+r["commit"])
+          PY
+          git clone --quiet --depth=1 --branch "$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')" \
+            https://github.com/ggml-org/llama.cpp.git llama-source
+          test "$(git -C llama-source rev-parse HEAD)" = "$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')"
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+      - name: Compile patched native llama-server and worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S llama-source -B build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_RPC=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+            -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON
+          cmake --build build --parallel 2 --target llama-server ggml-rpc-server
+          test -x build/bin/llama-server
+          if test -x build/bin/ggml-rpc-server; then test -x build/bin/ggml-rpc-server; else test -x build/bin/rpc-server; fi
+          strings build/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled' >/dev/null
