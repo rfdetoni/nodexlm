@@ -311,10 +311,18 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.MaxContributionBytes = req.MaxContributionBytes
 			n.device.MemoryReserveBytes = req.MemoryReserveBytes
 		}
-		if req.BatteryPercent != nil { n.device.BatteryPercent = req.BatteryPercent }
-		if req.Charging != nil { n.device.Charging = req.Charging }
-		if req.ThermalStatus != nil { n.device.ThermalStatus = req.ThermalStatus }
-		if req.ThermalHeadroom != nil { n.device.ThermalHeadroom = req.ThermalHeadroom }
+		if req.BatteryPercent != nil {
+			n.device.BatteryPercent = req.BatteryPercent
+		}
+		if req.Charging != nil {
+			n.device.Charging = req.Charging
+		}
+		if req.ThermalStatus != nil {
+			n.device.ThermalStatus = req.ThermalStatus
+		}
+		if req.ThermalHeadroom != nil {
+			n.device.ThermalHeadroom = req.ThermalHeadroom
+		}
 		if req.GPUs != nil {
 			valid := true
 			for _, gpu := range req.GPUs {
