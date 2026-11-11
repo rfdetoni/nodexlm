@@ -10,6 +10,8 @@ on:
       - 'android/app/src/main/AndroidManifest.xml'
       - 'android/app/build.gradle.kts'
       - '.github/workflows/android-ui-checks.yml'
+      - '.github/workflows/android-apk.yml'
+      - '.github/workflows/android-public-download.yml'
   workflow_dispatch:
 
 permissions:
@@ -40,6 +42,35 @@ jobs:
         with:
           gradle-version: '8.11.1'
           cache-read-only: true
+      - name: Validate APK rebuild and release provenance contract
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          workflow=Path('.github/workflows/android-apk.yml').read_text()
+          release=Path('.github/workflows/android-public-download.yml').read_text()
+          for marker in (
+            "'android/**'",
+            "git diff --name-only HEAD^ HEAD -- android/",
+            "scripts/native-revision-changed.py",
+            ".github/workflows/android-apk.yml",
+            ":app:assembleDebug",
+            "name: nodexlm-android-debug",
+            "arm64-v8a",
+            "armeabi-v7a",
+          ):
+            if marker not in workflow:
+              raise SystemExit(f'APK workflow missing required trigger/build contract: {marker}')
+          for marker in (
+            'dist/BUILD_INFO.txt',
+            'source_commit=',
+            'android_workflow_run=',
+            "steps.download.outputs.available == 'true'",
+          ):
+            if marker not in release:
+              raise SystemExit(f'Public APK release missing provenance/guard: {marker}')
+          PY
+
       - name: Validate launcher icon contract
         run: python3 scripts/check-android-launcher.py
       - name: Compile Android resources, Kotlin UI and unit tests
