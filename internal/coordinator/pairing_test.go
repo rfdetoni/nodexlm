@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"math/big"
 	"net/http"
 	"testing"
@@ -61,6 +62,23 @@ func TestPairingEnrollAndRenew(t *testing.T) {
 	reset = call(t, h, "POST", "/v1/pairing/start", adminSecret, "", map[string]string{})
 	if reset.Code != 200 {
 		t.Fatalf("admin rotation failed: %s", reset.Body.String())
+	}
+	var rotated struct {
+		Code        string    `json:"code"`
+		ExpiresIn   string    `json:"expires_in"`
+		ExpiresInMS int64     `json:"expires_in_ms"`
+		ExpiresAt   time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(reset.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if !pairing.ValidCode(rotated.Code) || rotated.Code == code || rotated.ExpiresIn != "10m" ||
+		rotated.ExpiresInMS < 598000 || rotated.ExpiresInMS > 600000 ||
+		time.Until(rotated.ExpiresAt) < 9*time.Minute || time.Until(rotated.ExpiresAt) > 10*time.Minute {
+		t.Fatalf("invalid pairing expiration metadata: %+v", rotated)
+	}
+	if reset.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("pairing credentials must not be cached")
 	}
 	stale := call(t, h, "POST", "/v1/pairing/enroll", "", "", map[string]any{"code": code, "device": d})
 	if stale.Code != 401 {
