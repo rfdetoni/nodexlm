@@ -1,0 +1,27 @@
+name: Format parallel RPC Go changes (temporary)
+on:
+  push:
+    branches: [feat/parallel-rpc-upload-and-chat-reasoning]
+    paths: ['.github/workflows/format-parallel-rpc-temp.yml']
+permissions:
+  contents: write
+jobs:
+  gofmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: true}
+      - name: Format updated Go files
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(internal/protocol/types.go internal/protocol/chat.go internal/protocol/chat_reasoning_test.go internal/llamaruntime/patch.go internal/local/managed.go internal/dashboard/manager.go)
+          gofmt -w "${files[@]}"
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add "${files[@]}"
+            git commit -m 'style: gofmt RPC parallel load and chat reasoning'
+            git push origin HEAD:feat/parallel-rpc-upload-and-chat-reasoning
+          fi
