@@ -70,6 +70,20 @@ async function main(){
   resourceCard=get('nodeResourceCards').children[0];
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
+  const stalledLoad={settings:{model:'test.gguf'},runtime:{loading:true,phase:'loading_model',
+    elapsed_seconds:190,phase_elapsed_seconds:180,rpc_transfer:{'guest-123':{
+      to_guest_bytes:0,from_guest_bytes:0,connected:1,idle:0,last_activity_ms:0}}}};
+  vm.runInContext('renderLoadStatus('+JSON.stringify(stalledLoad)+')',sandbox);
+  assert.ok(get('loadingStatus').textContent.includes('Sem transferência RPC recente'),
+    'inactivity must not appear as progress while no tensors are transferred');
+  const transferring=JSON.parse(JSON.stringify(stalledLoad));
+  transferring.runtime.rpc_transfer['guest-123'].to_guest_bytes=1048576;
+  transferring.runtime.rpc_transfer['guest-123'].last_activity_ms=Date.now();
+  vm.runInContext('renderLoadStatus('+JSON.stringify(transferring)+')',sandbox);
+  assert.ok(get('loadingStatus').textContent.includes('RPC real'),
+    'measured bytes must appear independently of planned layer count');
+  assert.ok(!get('loadingStatus').textContent.includes('Sem transferência RPC recente'),
+    'active transfer should not warn about a stall');
   // The pairing code is not an admin session token. Its TTL comes from the Host.
   assert.equal(vm.runInContext("pairingTTL({expires_in:'10m'})",sandbox),600000);
   vm.runInContext("token='admin-token'; setupAuth()",sandbox);

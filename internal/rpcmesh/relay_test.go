@@ -86,6 +86,14 @@ func TestEncryptedRPCTunnelTransportsBinary(t *testing.T) {
 	if fmt.Sprintf("%x", actual) != fmt.Sprintf("%x", input) {
 		t.Fatalf("unexpected output: %x", actual)
 	}
+	traffic := hub.Stats()["test"]
+	if traffic.BytesToGuest < uint64(len(input)) || traffic.BytesFromGuest < uint64(len(input)) ||
+		traffic.LastActivityMS == 0 {
+		t.Fatalf("real RPC bytes were not measured: %+v", traffic)
+	}
+	if _, ready := hub.ReadyNodes()["test"]; ready {
+		t.Fatal("busy Guest tunnel without idle slots must not be considered ready for new loads")
+	}
 	remote.Close()
 	cancel()
 	select {
