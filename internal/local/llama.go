@@ -37,7 +37,10 @@ func New(backend string) (*Engine, error) {
 	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
 		return nil, errors.New("backend must use loopback; external runtimes are not trusted")
 	}
-	return &Engine{BackendURL: strings.TrimRight(backend, "/"), HTTP: &http.Client{Timeout: 3 * time.Minute, Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConnsPerHost: 1}}}, nil
+	// Model generation may legitimately exceed three minutes on a slow
+	// multi-Guest RPC cluster. A client-wide timeout aborts even an actively
+	// streaming response; callers already own bounded, cancellable contexts.
+	return &Engine{BackendURL: strings.TrimRight(backend, "/"), HTTP: &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConnsPerHost: 1}}}, nil
 }
 
 func (e *Engine) Complete(ctx context.Context, request protocol.ChatRequest) (json.RawMessage, error) {
