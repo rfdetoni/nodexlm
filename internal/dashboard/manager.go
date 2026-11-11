@@ -483,6 +483,22 @@ func (m *Manager) load(ctx context.Context) error {
 			m.loadRPCBaseline = m.rpcStatsProvider()
 		}
 		m.mu.Unlock()
+	} else {
+		// The preview and the actual local load must use the same memory
+		// guard. Do not silently ignore high-context KV on the Host.
+		meta, inspectErr := local.InspectGGUF(path)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		size, sizeErr := local.ModelSize(path)
+		if sizeErr != nil {
+			return sizeErr
+		}
+		name, _ := os.Hostname()
+		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
+		if inspectErr = validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
+			return inspectErr
+		}
 	}
 	m.setPhase("resolving_runtime")
 	var resolved string
