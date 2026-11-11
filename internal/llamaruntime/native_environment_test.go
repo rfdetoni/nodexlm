@@ -41,11 +41,12 @@ func TestSupportsUnixRPCWithSiblingSharedLibraryPath(t *testing.T) {
 	// Simulates the same failure pattern as libggml.so.0 not being
 	// discoverable: the test executable refuses to print its capabilities
 	// unless the launcher prepends its own directory to LD_LIBRARY_PATH.
-	script:= "#!/bin/sh\n"+
-		"case \"$LD_LIBRARY_PATH\" in\n"+
-		"  '"+dir+"'| '"+dir":'*) printf '%s\\n' '--rpc unix:/PATH'; exit 0;;\n"+
-		"  *) echo 'error while loading shared libraries: libggml.so.0' >&2; exit 127;;\n"+
-		"esac\n"
+	script := "#!/bin/sh\n" +
+        "if [ \"\${LD_LIBRARY_PATH%%:*}\" != \"" + dir + "\" ]; then\n" +
+        "  echo 'error while loading shared libraries: libggml.so.0' >&2\n" +
+        "  exit 127\n" +
+        "fi\n" +
+        "printf '%s\\n' '--rpc unix:/PATH'\n"
 	if err:=os.WriteFile(binary,[]byte(script),0700);err!=nil{t.Fatal(err)}
 	t.Setenv("LD_LIBRARY_PATH","/some-other-place")
 	if !SupportsUnixRPC(context.Background(),binary){
