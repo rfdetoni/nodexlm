@@ -20,7 +20,7 @@ async function api(path, method='GET', body) {
   const headers={Authorization:'Bearer '+token}; if (body!==undefined) headers['Content-Type']='application/json';
   const response=await fetch(path,{method,headers,body: body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
   const text=await response.text(); let data;try{data=JSON.parse(text)}catch{data={error:text}}
-  if (!response.ok) {if(response.status===401) {sessionStorage.removeItem('nodexlm-admin');$('auth').hidden=false;$('app').hidden=true;}throw Error(data.error||'HTTP '+response.status)}
+  if (!response.ok) {if(response.status===401) {sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();$('auth').hidden=false;$('app').hidden=true;}throw Error(data.error||'HTTP '+response.status)}
   return data;
 }
 const consoleViews=[
@@ -425,13 +425,105 @@ async function sendChat(){
  }
 }
 $('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').value.trim();guard(async()=>{await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')})});
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';chatController?.abort();chatHistory=[];$('chatOutput').replaceChildren();setupAuth()});
+$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',settingsFromForm($('modelSelect').value));notice('Configuração salva');settingsInitialized=false;await refresh()})});
 $('load').addEventListener('click',()=>guard(async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
 $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
-$('pair').addEventListener('click',()=>guard(async()=>{const p=await api('/v1/pairing/start','POST',{});$('pairCode').hidden=false;$('pairCode').textContent=p.code+' · válido por '+p.expires_in;notice('Código renovado')}));
+// The 8-character code is a short-lived *pairing* credential, not the
+// admin bearer token nor an already-enrolled node's long-lived credential.
+let pairingSession = null;
+let pairingRequestBusy = false;
+let pairingAutoRenew = false;
+let pairingRetryAt = 0;
+const pairingRetryDelayMs = 30000;
+// Use monotonic time: browser clock corrections cannot extend pairing lifetime.
+const pairingNow = () => performance.now();
+function pairingTTL(payload) {
+ const measured = Number(payload.expires_in_ms);
+ if(Number.isFinite(measured) && measured > 0 && measured <= 1800000)return measured;
+ // Legacy Host compatibility: previous versions returned e.g. "10m".
+ const match = /^(\d+)([smh])$/.exec(String(payload.expires_in||''));
+ if(!match)throw Error('Resposta do Host sem prazo de expiração válido.');
+ const unit={s:1000,m:60000,h:3600000}[match[2]];
+ const ms=Number(match[1])*unit;
+ if(!Number.isFinite(ms)||ms<=0||ms>1800000)throw Error('Prazo de pareamento fora do limite.');
+ return ms;
+}
+function pairingSecondsLeft(){
+ return pairingSession ? Math.max(0,Math.ceil((pairingSession.expiresAt-pairingNow())/1000)) : 0;
+}
+function clearPairingSession(){
+ pairingSession=null;pairingAutoRenew=false;pairingRetryAt=0;
+ $('pairAutoRenew').checked=false;
+ $('pairingSession').hidden=true;
+ $('pairCode').textContent='';
+ $('pairCountdown').textContent='00:00';
+ $('pairStatus').textContent='';
+}
+async function generatePairingCode(automatic=false){
+ if(pairingRequestBusy || !token || $('app').hidden || (automatic && document.hidden))return;
+ pairingRequestBusy=true;
+ $('pair').disabled=true;
+ if(pairingSession) $('pairStatus').textContent=automatic?'Renovando código automaticamente…':'Gerando novo código…';
+ const startingToken=token;
+ try {
+  const payload=await api('/v1/pairing/start','POST',{});
+  if(token!==startingToken || $('app').hidden)return;
+  const ttl=pairingTTL(payload);
+  if(!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(String(payload.code||''))) {
+   throw Error('O Host retornou um código de pareamento inválido.');
+  }
+  // Allow for a small response delay without relying on clock synchronization.
+  pairingSession={code:payload.code,expiresAt:pairingNow()+Math.max(0,ttl-250),ttl};
+  pairingRetryAt=0;
+  renderPairingSession();
+  notice(automatic?'Código de pareamento renovado automaticamente':'Código de pareamento gerado');
+ } catch(error) {
+  // The request may have reached the Host even when its response was lost.
+  // Hide the old code rather than claiming it is still valid.
+  if(pairingSession){
+   pairingSession={code:'',expiresAt:pairingNow()-1,ttl:pairingSession.ttl};
+   if(automatic)pairingRetryAt=pairingNow()+pairingRetryDelayMs;
+   renderPairingSession();
+  }
+  throw error;
+ } finally {
+  pairingRequestBusy=false;
+  $('pair').disabled=false;
+ }
+}
+function renderPairingSession(){
+ const area=$('pairingSession');
+ if(!pairingSession){area.hidden=true;return;}
+ area.hidden=false;
+ const seconds=pairingSecondsLeft(),remainingMs=Math.max(0,pairingSession.expiresAt-pairingNow());
+ $('pairCode').textContent=seconds>0?pairingSession.code:'Código expirado';
+ $('pairCountdown').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
+ $('pairProgress').max=pairingSession.ttl;
+ $('pairProgress').value=remainingMs;
+ $('pairStatus').textContent=seconds>0?'Código ativo. Utilize-o para parear um dispositivo.':
+   pairingRequestBusy?'Renovando código…':
+   pairingAutoRenew && pairingRetryAt>pairingNow()?'Falha na renovação. Nova tentativa em até 30 s.':
+   pairingAutoRenew?'Código expirado. Renovação automática habilitada.':
+   'Código expirado. Gere outro para permitir novos pareamentos.';
+}
+function pairingTick(){
+ if(!pairingSession || !token || $('app').hidden)return;
+ renderPairingSession();
+ if(pairingSecondsLeft()===0 && pairingAutoRenew && !pairingRequestBusy &&
+    !document.hidden && pairingNow()>=pairingRetryAt){
+  return guard(()=>generatePairingCode(true));
+ }
+}
+$('pair').addEventListener('click',()=>guard(()=>generatePairingCode(false)));
+$('pairAutoRenew').addEventListener('change',()=>{
+ pairingAutoRenew=$('pairAutoRenew').checked;
+ return pairingTick();
+});
+setInterval(pairingTick,1000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)return pairingTick()});
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.strategy||'capacity'))); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
  for(const node of plan.nodes)area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));

@@ -29,17 +29,24 @@ func (s *Server) PreparePairing(certPEM []byte) error {
 }
 
 func (s *Server) StartPairing(ttl time.Duration) (string, error) {
+	code, _, err := s.startPairing(ttl)
+	return code, err
+}
+
+// Pairing session and expiration are created together under one lock so the
+// timer returned to the console always belongs to the generated code.
+func (s *Server) startPairing(ttl time.Duration) (string, time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.certDER) == 0 {
-		return "", errors.New("coordinator TLS certificate not configured")
+		return "", time.Time{}, errors.New("coordinator TLS certificate not configured")
 	}
 	p, code, err := pairing.NewSession(s.certDER, ttl)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	s.pair = p
-	return code, nil
+	return code, p.Offer("").Expires, nil
 }
 
 func (s *Server) Offers(endpoints []string) []pairing.Offer {
@@ -71,12 +78,21 @@ func (s *Server) pairingStart(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(w, r) {
 		return
 	}
-	code, err := s.StartPairing(10 * time.Minute)
+	code, expiresAt, err := s.startPairing(10 * time.Minute)
 	if err != nil {
 		fail(w, 500, "could not start pairing")
 		return
 	}
-	respond(w, 200, map[string]string{"code": code, "expires_in": "10m"})
+	// expires_in remains for older clients; the millisecond TTL avoids
+	// relying on the operator's browser clock being in sync with the Host.
+	remaining := max(int64(0), time.Until(expiresAt).Milliseconds())
+	w.Header().Set("Cache-Control", "no-store")
+	respond(w, 200, map[string]any{
+		"code":          code,
+		"expires_in":    "10m",
+		"expires_in_ms": remaining,
+		"expires_at":    expiresAt.UTC().Format(time.RFC3339Nano),
+	})
 }
 
 func (s *Server) pairingEnroll(w http.ResponseWriter, r *http.Request) {

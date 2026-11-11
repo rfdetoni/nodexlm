@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 class Element {
-  constructor(tag) {this.tag=tag;this.children=[];this.handlers={};this.style={};this.value='';this.hidden=false;this.disabled=false;this._text='';}
+  constructor(tag) {this.tag=tag;this.children=[];this.handlers={};this.style={};this.value='';this.checked=false;this.hidden=false;this.disabled=false;this._text='';}
   set textContent(value) {this._text=String(value);this.children=[];}
   get textContent() {return this._text+this.children.map(c=>c.textContent).join('');}
   append(...elements) {this.children.push(...elements);}
@@ -22,12 +22,21 @@ let loaded=false;
 let download=null;
 const locals=[];
 const calls=[];
+let pairingCalls = 0;
+let pairingRequestFails = false;
+const documentEvents = {};
 const response=data=>({ok:true,status:200,text:async()=>JSON.stringify(data)});
 const fetch=async (url,options)=>{
   const method=options.method;
   const body=options.body?JSON.parse(options.body):null;
   calls.push({url,method,body});
   if(url==='/api/status')return response({settings:{...settings},runtime:{loaded},download});
+  if(url==='/v1/pairing/start' && method==='POST') {
+    pairingCalls++;
+    if(pairingRequestFails)return {ok:false,status:503,text:async()=>JSON.stringify({error:'Host offline'})};
+    const codes=['ABCD2345','EFGH6789','JKMN2345','PQRS2345'];
+    return response({code:codes[(pairingCalls-1)%codes.length],expires_in:'10m',expires_in_ms:600000});
+  }
   if(url==='/api/models')return response(locals);
   if(url==='/api/resident-models')return response(loaded?[settings.model]:[]);
   if(url==='/v1/nodes')return response([]);
@@ -38,7 +47,9 @@ const fetch=async (url,options)=>{
   if(url==='/api/unload' && method==='POST'){loaded=false;return response({loaded});}
   throw Error(`Unexpected request ${method} ${url}`);
 };
-const sandbox={document:{getElementById:get,createElement:tag=>new Element(tag),hidden:false},sessionStorage:{getItem:()=>null,removeItem(){},setItem(){}},setInterval(){},setTimeout(){},clearTimeout(){},fetch,confirm:()=>true,URL,console};
+const document={getElementById:get,createElement:tag=>new Element(tag),hidden:false,
+ addEventListener(name,handler){documentEvents[name]=handler;}};
+const sandbox={document,performance:{now:()=>Date.now()},sessionStorage:{getItem:()=>null,removeItem(){},setItem(){}},setInterval(){},setTimeout(){},clearTimeout(){},fetch,confirm:()=>true,URL,console};
 vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
@@ -59,6 +70,52 @@ async function main(){
   resourceCard=get('nodeResourceCards').children[0];
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
+  // The pairing code is not an admin session token. Its TTL comes from the Host.
+  assert.equal(vm.runInContext("pairingTTL({expires_in:'10m'})",sandbox),600000);
+  vm.runInContext("token='admin-token'; setupAuth()",sandbox);
+  assert.equal(get('pairAutoRenew').checked,false,'auto-renew must be off by default');
+  await get('pair').handlers.click();
+  assert.equal(pairingCalls,1);
+  assert.equal(get('pairCode').textContent,'ABCD2345');
+  assert.equal(get('pairingSession').hidden,false);
+  assert.match(get('pairCountdown').textContent,/^09:59|10:00$/);
+  vm.runInContext('pairingSession.expiresAt=pairingNow()-1000',sandbox);
+  await vm.runInContext('pairingTick()',sandbox);
+  assert.equal(get('pairCode').textContent,'Código expirado');
+  assert.equal(pairingCalls,1,'expiration alone must not rotate');
+  get('pairAutoRenew').checked=true;
+  await get('pairAutoRenew').handlers.change();
+  assert.equal(pairingCalls,2,'opted-in expiry must rotate');
+  assert.equal(get('pairCode').textContent,'EFGH6789');
+  vm.runInContext('pairingSession.expiresAt=pairingNow()-1000',sandbox);
+  document.hidden=true;
+  await vm.runInContext('pairingTick()',sandbox);
+  assert.equal(pairingCalls,2,'hidden tab must not generate credentials');
+  document.hidden=false;
+  await documentEvents.visibilitychange();
+  assert.equal(pairingCalls,3,'return to visible tab must renew an expired code');
+  // Errors must mask the previous code and throttle retries.
+  pairingRequestFails=true;
+  vm.runInContext('pairingSession.expiresAt=pairingNow()-1000',sandbox);
+  await vm.runInContext('pairingTick()',sandbox);
+  assert.equal(pairingCalls,4);
+  assert.equal(get('pairCode').textContent,'Código expirado');
+  await vm.runInContext('pairingTick()',sandbox);
+  assert.equal(pairingCalls,4,'automatic retry must be rate-limited');
+  pairingRequestFails=false;
+  await vm.runInContext('pairingRetryAt=pairingNow()-1; pairingTick()',sandbox);
+  assert.equal(pairingCalls,5);
+  assert.notEqual(get('pairCode').textContent,'Código expirado');
+  get('pairAutoRenew').checked=false;
+  await get('pairAutoRenew').handlers.change();
+  vm.runInContext('pairingSession.expiresAt=pairingNow()-1000',sandbox);
+  await vm.runInContext('pairingTick()',sandbox);
+  assert.equal(pairingCalls,5,'turning off renewal must prevent rotation');
+  get('logout').handlers.click();
+  assert.equal(get('pairingSession').hidden,true,'logout must hide pairing code');
+  assert.equal(get('pairAutoRenew').checked,false);
+  assert.equal(vm.runInContext('pairingSession',sandbox),null);
+  vm.runInContext("token='admin-token'; setupAuth()",sandbox);
   assert.equal(get('view-overview').hidden,false,'overview should be visible at startup');
   assert.equal(get('view-models').hidden,true,'secondary workspaces should be hidden');
   get('overviewPrompt').value='Explain Q4 quantization';
