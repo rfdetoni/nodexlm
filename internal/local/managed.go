@@ -97,6 +97,7 @@ func (m *Managed) Load(ctx context.Context) error {
 func (m *Managed) Generate(ctx context.Context, request protocol.ChatRequest) (string, error) {
 
 	var answer string
+	m.normalizeModel(&request)
 	err := m.withEndpoint(ctx, func(engine *Engine) error { var err error; answer, err = engine.Generate(ctx, request); return err })
 	return answer, err
 }
