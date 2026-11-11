@@ -70,6 +70,16 @@ async function main(){
   resourceCard=get('nodeResourceCards').children[0];
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
+  // Alternate runtimes must never silently enable incompatible GGML RPC.
+  get('runtimeBackend').value='mistralrs';
+  get('distributed').checked=true;
+  get('runtimeBackend').handlers.change();
+  assert.equal(get('distributed').checked,false,'mistral.rs should clear RPC distribution');
+  assert.equal(get('distributed').disabled,true,'mistral.rs cannot enable the RPC Guest checkbox');
+  assert.equal(vm.runInContext("settingsFromForm('model.gguf').backend",sandbox),'mistralrs');
+  get('runtimeBackend').value='llama.cpp';
+  get('runtimeBackend').handlers.change();
+  assert.equal(get('distributed').disabled,false,'llama.cpp must retain distributed RPC support');
   // The pairing code is not an admin session token. Its TTL comes from the Host.
   assert.equal(vm.runInContext("pairingTTL({expires_in:'10m'})",sandbox),600000);
   vm.runInContext("token='admin-token'; setupAuth()",sandbox);

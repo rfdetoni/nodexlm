@@ -69,3 +69,35 @@ func TestUpdateInvalidatesMeasurementsAfterPerformanceSettingsChange(t *testing.
 		t.Fatal("stale benchmark was retained across tuning change")
 	}
 }
+
+func TestExperimentalBackendSelectionAndGuard(t *testing.T) {
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	config := m.Settings()
+	config.Backend = "unsupported"
+	if err = m.Update(config); err == nil {
+		t.Fatal("unsupported backend accepted")
+	}
+	config.Backend = "mistralrs"
+	config.Distributed = true
+	if err = m.Update(config); err == nil {
+		t.Fatal("mistral.rs accepted as a NodexLM RPC Guest runtime")
+	}
+	config.Distributed = false
+	if err = m.Update(config); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.State()["backend"]; got != "mistralrs" {
+		t.Fatalf("configured backend not exposed: %v", got)
+	}
+	config.Backend = ""
+	if err = m.Update(config); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.State()["backend"]; got != "llama.cpp" {
+		t.Fatalf("backwards-compatible llama default lost: %v", got)
+	}
+}

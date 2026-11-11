@@ -26,5 +26,9 @@ func (e *Engine) OpenAI(ctx context.Context, path string, body []byte, receive f
 	return receive(response.StatusCode, response.Header, response.Body)
 }
 func (m *Managed) OpenAI(ctx context.Context, path string, body []byte, receive func(int, http.Header, io.Reader) error) error {
-	return m.withEndpoint(ctx, func(e *Engine) error { return e.OpenAI(ctx, path, body, receive) })
+	normalized, err := m.normalizeOpenAI(body)
+	if err != nil {
+		return err
+	}
+	return m.withEndpoint(ctx, func(e *Engine) error { return e.OpenAI(ctx, path, normalized, receive) })
 }
