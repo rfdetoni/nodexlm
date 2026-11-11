@@ -1,8 +1,9 @@
 name: Android APK
 
-# Native JNI builds are costly: auto-build debug APKs only when the pinned
-# llama.cpp source/patch or launcher resources change on main. Other builds remain manual or tagged.
-# A successful main build is reused by android-public-download.yml.
+# Android packages need to be rebuilt when their *application sources* change,
+# including Kotlin, JNI/CMake, Gradle and launcher resources. Skip only changes
+# unrelated to Android and published RPC checksum metadata.
+# A successful full APK is published by android-public-download.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -13,12 +14,10 @@ on:
   push:
     branches: [main]
     paths:
+      - 'android/**'
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
-      - 'android/app/src/main/res/drawable/ic_nodexlm_launcher_*.xml'
-      - 'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml'
-      - 'android/app/src/main/res/values/colors.xml'
-      - 'android/app/src/main/AndroidManifest.xml'
+      - 'scripts/apply-rpc-patch.cmake'
       - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
@@ -45,11 +44,21 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             native="$(python3 scripts/native-revision-changed.py)"
-            launcher="$(git diff --name-only HEAD^ HEAD -- android/app/src/main/res/drawable android/app/src/main/res/mipmap-anydpi-v26 android/app/src/main/res/values/colors.xml android/app/src/main/AndroidManifest.xml .github/workflows/android-apk.yml)"
-            if [[ "$native" == "true" || -n "$launcher" ]]; then
+            app_changes="$(git diff --name-only HEAD^ HEAD -- android/ scripts/apply-rpc-patch.cmake .github/workflows/android-apk.yml)"
+            if [[ "$native" == "true" || -n "$app_changes" ]]; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
+              {
+                echo '### Android APK build requested'
+                echo 'App, build configuration, JNI, or pinned native runtime changed.'
+                echo "Source commit: \`$GITHUB_SHA\`"
+              } >> "$GITHUB_STEP_SUMMARY"
             else
               echo "changed=false" >> "$GITHUB_OUTPUT"
+              {
+                echo '### Android APK unchanged: build skipped'
+                echo 'Only published native-checksum metadata changed; no Android rebuild needed.'
+                echo "Source commit: \`$GITHUB_SHA\`"
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
   build:
@@ -176,6 +185,7 @@ jobs:
           mkdir -p dist
           cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-android10-plus-debug.apk"
           sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
+          echo "Built debug APK from \`$GITHUB_SHA\` (ARMv7 + ARM64, minSdk 29)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload debug APK
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
