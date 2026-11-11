@@ -4,6 +4,12 @@ name: Pinned Linux RPC runtime
 # artifact at runtime so regular Linux Guests do not need CMake or compilers.
 on:
   workflow_dispatch:
+  # Only the native patch/build recipe triggers the expensive C++ job.
+  push:
+    branches: [main]
+    paths:
+      - 'internal/llamaruntime/patches/parallel-rpc-loader.patch'
+      - '.github/workflows/rpc-runtime.yml'
 
 permissions:
   contents: write
@@ -26,7 +32,7 @@ jobs:
           import json,os,pathlib
           revision=json.loads(pathlib.Path("internal/llamaruntime/revision.json").read_text())
           with open(os.environ["GITHUB_ENV"],"a") as env:
-              for key,value in {"LLAMA_VERSION":revision["version"],"LLAMA_COMMIT":revision["commit"],"RPC_RELEASE":revision["rpc_release"]}.items():
+              for key,value in {"LLAMA_VERSION":revision["version"],"LLAMA_COMMIT":revision["commit"],"RPC_RELEASE":revision.get("rpc_candidate_release",revision["rpc_release"])}.items():
                   env.write(f"{key}={value}\n")
           PY
       - name: Toolchain
@@ -39,8 +45,11 @@ jobs:
           set -euo pipefail
           git clone --quiet --depth=1 --branch "$LLAMA_VERSION" https://github.com/ggml-org/llama.cpp.git llama-source
           test "$(git -C llama-source rev-parse HEAD)" = "$LLAMA_COMMIT"
-      - name: Apply pinned Unix RPC patch
-        run: git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+      - name: Apply pinned transport and parallel loader patches
+        run: |
+          set -euo pipefail
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
       - name: Build matched static CPU RPC pair
         shell: bash
         run: |
@@ -64,6 +73,9 @@ jobs:
           fi
           output="$(build/bin/llama-server --help 2>&1 || true)"
           grep -Fq -- '--rpc' <<< "$output" || { echo "::error::llama-server is missing --rpc"; exit 1; }
+          strings build/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled' >/dev/null || {
+            echo "::error::parallel RPC tensor loader is missing from native binary"; exit 1;
+          }
           mkdir -p staging/bin dist
           cp -L build/bin/llama-server "build/bin/$rpc" staging/bin/
           # Upstream places ELF shared libraries in multiple CMake output

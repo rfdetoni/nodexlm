@@ -467,7 +467,7 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		slog.Info("Distributed model placement planned", "selected_guests", len(selection.Guests),
 			"available_guests", len(guests), "host_layers", localLayers, "total_layers", model.BlockCount,
-			"strategy", s.PlacementStrategy)
+			"strategy", s.PlacementStrategy, "parallel_rpc_upload", len(selection.Guests) > 1)
 		m.mu.Lock()
 		m.loadRPCNodes = selectedIDs
 		m.mu.Unlock()
