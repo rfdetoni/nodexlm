@@ -36,6 +36,33 @@ O heartbeat informa RAM e, quando o driver Vulkan expõe valores, informações 
 
 O Android utiliza um serviço em primeiro plano, wake lock de CPU e bloqueio de economia de energia do Wi-Fi durante a atividade. Isso aumenta o consumo e aquece o aparelho. Algumas ROMs ainda interrompem serviços bloqueados; habilite operação sem restrição nas configurações de bateria se necessário.
 
+### Limites de contribuição e comportamento com a tela apagada
+
+Em **Ajustes**, configure:
+
+- **Contribuição máxima de RAM (MiB):** `0` utiliza o orçamento automático; um valor positivo limita **o quanto este celular pode oferecer ao Host**, não a RAM total do aparelho.
+- **Reserva mínima de RAM (MiB):** pelo menos `1024`, preservada antes da margem adicional de 20% para KV e buffers. Uma reserva maior reduz a capacidade oferecida.
+- **Threads nativas da CPU:** `0` escolhe um valor conservador; é possível escolher de 1 a 8, limitado aos núcleos disponíveis. Alterações exigem reiniciar o Guest. Mais threads não garantem mais tokens/s.
+
+O heartbeat informa **RAM física disponível também no modo GPU-only**. Vulkan no Android é classificado como memória **compartilhada**, e o Host limita o orçamento ao menor teto físico/configurado conhecido; não soma as mesmas páginas entre CPU e GPU. Os valores são estimativas de admissão, não uma confirmação de que determinado modelo ou contexto cabe no driver. O app registra o histórico de término por falta de memória no Android 11+ quando essa informação está disponível.
+
+O Guest permanece um serviço foreground iniciado pelo usuário, com notificação e botão de parada. No Android 10–13, o lock `WIFI_MODE_FULL_HIGH_PERF` pode ajudar com a tela apagada; no Android 14+, a plataforma converte esse lock em `LOW_LATENCY`, cuja eficácia é limitada à tela ligada/app em primeiro plano. **Nenhum deles garante rede contínua durante Doze, políticas OEM ou desconexões**. O wake lock de CPU não substitui permissão de rede, Wi-Fi nem teste real de tela apagada.
+
+Falhas permanentes de autorização do túnel (HTTP 401/403) interrompem o Guest; perda temporária de rede aplica espera limitada e jitter; saturação HTTP 503 aumenta o intervalo. A reconexão não recupera buffers ou KV cache da sessão RPC perdida.
+
+### Aceite físico reproduzível
+
+Registre modelo/SoC, API, ROM, arquitetura, driver GPU, alimentação e estado da otimização de bateria. Compare o mesmo GGUF/hash, contexto, batch e prompt entre Host sozinho, Host+Linux e Host+Android CPU/Vulkan; capture primeiro token, tokens/s sustentados, aquecimento e memória. Repita com tela apagada por 30–60 minutos, intercale Wi-Fi/Doze e verifique o Host e o Android após falhas. Um teste sintético com `adb shell dumpsys deviceidle force-idle` não comprova comportamento de todas as ROMs.
+
+O coletor já existente pode gerar medições (não inclua tokens de autenticação no relatório):
+
+```sh
+python3 scripts/hardware-acceptance.py --model modelo.gguf \
+  --node ID_DO_NODE --repeat 10 --output android-cpu.json
+```
+
+Teste um aparelho e modo de backend por vez. O relatório do coletor **não constitui aceite físico automático**, e resultados antes/depois só são comparáveis com parâmetros idênticos.
+
 ## Quando a GPU não aparece
 
 - Verifique se o dispositivo usa **ARM64**.
