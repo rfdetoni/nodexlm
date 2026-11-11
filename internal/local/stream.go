@@ -111,9 +111,11 @@ func (m *Managed) withEndpoint(ctx context.Context, generate func(*Engine) error
 	return generate(m.endpoint)
 }
 func (m *Managed) GenerateStream(ctx context.Context, req protocol.ChatRequest, emit func([]byte) error) error {
+	m.normalizeModel(&req)
 	return m.withEndpoint(ctx, func(engine *Engine) error { return engine.GenerateStream(ctx, req, emit) })
 }
 func (m *Managed) Complete(ctx context.Context, req protocol.ChatRequest) (json.RawMessage, error) {
+	m.normalizeModel(&req)
 	var raw json.RawMessage
 	err := m.withEndpoint(ctx, func(engine *Engine) error { var err error; raw, err = engine.Complete(ctx, req); return err })
 	return raw, err

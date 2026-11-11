@@ -381,6 +381,7 @@ func (h *Hub) ReadyNodes() map[string]string {
 	}
 	return out
 }
+
 // IdleNodes is used to admit NEW model loads. Busy Guests remain connected
 // but should not be selected for another load without an available RPC tunnel.
 func (h *Hub) IdleNodes() map[string]string {

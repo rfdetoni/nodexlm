@@ -844,6 +844,8 @@ func localChat(args []string) error {
 	path := f.String("model", "", "local GGUF file path")
 	prompt := f.String("prompt", "", "prompt")
 	bin := f.String("llama-bin", "llama-server", "llama-server binary")
+	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp or experimental mistralrs")
+	mistralBin := f.String("mistralrs-bin", "", "mistral.rs executable; requires NODEXLM_EXPERIMENTAL_MISTRALRS=1")
 	threads := f.Int("threads", 0, "CPU threads")
 	gpu := f.String("gpu-layers", "auto", "GPU layers")
 	moeCPU := f.Bool("moe-cpu", false, "keep all MoE experts in CPU RAM")
@@ -863,11 +865,20 @@ func localChat(args []string) error {
 			cpu = 1
 		}
 	}
-	resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), config.DefaultDir(), *bin)
-	if resolveErr != nil {
-		return resolveErr
+	resolved := ""
+	switch local.EffectiveBackend(*engineName) {
+	case local.BackendLlama:
+		var resolveErr error
+		resolved, resolveErr = llamaruntime.AutoExecutable(context.Background(), config.DefaultDir(), *bin)
+		if resolveErr != nil {
+			return resolveErr
+		}
+	case local.BackendMistralRS:
+		resolved = *mistralBin
+	default:
+		return fmt.Errorf("unknown inference engine: %s", *engineName)
 	}
-	engine := &local.Managed{Binary: resolved, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 	defer engine.Close()
 	c, cancel := ctx()
 	defer cancel()

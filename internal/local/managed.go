@@ -31,6 +31,7 @@ import (
 type Managed struct {
 	mu                                           sync.Mutex
 	Binary, ModelPath, Alias                     string
+	Backend                                      string
 	Threads, ContextTokens                       int
 	GPULayers                                    string
 	MoECPU                                       bool
@@ -96,6 +97,7 @@ func (m *Managed) Load(ctx context.Context) error {
 func (m *Managed) Generate(ctx context.Context, request protocol.ChatRequest) (string, error) {
 
 	var answer string
+	m.normalizeModel(&request)
 	err := m.withEndpoint(ctx, func(engine *Engine) error { var err error; answer, err = engine.Generate(ctx, request); return err })
 	return answer, err
 }
@@ -103,7 +105,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if m.started != nil {
 		return nil
 	}
-	if m.Binary == "" || m.Binary == "llama-server" {
+	if EffectiveBackend(m.Backend) == BackendLlama && (m.Binary == "" || m.Binary == "llama-server") {
 		executable, err := llamaruntime.AutoExecutable(ctx, config.DefaultDir(), m.Binary)
 		if err != nil {
 			return fmt.Errorf("llama.cpp automatic installation failed: %w", err)
@@ -132,8 +134,10 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("invalid GGUF model: %w", err)
 	}
-	if err := m.validateMoE(meta); err != nil {
-		return err
+	if EffectiveBackend(m.Backend) == BackendLlama {
+		if err := m.validateMoE(meta); err != nil {
+			return err
+		}
 	}
 	if len(m.RPCServers) > 0 {
 		if meta.BlockCount == 0 {
@@ -166,27 +170,18 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if gpu == "" {
 		gpu = "auto"
 	}
-	// Native llama-server listens on loopback but is reachable by local users.
-	// Authenticate inference to avoid exposing the loaded model to other apps.
-	apiKey, err := config.RandomSecret()
+	launch, err := m.backendLaunch(port, nctx, threads, gpu, meta)
 	if err != nil {
-		return fmt.Errorf("generate local inference credential: %w", err)
+		return err
 	}
-	args := m.args(port, nctx, threads, gpu, meta.BlockCount)
-	// Dedicated embedding GGUFs advertise pooled output in their metadata.
-	// Each resident owns its process, so chat and embeddings can coexist.
-	if meta.PoolingType >= 1 && meta.PoolingType <= 4 {
-		args = append(args, "--embedding")
-	}
-	// Keep the native inference credential out of process argument listings.
-	cmd := exec.Command(m.Binary, args...)
-	cmd.Env = append(os.Environ(), "LLAMA_API_KEY="+apiKey)
+	cmd := exec.Command(launch.Binary, launch.Args...)
+	cmd.Env = append(os.Environ(), launch.Env...)
 	process.KillWithParent(cmd)
 	cmd.Stdout = io.Discard
 	stderr := &nativeLogTail{}
 	cmd.Stderr = io.MultiWriter(debuglog.NativeOutput(), stderr)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to launch llama-server: %w", err)
+		return fmt.Errorf("failed to launch %s: %w", EffectiveBackend(m.Backend), err)
 	}
 	exit := &nativeProcessExit{done: make(chan struct{})}
 	go func() {
@@ -202,31 +197,29 @@ func (m *Managed) ensure(ctx context.Context) error {
 		stopProcess()
 		return err
 	}
-	endpoint.APIKey = apiKey
-	timeout := 90 * time.Second
-	if len(m.RPCServers) > 0 {
-		// Slow RPC links may take many minutes just to transfer model tensors.
-		// A caller can still cancel at any point.
-		timeout = 75 * time.Minute
-	}
+	endpoint.APIKey = launch.APIKey
+	timeout := launch.Timeout
 	startup, stop := context.WithTimeout(ctx, timeout)
 	defer stop()
 	for {
 		select {
 		case <-exit.done:
-			return fmt.Errorf("llama-server exited while loading the model: %v; recent stderr: %s", exit.err, stderr.String())
+			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 		default:
 		}
-		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+"/health", nil)
+		req, err := http.NewRequestWithContext(startup, "GET", endpoint.BackendURL+launch.ReadyPath, nil)
 		if err == nil {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
+			if launch.APIKey != "" {
+				req.Header.Set("Authorization", "Bearer "+launch.APIKey)
+			}
 			res, requestErr := endpoint.HTTP.Do(req)
 			if requestErr == nil {
+				ready := backendIsReady(EffectiveBackend(m.Backend), res)
 				res.Body.Close()
-				if res.StatusCode == http.StatusOK {
+				if ready {
 					select {
 					case <-exit.done:
-						return fmt.Errorf("llama-server exited before becoming ready: %v; recent stderr: %s", exit.err, stderr.String())
+						return fmt.Errorf("%s exited before becoming ready: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 					default:
 					}
 					m.started = cmd
@@ -238,13 +231,13 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 		select {
 		case <-exit.done:
-			return fmt.Errorf("llama-server exited while loading the model: %v; recent stderr: %s", exit.err, stderr.String())
+			return fmt.Errorf("%s exited while loading the model: %v; recent stderr: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
 		case <-startup.Done():
 			stopProcess()
 			if errors.Is(startup.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("llama-server was not ready after %s; for RPC check Guest connectivity and native stderr: %s", timeout, stderr.String())
+				return fmt.Errorf("%s not ready after %s; check model and stderr: %s", EffectiveBackend(m.Backend), timeout, stderr.String())
 			}
-			return fmt.Errorf("llama-server startup cancelled: %w", startup.Err())
+			return fmt.Errorf("%s startup cancelled: %w", EffectiveBackend(m.Backend), startup.Err())
 		case <-time.After(250 * time.Millisecond):
 		}
 	}

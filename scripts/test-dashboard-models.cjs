@@ -70,6 +70,16 @@ async function main(){
   resourceCard=get('nodeResourceCards').children[0];
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
+  // Alternate runtimes must never silently enable incompatible GGML RPC.
+  get('runtimeBackend').value='mistralrs';
+  get('distributed').checked=true;
+  get('runtimeBackend').handlers.change();
+  assert.equal(get('distributed').checked,false,'mistral.rs should clear RPC distribution');
+  assert.equal(get('distributed').disabled,true,'mistral.rs cannot enable the RPC Guest checkbox');
+  assert.equal(vm.runInContext("settingsFromForm('model.gguf').backend",sandbox),'mistralrs');
+  get('runtimeBackend').value='llama.cpp';
+  get('runtimeBackend').handlers.change();
+  assert.equal(get('distributed').disabled,false,'llama.cpp must retain distributed RPC support');
   const stalledLoad={settings:{model:'test.gguf'},runtime:{loading:true,phase:'loading_model',
     elapsed_seconds:190,phase_elapsed_seconds:180,rpc_transfer:{'guest-123':{
       to_guest_bytes:0,from_guest_bytes:0,connected:1,idle:0,last_activity_ms:0}}}};
