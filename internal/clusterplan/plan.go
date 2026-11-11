@@ -14,18 +14,18 @@ const MiB uint64 = 1 << 20
 const GiB uint64 = 1 << 30
 
 type NodeCapacity struct {
-	ID                    string                      `json:"id"`
-	Name                  string                      `json:"name"`
-	Platform              string                      `json:"platform"`
-	CPUCount              int                         `json:"cpu_count"`
-	RAMBytes              uint64                      `json:"ram_bytes"`
-	AvailableRAMBytes     uint64                      `json:"available_ram_bytes"`
-	FreeVRAMBytes         uint64                      `json:"free_vram_bytes"`
-	ReservedUsableBytes   uint64                      `json:"estimated_model_budget_bytes"`
-	MaxContributionBytes  uint64                      `json:"max_contribution_bytes,omitempty"`
-	MemoryReserveBytes    uint64                      `json:"memory_reserve_bytes,omitempty"`
-	Runtime               protocol.RuntimeCapability  `json:"runtime"`
-	Status                string                      `json:"status"`
+	ID                   string                     `json:"id"`
+	Name                 string                     `json:"name"`
+	Platform             string                     `json:"platform"`
+	CPUCount             int                        `json:"cpu_count"`
+	RAMBytes             uint64                     `json:"ram_bytes"`
+	AvailableRAMBytes    uint64                     `json:"available_ram_bytes"`
+	FreeVRAMBytes        uint64                     `json:"free_vram_bytes"`
+	ReservedUsableBytes  uint64                     `json:"estimated_model_budget_bytes"`
+	MaxContributionBytes uint64                     `json:"max_contribution_bytes,omitempty"`
+	MemoryReserveBytes   uint64                     `json:"memory_reserve_bytes,omitempty"`
+	Runtime              protocol.RuntimeCapability `json:"runtime"`
+	Status               string                     `json:"status"`
 }
 type Summary struct {
 	Nodes                  []NodeCapacity `json:"nodes"`
