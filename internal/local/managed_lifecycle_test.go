@@ -25,7 +25,7 @@ func TestManagedInvalidatesExitedRuntime(t *testing.T) {
 		close(exit.done)
 	}()
 	<-exit.done
-	m := &Managed{started: cmd, processExit: exit, endpoint: &Engine{}}
+	m := &Managed{Binary: "test-managed-without-autoinstall", started: cmd, processExit: exit, endpoint: &Engine{}}
 	err := m.Load(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "local model path required") {
 		t.Fatalf("expected fresh-start validation, got %v", err)
