@@ -135,7 +135,11 @@ internal object UpdateFeed {
             if (prefs.getInt("version", -1) == checked.versionCode &&
                 prefs.getString("sha256", "") == checked.sha256 &&
                 existing != null && existing != DownloadManager.STATUS_FAILED) {
-                return previous
+                // Explicit download may override an automatic transfer
+                // waiting for unmetered Wi-Fi; DownloadManager's network
+                // policy cannot be edited after a request is enqueued.
+                if (!allowMetered || (existing != DownloadManager.STATUS_PENDING &&
+                        existing != DownloadManager.STATUS_PAUSED)) return previous
             }
             manager.remove(previous)
         }
