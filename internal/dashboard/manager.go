@@ -128,6 +128,11 @@ type RPCGuest struct {
 	Name          string
 	Endpoint      string
 	CapacityBytes uint64
+	// RPCDeviceKinds mirrors the worker's native ggml-rpc-server order.
+	// nil means unknown/legacy: never assume whether that Guest exposes CPU.
+	RPCDeviceKinds []string
+	RAMBudgetBytes uint64
+	GPUBudgetBytes uint64
 }
 
 func (m *Manager) SetRPCProvider(provider func() []RPCGuest) {
