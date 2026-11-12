@@ -36,9 +36,95 @@ type Summary struct {
 	Disclaimer             string         `json:"disclaimer"`
 }
 
+// RPCDeviceMemory is a conservative, non-overlapping budget for the RAM and
+// dedicated VRAM actually exposed by a native worker. Shared GPU memory is
+// already part of RAM and must never be counted twice.
+type RPCDeviceMemory struct {
+	RAM uint64
+	GPU uint64
+}
+
+// exposedRPCMemory budgets GPU and RAM independently, with separate runtime
+// reserves, rather than assuming GPU memory is backed by system RAM.
+func exposedRPCMemory(d protocol.Device) RPCDeviceMemory {
+	ram := d.AvailableRAMBytes
+	if d.RAMBytes > 0 && ram > d.RAMBytes {
+		ram = d.RAMBytes
+	}
+	ramReserve := GiB
+	if d.MemoryReserveBytes > ramReserve {
+		ramReserve = d.MemoryReserveBytes
+	}
+	var result RPCDeviceMemory
+	if ram > ramReserve {
+		result.RAM = (ram - ramReserve) * 80 / 100
+	}
+
+	// A separate VRAM contribution exists only when the driver explicitly
+	// reports dedicated memory; Android/iGPU shared heaps must not inflate it.
+	var dedicated uint64
+	for _, gpu := range d.GPUs {
+		if gpu.MemoryType != "dedicated" || d.Platform == "android" ||
+			gpu.FreeVRAMBytes == 0 {
+			continue
+		}
+		free := gpu.FreeVRAMBytes
+		if gpu.VRAMBytes > 0 && free > gpu.VRAMBytes {
+			free = gpu.VRAMBytes
+		}
+		// Reserve at least 512 MiB per GPU for driver/kernel/graph buffers.
+		if free > 512*MiB {
+			add := (free - 512*MiB) * 80 / 100
+			if add <= ^uint64(0)-dedicated {
+				dedicated += add
+			}
+		}
+	}
+	result.GPU = dedicated
+	return result
+}
+
+// RPCMemory returns the budget for the known native device topology.
+// Legacy/Android clients without device kinds retain the conservative max
+// RAM/VRAM calculation; they do not claim hybrid capacity.
+func RPCMemory(d protocol.Device) RPCDeviceMemory {
+	budget := exposedRPCMemory(d)
+	var hasCPU, hasGPU bool
+	for _, kind := range d.Runtime.RPCDevices {
+		switch kind {
+		case "cpu":
+			hasCPU = true
+		case "gpu":
+			hasGPU = true
+		default:
+			return RPCDeviceMemory{}
+		}
+	}
+	if !hasCPU {
+		budget.RAM = 0
+	}
+	if !hasGPU {
+		budget.GPU = 0
+	}
+	return budget
+}
+
+// Budget is a single-node model-weight budget, not physical system memory.
+// For verified dedicated-GPU hybrid workers, GPU and CPU are separate GGML
+// devices and their independent budgets may be combined. All other workers
+// preserve the old no-double-counting behavior.
 func Budget(d protocol.Device) uint64 {
-	// This is one whole-node budget, never RAM + VRAM. Shared GPU heaps
-	// cannot increase the physical RAM actually available to the process.
+	if len(d.Runtime.RPCDevices) > 0 {
+		memory := RPCMemory(d)
+		total := memory.RAM
+		if memory.GPU <= ^uint64(0)-total {
+			total += memory.GPU
+		}
+		if d.MaxContributionBytes > 0 && total > d.MaxContributionBytes {
+			total = d.MaxContributionBytes
+		}
+		return total
+	}
 	avail := d.AvailableRAMBytes
 	if d.RAMBytes > 0 && avail > d.RAMBytes {
 		avail = d.RAMBytes
@@ -47,15 +133,10 @@ func Budget(d protocol.Device) uint64 {
 		free := g.FreeVRAMBytes
 		switch {
 		case d.Platform == "android" || g.MemoryType == "shared":
-			// A legacy Android GPU report is shared even if not annotated.
-			// Unknown system availability is not unlimited shared VRAM.
 			if free > d.AvailableRAMBytes {
 				free = d.AvailableRAMBytes
 			}
 		case g.MemoryType != "dedicated":
-			// Unknown memory type is not proof of separate VRAM. An
-			// absent system-availability measurement cannot authorize
-			// allocations based on the driver's GPU heap counter.
 			if d.AvailableRAMBytes == 0 {
 				free = 0
 			} else if free > d.AvailableRAMBytes {
@@ -76,11 +157,11 @@ func Budget(d protocol.Device) uint64 {
 	if avail <= reserve {
 		return 0
 	}
-	budget := (avail - reserve) * 80 / 100
-	if d.MaxContributionBytes > 0 && budget > d.MaxContributionBytes {
-		budget = d.MaxContributionBytes
+	total := (avail - reserve) * 80 / 100
+	if d.MaxContributionBytes > 0 && total > d.MaxContributionBytes {
+		total = d.MaxContributionBytes
 	}
-	return budget
+	return total
 }
 func Aggregate(devices []protocol.Device, now time.Time) Summary {
 	out := Summary{Nodes: make([]NodeCapacity, 0, len(devices)), Disclaimer: "Memory estimates are conservative and do not guarantee model compatibility, RPC network throughput, or KV cache fit. Single-model RPC execution is experimental; compatibility and network performance must be validated."}
