@@ -17,10 +17,10 @@ type InferenceSample struct {
 	TokensPerSecond float64   `json:"tokens_per_second"`
 	// benchmark = identical fixed prompt/output run on Host or a Guest.
 	// live measurements must never be used to select faster hardware.
-	Kind            string    `json:"kind,omitempty"`
+	Kind string `json:"kind,omitempty"`
 	// native_decode uses the llama.cpp predicted_ms timing. When absent,
 	// rate includes prefill and first-token latency (end_to_end).
-	RateBasis       string    `json:"rate_basis,omitempty"`
+	RateBasis string `json:"rate_basis,omitempty"`
 }
 
 func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duration) {
