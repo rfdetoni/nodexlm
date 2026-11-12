@@ -81,9 +81,9 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			}
 			return clusterplan.Selection{
 				LocalLayers: 0,
-				Guests: []clusterplan.Candidate{{ID: best.ID, CapacityBytes: best.CapacityBytes}},
-				Excluded: excluded,
-				Reason: "Single remote Guest benchmark exceeded Host-only decode by at least 15%; no layer splitting between Host and Guest",
+				Guests:      []clusterplan.Candidate{{ID: best.ID, CapacityBytes: best.CapacityBytes}},
+				Excluded:    excluded,
+				Reason:      "Single remote Guest benchmark exceeded Host-only decode by at least 15%; no layer splitting between Host and Guest",
 			}, nil
 		}
 		excluded := make([]string, 0, len(guests))
