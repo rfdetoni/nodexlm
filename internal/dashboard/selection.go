@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
@@ -22,6 +23,27 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 	samples := m.InferenceSamples()
 	now := time.Now()
 	strategy := effectivePlacementStrategy(s.PlacementStrategy)
+	// A connected Guest is optional for local inference, even when an older
+	// runtime.json explicitly saved "capacity" with distributed=true.
+	// Prefer the Host if there is no usable RPC provider, but never silently
+	// overcommit its RAM. Plan() and load() both call this same decision.
+	if len(guests) == 0 {
+		if meta.BlockCount == 0 {
+			return clusterplan.Selection{}, errors.New("GGUF block_count is required for distributed placement")
+		}
+		if size == 0 || size > ^uint64(0)/115 || size*115/100 > hostBudget {
+			return clusterplan.Selection{}, fmt.Errorf(
+				"nenhum Guest RPC conectado e memória local insuficiente: modelo de %d MiB requer margem para pesos e contexto, Host dispõe de %d MiB; conecte um Guest, reduza o modelo ou libere memória no Host",
+				size/clusterplan.MiB, hostBudget/clusterplan.MiB)
+		}
+		if err := validatePlacementMemory(meta, s, size, hostBudget, nil); err != nil {
+			return clusterplan.Selection{}, fmt.Errorf("nenhum Guest RPC conectado e o modelo não cabe integralmente no Host: %w", err)
+		}
+		return clusterplan.Selection{
+			LocalLayers: int(meta.BlockCount),
+			Reason:      "Nenhum Guest RPC conectado: executando o modelo integralmente no Host, sem exigir pareamento; a distribuição poderá ser utilizada quando houver Guests",
+		}, nil
+	}
 	// When the complete GGUF and context fit on the Host, split execution
 	// incurs extra RPC synchronization on EVERY decoded token. A remote
 	// benchmark may only beat Host-only when both were measured with the same
