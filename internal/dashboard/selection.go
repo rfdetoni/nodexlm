@@ -33,7 +33,9 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		validatePlacementMemory(meta, s, size, hostBudget, nil) == nil &&
 		meta.BlockCount > 0 {
 		var hostSpeed float64
+		var hostBasis string
 		guestSpeed := make(map[string]float64, len(guests))
+		guestBasis := make(map[string]string, len(guests))
 		for _, sample := range samples {
 			if sample.Kind != "benchmark" || sample.TokensPerSecond <= 0 ||
 				sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour {
@@ -41,10 +43,12 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			}
 			if sample.Model == s.Model {
 				hostSpeed = sample.TokensPerSecond
+				hostBasis = sample.RateBasis
 			}
 			for _, guest := range guests {
 				if sample.Model == s.Model+"@"+guest.ID {
 					guestSpeed[guest.ID] = sample.TokensPerSecond
+					guestBasis[guest.ID] = sample.RateBasis
 				}
 			}
 		}
@@ -58,7 +62,7 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 				guest := &guests[i]
 				measured := guestSpeed[guest.ID]
 				if measured <= hostSpeed*1.15 || measured <= bestSpeed ||
-					guest.CapacityBytes < required {
+					guestBasis[guest.ID] != hostBasis || guest.CapacityBytes < required {
 					continue
 				}
 				candidate := clusterplan.Candidate{ID: guest.ID, CapacityBytes: guest.CapacityBytes}
