@@ -15,6 +15,7 @@ A interface preserva os campos JSON e o streaming do runtime `llama.cpp b12255`,
 | Structured Outputs | `response_format` JSON/JSON Schema, inclusive `strict`, encaminhado ao gerador de gramática nativo |
 | Amostragem | `temperature`, `top_p`, penalidades, `seed`, `stop`, logprobs e demais campos de inferência chegam ao runtime; a capacidade efetiva depende do modelo/runtime |
 | Limites de saída | `max_completion_tokens` aceito e convertido ao parâmetro nativo; `max_tokens` legado continua disponível; enviar ambos é erro |
+| Thinking / effort (Chat Completions) | `reasoning_effort` pode ser `none`, `minimal`, `low`, `medium`, `high`, `xhigh` ou `max`; `reasoning_budget_tokens` é opcional. Validação ocorre antes do encaminhamento. O template Jinja do GGUF determina se os níveis geram comportamento distinto. |
 | `POST /v1/completions` | Contrato nativo de completions, inclusive streaming |
 | `POST /v1/responses` | Input textual/itens, instruções, ferramentas, formato de saída, uso e eventos SSE nomeados |
 | Continuação | `previous_response_id` recupera input/output anteriores, isolados pela credencial; instruções anteriores não são reinseridas |
@@ -56,6 +57,20 @@ continued = client.responses.create(
     max_output_tokens=256,
 )
 print(continued.output_text)
+```
+
+Para controlar thinking no chat local, o painel oferece **Automático**, **Desativado**, **Mínimo**, **Baixo**, **Médio**, **Alto**, **Muito alto** e **Máximo**, além de orçamento de tokens (0 omite a restrição por pedido). As preferências de effort/orçamento ficam apenas no `localStorage` desse navegador e não mudam as configurações globais do Host. Um GGUF sem suporte de template à distinção de esforços pode ignorar os níveis; a presença da opção não garante raciocínio interno, exposição do traço ou ganho de qualidade. A API valida números e combinações incompatíveis (por exemplo, `none` com orçamento positivo); o runtime fixa as regras efetivas.
+
+Exemplo com o SDK OpenAI para llama.cpp:
+
+```python
+result = client.chat.completions.create(
+    model=model,
+    messages=[{"role": "user", "content": "Resolva o problema."}],
+    reasoning_effort="high",
+    max_completion_tokens=1024,
+    extra_body={"reasoning_budget_tokens": 256},
+)
 ```
 
 Para streaming, use `stream=True` em Chat Completions/Responses ou `client.responses.stream(...)`. Os eventos preservam tipo, índices, IDs e deltas de argumentos. O adaptador corrige o snapshot inicial `output:null` de versões nativas para `output:[]`, necessário ao acumulador do SDK.
