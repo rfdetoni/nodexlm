@@ -21,7 +21,7 @@ class RuntimeLogFormatTest {
             "123\tHOST\tINFO\tUNKNOWN\t0",
             "123\tHOST\tINFO\tHOST_RETRY\t0\tsecret",
             "123\tOTHER\tINFO\tHOST_RETRY\t0",
-            "123\tHOST\tWARN\tHOST_RETRY\t${String(\"fake\")}",
+            "123\tHOST\tWARN\tHOST_RETRY\tbogus",
             "abc\tHOST\tINFO\tHOST_RETRY\t0"
         )) assertNull("Unexpected decoded log: $value", RuntimeLogFormat.decode(value))
     }
