@@ -183,18 +183,26 @@ func TestLANHandlerRejectsAdministrativeRoutes(t *testing.T) {
 
 func TestHeartbeatDrainingExcludesGuestFromAdmission(t *testing.T) {
 	s, err := New(adminSecret, joinSecret)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := s.Handler()
 	enroll := call(t, h, "POST", "/v1/nodes/enroll", joinSecret, "",
 		protocol.Enrollment{Device: protocol.Device{Name: "phone", Platform: "android", CPUCount: 8}})
-	if enroll.Code != 201 { t.Fatalf("enroll: %d %s", enroll.Code, enroll.Body.String()) }
+	if enroll.Code != 201 {
+		t.Fatalf("enroll: %d %s", enroll.Code, enroll.Body.String())
+	}
 	var cred protocol.Credential
-	if err := json.Unmarshal(enroll.Body.Bytes(), &cred); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(enroll.Body.Bytes(), &cred); err != nil {
+		t.Fatal(err)
+	}
 	profile := protocol.Device{Name: "phone", Platform: "android", CPUCount: 8,
 		RAMBytes: 8 << 30, AvailableRAMBytes: 4 << 30, Status: "draining",
 		UnavailableReason: "thermal", Runtime: protocol.RuntimeCapability{Installed: true}}
 	out := call(t, h, "POST", "/v1/nodes/heartbeat", cred.Token, cred.NodeID, profile)
-	if out.Code != 200 { t.Fatalf("heartbeat: %d %s", out.Code, out.Body.String()) }
+	if out.Code != 200 {
+		t.Fatalf("heartbeat: %d %s", out.Code, out.Body.String())
+	}
 	devices := s.DevicesSnapshot()
 	if len(devices) != 1 || devices[0].Status != "draining" ||
 		devices[0].UnavailableReason != "thermal" || devices[0].Runtime.RPCReady {
@@ -203,7 +211,9 @@ func TestHeartbeatDrainingExcludesGuestFromAdmission(t *testing.T) {
 	profile.Status = ""
 	profile.UnavailableReason = "stale"
 	out = call(t, h, "POST", "/v1/nodes/heartbeat", cred.Token, cred.NodeID, profile)
-	if out.Code != 200 { t.Fatalf("return heartbeat: %d %s", out.Code, out.Body.String()) }
+	if out.Code != 200 {
+		t.Fatalf("return heartbeat: %d %s", out.Code, out.Body.String())
+	}
 	devices = s.DevicesSnapshot()
 	if devices[0].Status != "online" || devices[0].UnavailableReason != "" {
 		t.Fatalf("legacy heartbeat must restore online status: %+v", devices)
