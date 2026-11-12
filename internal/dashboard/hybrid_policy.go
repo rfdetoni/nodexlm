@@ -110,11 +110,17 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		remainingBudget -= chosen.CapacityBytes
 
 		// Reserve for approximate weights and KV per assigned layers.
-		weight := modelBytes * uint64(layers) / uint64(meta.BlockCount)
-		if weight > ^uint64(0)/115 {
+		if uint64(layers) > 0 && modelBytes > ^uint64(0)/uint64(layers) {
 			return RPCDevicePlacement{}
 		}
-		required := weight * 115 / 100
+		weight := modelBytes * uint64(layers) / uint64(meta.BlockCount)
+		if weight > ^uint64(0)/105 {
+			return RPCDevicePlacement{}
+		}
+		// CPU/RAM is not selected unless VRAM cannot cover the model,
+		// explicit KV/batch estimate, and a small tensor overhead.
+		// GPU device budget already reserves headroom separately.
+		required := weight * 105 / 100
 		if transient != nil {
 			if *transient > ^uint64(0)/uint64(layers+1) {
 				return RPCDevicePlacement{}
