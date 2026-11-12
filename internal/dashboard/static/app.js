@@ -377,10 +377,19 @@ async function refresh(){
  if (!settingsInitialized) {
   for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib})) $(id).value=v;
   $('runtimeBackend').value=s.backend||'llama.cpp';
-  $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'capacity'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
+  $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'speed'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
   configureBackendUI();
  }
  renderLocalModels(models,status);renderCatalog();
+ const benchTarget=$('inferenceBenchTarget'), selectedTarget=benchTarget.value;
+ benchTarget.replaceChildren();
+ const hostOption=el('option','', 'Host local (sem RPC)');hostOption.value='';benchTarget.append(hostOption);
+ for(const node of nodes){
+  if(node.status!=='online'||!node.runtime?.rpc_ready||!cluster.rpc_guests?.[node.id])continue;
+  const option=el('option','', (node.name||'Guest')+' · '+(node.platform||'')+' · '+node.id.slice(0,8));
+  option.value=node.id;benchTarget.append(option);
+ }
+ if([...benchTarget.options].some(option=>option.value===selectedTarget))benchTarget.value=selectedTarget;
  const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
  const gpus=Array.isArray(n.gpus)?n.gpus:[];
  const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
@@ -642,12 +651,22 @@ $('loadAdditional').addEventListener('click',()=>guard(async()=>{
 }));
 $('inferenceBench').addEventListener('click',()=>guard(async()=>{
  const button=$('inferenceBench');button.disabled=true;
- try{const sample=await api('/api/bench/inference','POST',{model:$('modelSelect').value});notice(sample.tokens_per_second.toFixed(1)+' tokens/s medidos');await refreshObservations()}finally{button.disabled=false}
+ try{
+   const target=$('inferenceBenchTarget').value;
+   const sample=await api('/api/bench/inference','POST',{model:$('modelSelect').value,node_id:target});
+   const basis=sample.rate_basis==='native_decode'?'decode nativo':'média com prefill';
+   notice((target?'Guest':'Host')+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+basis);
+   await refreshObservations();
+  }finally{button.disabled=false}
 }));
 $('refreshObservations').addEventListener('click',()=>guard(refreshObservations));
 async function refreshObservations(){
  const data=await api('/api/observability');const area=$('observations');area.replaceChildren();
- for(const sample of data.inference)area.append(el('p','',sample.model+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+sample.cached_tokens+' tokens de prompt reutilizados'));
+ for(const sample of data.inference)area.append(el('p','',
+   sample.model+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+
+   (sample.kind==='benchmark'?'benchmark controlado':'medição ao vivo')+' · '+
+   (sample.rate_basis==='native_decode'?'decode nativo':'inclui prefill/TTFT')+
+   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'));
  for(const node of data.nodes){
   const row=el('article','catalog-item');const info=el('div','model-info');info.append(el('strong','',node.node_id.slice(0,12)+'…'),el('p','muted',node.tunnels.connected+' túneis · '+node.reconnect_failures+' falhas de reconexão'));
   const history=node.latency||[];
