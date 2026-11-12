@@ -52,9 +52,9 @@ func ValidateChat(req ChatRequest) string {
 		return "max_tokens exceeds limit"
 	}
 	switch req.ReasoningEffort {
-	case "", "none", "low", "medium", "high", "xhigh":
+	case "", "none", "minimal", "low", "medium", "high", "xhigh", "max":
 	default:
-		return "reasoning_effort must be none, low, medium, high or xhigh"
+		return "reasoning_effort must be none, minimal, low, medium, high, xhigh or max"
 	}
 	if req.ReasoningBudgetTokens < 0 || req.ReasoningBudgetTokens > 4096 {
 		return "reasoning_budget_tokens must be between 0 and 4096"
