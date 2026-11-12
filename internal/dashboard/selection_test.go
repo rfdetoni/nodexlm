@@ -16,8 +16,8 @@ func TestChooseRPCUsesMeasuredInference(t *testing.T) {
 	defer m.Close()
 	slow := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fast := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	m.samples["small.gguf@"+slow] = InferenceSample{Model: "small.gguf@" + slow, MeasuredAt: time.Now(), TokensPerSecond: 2}
-	m.samples["small.gguf@"+fast] = InferenceSample{Model: "small.gguf@" + fast, MeasuredAt: time.Now(), TokensPerSecond: 14}
+	m.samples["small.gguf@"+slow] = InferenceSample{Model: "small.gguf@" + slow, Kind: "benchmark", MeasuredAt: time.Now(), TokensPerSecond: 2}
+	m.samples["small.gguf@"+fast] = InferenceSample{Model: "small.gguf@" + fast, Kind: "benchmark", MeasuredAt: time.Now(), TokensPerSecond: 14}
 	guests := []RPCGuest{{ID: slow, CapacityBytes: 8 * gib}, {ID: fast, CapacityBytes: 8 * gib}}
 	selection, err := m.chooseRPC(Settings{Model: "small.gguf", PlacementStrategy: "speed"}, local.GGUFInfo{BlockCount: 40}, 6*gib, gib, guests)
 	if err != nil {
@@ -61,7 +61,7 @@ func TestUpdateInvalidatesMeasurementsAfterPerformanceSettingsChange(t *testing.
 	}
 	defer m.Close()
 	original := m.Settings()
-	m.samples["old-model@node"] = InferenceSample{Model: "old-model@node", TokensPerSecond: 12, MeasuredAt: time.Now()}
+	m.samples["old-model@node"] = InferenceSample{Model: "old-model@node", TokensPerSecond: 12, MeasuredAt: time.Now(), Kind: "benchmark"}
 	modified := original
 	modified.BatchSize = 512
 	if err := m.Update(modified); err != nil {
@@ -170,5 +170,77 @@ func TestChooseRPCSkipsGuestsWithoutUsableRAM(t *testing.T) {
 	if _, err := m.chooseRPC(settings, meta, 3*gib, gib,
 		[]RPCGuest{{ID: "duplicated", CapacityBytes: 0}, {ID: "duplicated", CapacityBytes: 8 * gib}}); err == nil {
 		t.Fatal("duplicate Guest ID must not become valid after filtering")
+	}
+}
+
+
+func TestSpeedUsesLocalByDefaultAndNeverTrustsUnmeasuredHost(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if m.Settings().PlacementStrategy != "speed" || effectivePlacementStrategy("") != "speed" {
+		t.Fatal("new and legacy settings without explicit strategy must prefer low-latency execution")
+	}
+	node := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	guest := []RPCGuest{{ID: node, CapacityBytes: 8 * gib}}
+	meta := local.GGUFInfo{BlockCount: 32}
+	s := Settings{Model: "small.gguf", PlacementStrategy: ""}
+	// A live Guest sample is not a comparable benchmark. Even a real
+	// Guest benchmark alone cannot prove that it beats an unmeasured Host.
+	m.samples[s.Model+"@"+node] = InferenceSample{
+		Model: s.Model+"@"+node, TokensPerSecond: 35, MeasuredAt: time.Now(), Kind: "benchmark"}
+	choice, err := m.chooseRPC(s, meta, 3*gib, 8*gib, guest)
+	if err != nil || choice.LocalLayers != 32 || len(choice.Guests) != 0 {
+		t.Fatalf("small unmeasured model was distributed needlessly: %+v %v", choice, err)
+	}
+	s.PlacementStrategy = "capacity"
+	capacity, err := m.chooseRPC(s, meta, 3*gib, 8*gib, guest)
+	if err != nil || len(capacity.Guests) != 1 {
+		t.Fatalf("explicit capacity still must allow distribution: %+v %v", capacity, err)
+	}
+}
+
+func TestSpeedRequiresComparableBenchmarksAndRemoteOnlyForFasterGuest(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	node := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	guest := []RPCGuest{{ID: node, CapacityBytes: 8 * gib}}
+	settings := Settings{Model: "small.gguf", ContextTokens: 2048, PlacementStrategy: "speed"}
+	meta := local.GGUFInfo{BlockCount: 32}
+	hostKey, guestKey := settings.Model, settings.Model+"@"+node
+	m.samples[hostKey] = InferenceSample{Model: hostKey, TokensPerSecond: 30,
+		MeasuredAt: time.Now(), Kind: "live"}
+	m.samples[guestKey] = InferenceSample{Model: guestKey, TokensPerSecond: 40,
+		MeasuredAt: time.Now(), Kind: "benchmark"}
+	choice, err := m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
+	if err != nil || len(choice.Guests) != 0 {
+		t.Fatalf("live Host metrics were treated as controlled benchmark: %+v %v", choice, err)
+	}
+	m.samples[hostKey] = InferenceSample{Model: hostKey, TokensPerSecond: 30,
+		MeasuredAt: time.Now(), Kind: "benchmark"}
+	// 10% is smaller than the minimum speed margin.
+	m.samples[guestKey] = InferenceSample{Model: guestKey, TokensPerSecond: 33,
+		MeasuredAt: time.Now(), Kind: "benchmark"}
+	choice, err = m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
+	if err != nil || len(choice.Guests) != 0 {
+		t.Fatalf("noise-level improvement triggered RPC splitting: %+v %v", choice, err)
+	}
+	m.samples[guestKey] = InferenceSample{Model: guestKey, TokensPerSecond: 45,
+		MeasuredAt: time.Now(), Kind: "benchmark"}
+	choice, err = m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
+	if err != nil || choice.LocalLayers != 0 || len(choice.Guests) != 1 {
+		t.Fatalf("faster whole-model Guest was split with slower Host: %+v %v", choice, err)
+	}
+	guest[0].CapacityBytes = 2 * gib // Cannot fit full model.
+	choice, err = m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
+	if err != nil || len(choice.Guests) != 0 {
+		t.Fatalf("Guest-only speed was wrongly applied to an unmeasured split: %+v %v", choice, err)
 	}
 }
