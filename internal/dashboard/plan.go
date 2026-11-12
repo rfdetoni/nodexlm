@@ -17,6 +17,9 @@ import (
 type placement struct {
 	TokensPerSecond *float64             `json:"tokens_per_second,omitempty"`
 	NodeID          string               `json:"node_id,omitempty"`
+	RPCMode         string               `json:"rpc_mode,omitempty"`
+	RAMBudget       uint64               `json:"ram_budget_bytes,omitempty"`
+	VRAMBudget      uint64               `json:"vram_budget_bytes,omitempty"`
 	Name            string               `json:"name"`
 	Network         *rpcmesh.Measurement `json:"network,omitempty"`
 	Endpoint        string               `json:"endpoint"`
@@ -61,6 +64,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 			return nil, selectErr
 		}
 		localLayers = selection.LocalLayers
+		devices := planRPCDevices(selection, guests, meta, settings, uint64(size))
 		excluded = selection.Excluded
 		selectionReason = selection.Reason
 		var total uint64
@@ -74,13 +78,18 @@ func (m *Manager) Plan() (map[string]any, error) {
 				layers = int(uint64(remaining) * guest.CapacityBytes / total)
 			}
 			name, endpoint := guest.ID, ""
+			var ramBudget, vramBudget uint64
 			for _, original := range guests {
 				if original.ID == guest.ID {
 					name, endpoint = original.Name, original.Endpoint
+					ramBudget, vramBudget = original.RAMBudgetBytes, original.GPUBudgetBytes
 					break
 				}
 			}
-			nodes = append(nodes, placement{NodeID: guest.ID, Name: name, Network: m.networkSample(guest.ID), Endpoint: endpoint, Layers: layers, WeightBytes: uint64(size) * uint64(layers) / uint64(meta.BlockCount), Budget: guest.CapacityBytes})
+			nodes = append(nodes, placement{NodeID: guest.ID, Name: name, Network: m.networkSample(guest.ID),
+				Endpoint: endpoint, Layers: layers, WeightBytes: uint64(size) * uint64(layers) / uint64(meta.BlockCount),
+				Budget: guest.CapacityBytes, RPCMode: devices.Modes[guest.ID],
+				RAMBudget: ramBudget, VRAMBudget: vramBudget})
 			remaining -= layers
 			total -= guest.CapacityBytes
 		}
