@@ -199,4 +199,7 @@
     <string name="logs_empty">Não há eventos operacionais para este filtro.</string>
     <string name="logs_count">%1$d eventos recentes</string>
     <string name="logs_clear_confirm">Apagar todos os diagnósticos locais de Host/Guest/atualizações? Esta ação não pode ser desfeita.</string>
+    <string name="logs_mode_rpc">Último modo registrado: Guest RPC</string>
+    <string name="logs_mode_worker">Último modo registrado: worker de inferência</string>
+    <string name="logs_mode_inactive">Último modo registrado: parado/desconhecido</string>
 </resources>
