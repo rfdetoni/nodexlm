@@ -72,6 +72,9 @@ type Device struct {
 	Models          []string          `json:"models,omitempty"`
 	LastSeen        time.Time         `json:"last_seen"`
 	Status          string            `json:"status"`
+	// Authenticated Guest can temporarily withdraw from new placements.
+	// Status "draining" carries a bounded, non-sensitive reason.
+	UnavailableReason string          `json:"unavailable_reason,omitempty"`
 	Busy            bool              `json:"busy"`
 }
 
