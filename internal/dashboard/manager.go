@@ -103,7 +103,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err := os.MkdirAll(modelDir, 0700); err != nil {
 		return nil, err
 	}
-	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, runtime.NumCPU()-1)), ContextTokens: 2048, GPULayers: "auto"}}
+	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, runtime.NumCPU()-1)), ContextTokens: 2048, GPULayers: "auto", PlacementStrategy: "speed"}}
 	b, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
 	if err == nil {
 		if err = json.Unmarshal(b, &m.settings); err != nil {
@@ -427,14 +427,14 @@ func (m *Manager) load(ctx context.Context) error {
 	localLayers := 0
 	if s.Distributed {
 		m.setPhase("selecting_guests")
-		if provider == nil && s.PlacementStrategy != "speed" {
+		if provider == nil && effectivePlacementStrategy(s.PlacementStrategy) != "speed" {
 			return errors.New("distributed inference needs a Host coordinator")
 		}
 		var guests []RPCGuest
 		if provider != nil {
 			guests = provider()
 		}
-		if len(guests) == 0 && s.PlacementStrategy != "speed" {
+		if len(guests) == 0 && effectivePlacementStrategy(s.PlacementStrategy) != "speed" {
 			return errors.New("nenhum Guest RPC autenticado está conectado. Pareamento/heartbeat não habilitam inferência distribuída: execute 'nodexlm guest --backend cpu' em cada Linux; confirme 'NodexLM RPC worker ready' e 'RPC conectado' no painel antes de aplicar o modelo")
 		}
 		model, err := local.InspectGGUF(path)
