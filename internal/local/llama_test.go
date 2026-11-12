@@ -148,3 +148,25 @@ func TestEngineUsesRequestDeadlineInsteadOfFixedClientTimeout(t *testing.T) {
 		t.Fatalf("caller deadline must still abort generation; got %v", err)
 	}
 }
+
+func TestRPCNativeDeviceSelectionAndTensorSplitAreExplicit(t *testing.T) {
+	m := &Managed{ModelPath: "model.gguf", Alias: "model", RPCServers: []string{"127.0.0.1:50052"},
+		RPCDeviceNames: []string{"RPC0", "RPC1"}, RPCTensorSplit: "4200,1800"}
+	args := strings.Join(m.args(17000, 2048, 4, "all", 40), " ")
+	if !strings.Contains(args, "--device RPC0,RPC1") ||
+		!strings.Contains(args, "--tensor-split 4200,1800") ||
+		!strings.Contains(args, "--rpc 127.0.0.1:50052") {
+		t.Fatalf("hybrid RPC model did not pass placement flags: %s", args)
+	}
+	m.RPCDeviceNames = []string{"RPC0"}
+	m.RPCTensorSplit = ""
+	args = strings.Join(m.args(17000, 2048, 4, "all", 40), " ")
+	if !strings.Contains(args, "--device RPC0") || strings.Contains(args, "--tensor-split") {
+		t.Fatalf("GPU-only model unnecessarily enabled CPU or tensor-split: %s", args)
+	}
+	m.RPCDeviceNames = nil // Legacy Android/old Linux Guest.
+	args = strings.Join(m.args(17000, 2048, 4, "all", 40), " ")
+	if strings.Contains(args, "--device") || strings.Contains(args, "--tensor-split") {
+		t.Fatalf("legacy worker received forced unknown RPC device names: %s", args)
+	}
+}
