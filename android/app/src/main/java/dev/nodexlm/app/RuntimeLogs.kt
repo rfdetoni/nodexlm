@@ -16,6 +16,7 @@ import java.util.Locale
  * model paths or arbitrary exception messages.
  */
 internal enum class RuntimeRole { GUEST, HOST, APP, UPDATES }
+internal enum class RuntimeMode { RPC_GUEST, WORKER_GUEST, INACTIVE }
 internal enum class RuntimeLevel { INFO, WARN, ERROR }
 
 internal enum class RuntimeEvent(val pt: String, val en: String) {
@@ -89,6 +90,22 @@ internal object RuntimeLogFormat {
         val event = enumValues<RuntimeEvent>().firstOrNull { it.name == parts[3] } ?: return null
         val number = parts[4].toLongOrNull() ?: return null
         return RuntimeLogEntry(time, role, level, event, number)
+    }
+
+    // Only the latest *recorded* lifecycle transition; not an OS liveness check.
+    fun lastMode(entries: List<RuntimeLogEntry>): RuntimeMode {
+        for (entry in entries.asReversed()) {
+            when (entry.event) {
+                RuntimeEvent.GUEST_START, RuntimeEvent.GUEST_READY, RuntimeEvent.GUEST_RECOVERED ->
+                    return RuntimeMode.RPC_GUEST
+                RuntimeEvent.WORKER_START -> return RuntimeMode.WORKER_GUEST
+                RuntimeEvent.GUEST_STOP, RuntimeEvent.GUEST_FAILED,
+                RuntimeEvent.WORKER_STOP, RuntimeEvent.WORKER_FAILED ->
+                    return RuntimeMode.INACTIVE
+                else -> continue
+            }
+        }
+        return RuntimeMode.INACTIVE
     }
 
     fun readable(entries: List<RuntimeLogEntry>, english: Boolean): String {
