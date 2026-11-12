@@ -48,3 +48,20 @@ func TestLiveDistributedSampleDoesNotPoisonHostBenchmark(t *testing.T) {
 		t.Fatalf("unexpected distributed sample: %+v", sample)
 	}
 }
+
+func TestLiveLocalSamplePreservesControlledHostBenchmark(t *testing.T) {
+	m := &Manager{
+		samples: map[string]InferenceSample{
+			"small.gguf": {Model: "small.gguf", TokensPerSecond: 18, Kind: "benchmark"},
+		},
+		engine: &local.Managed{},
+	}
+	raw := []byte(`{"usage":{"completion_tokens":8},"timings":{"predicted_ms":16000}}`)
+	m.recordInference("small.gguf", raw, 18*time.Second)
+	if got := m.samples["small.gguf"]; got.Kind != "benchmark" || got.TokensPerSecond != 18 {
+		t.Fatalf("live Host chat overwrote controlled benchmark: %+v", got)
+	}
+	if got := m.samples["small.gguf@live-host"]; got.TokensPerSecond != 0.5 || got.Kind != "live" {
+		t.Fatalf("missing live Host metric: %+v", got)
+	}
+}
