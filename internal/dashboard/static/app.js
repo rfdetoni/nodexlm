@@ -605,7 +605,11 @@ setInterval(pairingTick,1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)return pairingTick()});
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.strategy||'capacity'))); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
- for(const node of plan.nodes)area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'));
+ for(const node of plan.nodes) {
+  const rpcMode=node.rpc_mode==='gpu'?' · GPU prioritária':node.rpc_mode==='gpu+ram'?' · GPU + RAM':node.rpc_mode==='ram'?' · RAM/CPU':'';
+  const memory=node.rpc_mode?' · VRAM '+fmt(node.vram_budget_bytes||0)+' / RAM '+fmt(node.ram_budget_bytes||0):'';
+  area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'+rpcMode+memory));
+ }
  area.append(el('p','', 'KV '+(plan.estimated_kv_type||'f16')+' estimado: '+fmt(plan.estimated_kv_bytes)+' · '+(plan.tokens_per_second?plan.tokens_per_second.toFixed(1)+' tokens/s medidos':'Tokens/s ainda não medido')+' · '+({'unmeasured':'Gargalo ainda não medido','network-advisory':'Atenção à velocidade da rede','host-memory':'Limite de memória do Host'}[plan.bottleneck]||plan.bottleneck)));
  for(const node of plan.nodes){if(node.network)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.network.round_trip_ms.toFixed(2)+' ms RTT · '+node.network.mib_per_second.toFixed(1)+' MiB/s de eco'));}
  for(const node of plan.nodes){if(node.tokens_per_second)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.tokens_per_second.toFixed(1)+' tokens/s observados'));}
