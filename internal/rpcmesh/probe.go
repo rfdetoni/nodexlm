@@ -191,7 +191,7 @@ func probeNativeTensor(conn net.Conn, device uint32) error {
 	// SET_TENSOR (6) carries rpc_tensor, cache_flag, offset, and raw payload.
 	upload := make([]byte, 0, len(tensor)+9+len(pattern))
 	upload = append(upload, tensor...)
-	upload = append(upload, 0) // no disk cache or hashing
+	upload = append(upload, 0)                  // no disk cache or hashing
 	upload = append(upload, make([]byte, 8)...) // offset 0
 	upload = append(upload, pattern...)
 	if err := rpcProbeSend(conn, 6, upload); err != nil {
