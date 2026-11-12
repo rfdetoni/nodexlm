@@ -389,9 +389,8 @@ class MainActivity : Activity() {
         }
         updatesDownload.isEnabled = snapshot.feed == "available" && !snapshot.checking &&
             snapshot.downloadStatus != DownloadManager.STATUS_RUNNING &&
-            snapshot.downloadStatus != DownloadManager.STATUS_PENDING &&
-            snapshot.downloadStatus != DownloadManager.STATUS_PAUSED &&
-            snapshot.downloadStatus != DownloadManager.STATUS_SUCCESSFUL && !snapshot.verifying
+            snapshot.downloadStatus != DownloadManager.STATUS_SUCCESSFUL && !snapshot.verifying &&
+            !snapshot.installRequested
         updatesInstall.isEnabled = snapshot.downloadStatus == DownloadManager.STATUS_SUCCESSFUL &&
             !snapshot.verifying && !snapshot.installRequested
     }
