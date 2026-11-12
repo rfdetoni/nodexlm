@@ -24,6 +24,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_FAILURE)
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALL)
                 @Suppress("DEPRECATION")
                 val confirmation = if (Build.VERSION.SDK_INT >= 33) {
                     intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
@@ -42,10 +43,12 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                 }
             }
             PackageInstaller.STATUS_SUCCESS -> {
+                RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALLED)
                 context.getSharedPreferences("nodexlm_updates", Context.MODE_PRIVATE).edit()
                     .remove("download_id").remove("prompted_id").apply()
             }
             else -> {
+                RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.WARN, RuntimeEvent.UPDATE_INSTALL_FAILED)
                 val detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                     ?: "Installer error $status"
                 Log.e("NodexLMUpdate", "APK installation rejected: $detail")

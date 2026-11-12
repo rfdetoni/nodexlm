@@ -5,6 +5,7 @@ package dev.nodexlm.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.DownloadManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -17,6 +18,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -31,9 +34,14 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.text.DateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /** Lightweight Android 10+ interface, inspired by the usability of PrivateLM.
@@ -54,6 +62,28 @@ class MainActivity : Activity() {
     private lateinit var library: ModelLibraryView
     private lateinit var toastStatus: TextView
     private var tab = 0
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val logsReading = AtomicBoolean(false)
+    private var logsFilter = 0
+    private var displayedLogText = ""
+    private var uiResumed = false
+    private lateinit var updatesStatus: TextView
+    private lateinit var updatesProgress: ProgressBar
+    private lateinit var updatesDownload: Button
+    private lateinit var updatesInstall: Button
+    private lateinit var logsOutput: TextView
+    private lateinit var logsCounter: TextView
+    private val tabRefresh = object : Runnable {
+        override fun run() {
+            if (!uiResumed || isFinishing || isDestroyed) return
+            when (tab) {
+                4 -> refreshUpdatesStatus()
+                5 -> refreshLogs()
+                else -> return
+            }
+            uiHandler.postDelayed(this, 2000L)
+        }
+    }
     private val pickModel = 900
     private val pickCertificate = 901
 
@@ -108,10 +138,13 @@ class MainActivity : Activity() {
             onSelected={ file -> setStatus(getString(R.string.model_selected,file.name)) }
         )
         showTab(0)
+        RuntimeLogs.append(this, RuntimeRole.APP, RuntimeLevel.INFO, RuntimeEvent.APP_OPEN)
+        updateManager.onStateChanged = { if (tab == 4) refreshUpdatesStatus() }
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
     }
 
     private fun showTab(index: Int) {
+        uiHandler.removeCallbacks(tabRefresh)
         if (tab == 1 && index != 1 && ::coordinator.isInitialized &&
             ::pairCode.isInitialized && ::deviceName.isInitialized) {
             coordinatorDraft = coordinator.text.toString()
@@ -125,6 +158,8 @@ class MainActivity : Activity() {
             getString(R.string.tab_connection),
             getString(R.string.tab_processing),
             getString(R.string.models),
+            getString(R.string.tab_updates),
+            getString(R.string.tab_logs),
             getString(R.string.settings)
         )
         titles.forEachIndexed { i, title ->
@@ -158,8 +193,11 @@ class MainActivity : Activity() {
             1 -> connectionScreen()
             2 -> processingScreen()
             3 -> { (library.parent as? ViewGroup)?.removeView(library); content.addView(library) }
+            4 -> updatesScreen()
+            5 -> logsScreen()
             else -> settingsScreen()
         }
+        if (uiResumed && (index == 4 || index == 5)) uiHandler.post(tabRefresh)
     }
 
     private fun overviewScreen() {
@@ -248,6 +286,222 @@ class MainActivity : Activity() {
         content.addView(worker)
     }
 
+    private fun updatesScreen() {
+        val card = card()
+        card.addView(label(getString(R.string.updates_title), 18, true))
+        card.addView(label(getString(R.string.updates_description), 13, false))
+        updatesStatus = label(getString(R.string.updates_never_checked), 13, false)
+        card.addView(updatesStatus)
+        updatesProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            visibility = View.GONE
+        }
+        card.addView(updatesProgress, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(8)).apply { bottomMargin = dp(12) })
+
+        val updatePrefs = getSharedPreferences(UpdateFeed.PREFS, MODE_PRIVATE)
+        val automatic = CheckBox(this).apply {
+            text = getString(R.string.updates_wifi_auto)
+            isChecked = updatePrefs.getBoolean("auto_download", false)
+            setOnCheckedChangeListener { _, enabled ->
+                updatePrefs.edit().putBoolean("auto_download", enabled).apply()
+                if (enabled) {
+                    // Check on an explicit opt-in; the next normal daily check
+                    // also downloads on unmetered connections if available.
+                    updateManager.check(manual = false)
+                }
+            }
+        }
+        card.addView(automatic)
+
+        card.addView(action(getString(R.string.updates_check_now)) {
+            updateManager.check(manual = true)
+            refreshUpdatesStatus()
+        })
+        updatesDownload = action(getString(R.string.updates_download)) {
+            updateManager.downloadAvailable()
+            refreshUpdatesStatus()
+        }
+        card.addView(updatesDownload)
+        updatesInstall = action(getString(R.string.updates_install)) {
+            updateManager.installDownloaded()
+            refreshUpdatesStatus()
+        }
+        card.addView(updatesInstall)
+        card.addView(action(getString(R.string.updates_open_github)) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateFeed.RELEASES_URL)))
+        })
+        content.addView(card)
+        refreshUpdatesStatus()
+    }
+
+    private fun refreshUpdatesStatus() {
+        if (tab != 4 || !::updatesStatus.isInitialized) return
+        val snapshot = try { updateManager.status() } catch (e: Exception) {
+            updatesStatus.text = getString(R.string.updates_error, e.javaClass.simpleName)
+            return
+        }
+        val message = StringBuilder(getString(R.string.updates_current_version, snapshot.currentVersion))
+        message.append("\n")
+        if (snapshot.feed == "available" && !snapshot.availableVersion.isNullOrBlank()) {
+            message.append(getString(R.string.updates_latest_version, snapshot.availableVersion)).append("\n")
+        }
+        if (snapshot.lastSuccess > 0) {
+            val formatted = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                .format(Date(snapshot.lastSuccess))
+            message.append(getString(R.string.updates_last_check, formatted))
+        } else {
+            message.append(getString(R.string.updates_never_checked))
+        }
+        message.append("\n")
+        message.append(when {
+            snapshot.checking -> getString(R.string.updates_checking)
+            snapshot.feed == "error" -> getString(R.string.updates_error, snapshot.error ?: "?")
+            snapshot.feed == "unpublished" -> getString(R.string.updates_no_release)
+            snapshot.feed == "available" -> getString(R.string.updates_available)
+            snapshot.feed == "current" -> getString(R.string.updates_current_status)
+            else -> getString(R.string.updates_never_checked)
+        })
+        message.append("\n")
+        if (snapshot.verifying) {
+            message.append(getString(R.string.updates_verifying))
+        } else if (snapshot.installRequested) {
+            message.append(getString(R.string.updates_install_pending))
+        } else {
+            when (snapshot.downloadStatus) {
+                DownloadManager.STATUS_PENDING -> message.append(getString(R.string.updates_download_pending))
+                DownloadManager.STATUS_RUNNING -> {
+                    if (snapshot.total > 0L) {
+                        val percent = ((snapshot.downloaded.toDouble() / snapshot.total) * 100).toInt().coerceIn(0, 100)
+                        message.append(getString(R.string.updates_download_progress, percent))
+                    } else message.append(getString(R.string.updates_download_pending))
+                }
+                DownloadManager.STATUS_PAUSED -> message.append(getString(R.string.updates_download_paused))
+                DownloadManager.STATUS_SUCCESSFUL -> message.append(getString(R.string.updates_download_ready))
+                DownloadManager.STATUS_FAILED -> message.append(getString(R.string.updates_download_failed))
+            }
+        }
+        updatesStatus.text = message.toString()
+        updatesProgress.visibility = if (snapshot.downloadStatus == DownloadManager.STATUS_RUNNING) View.VISIBLE else View.GONE
+        updatesProgress.isIndeterminate = snapshot.downloadStatus == DownloadManager.STATUS_RUNNING && snapshot.total <= 0L
+        if (snapshot.total > 0L) {
+            updatesProgress.progress = ((snapshot.downloaded.toDouble() / snapshot.total) * 1000).toInt().coerceIn(0, 1000)
+        }
+        updatesDownload.isEnabled = snapshot.feed == "available" && !snapshot.checking &&
+            snapshot.downloadStatus != DownloadManager.STATUS_RUNNING &&
+            snapshot.downloadStatus != DownloadManager.STATUS_SUCCESSFUL && !snapshot.verifying &&
+            !snapshot.installRequested
+        updatesInstall.isEnabled = snapshot.downloadStatus == DownloadManager.STATUS_SUCCESSFUL &&
+            !snapshot.verifying && !snapshot.installRequested
+    }
+
+    private fun logsScreen() {
+        val panel = card()
+        panel.addView(label(getString(R.string.logs_title), 18, true))
+        panel.addView(label(getString(R.string.logs_description), 13, false))
+        panel.addView(label(getString(R.string.logs_host_note), 12, false))
+        val options = listOf(
+            getString(R.string.logs_filter_auto),
+            getString(R.string.logs_filter_guest),
+            getString(R.string.logs_filter_host),
+            getString(R.string.logs_filter_updates),
+            getString(R.string.logs_filter_all)
+        )
+        val filter = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, options)
+            setSelection(logsFilter)
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long
+                ) {
+                    logsFilter = position
+                    refreshLogs()
+                }
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            }
+        }
+        panel.addView(filter)
+        logsCounter = label(getString(R.string.logs_count, 0), 12, false)
+        panel.addView(logsCounter)
+        logsOutput = label(getString(R.string.logs_empty), 12, false).apply {
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(8), dp(12), dp(8), dp(12))
+            setBackgroundColor(0xff20252a.toInt())
+        }
+        panel.addView(logsOutput, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        panel.addView(action(getString(R.string.logs_copy)) {
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("NodexLM operational logs", displayedLogText))
+            setStatus(getString(R.string.rpc_diagnostics_copied))
+        })
+        panel.addView(action(getString(R.string.logs_clear)) {
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.logs_clear))
+                .setMessage(R.string.logs_clear_confirm)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    thread(name = "nodexlm-logs-clear") {
+                        try {
+                            RuntimeLogs.clear(this)
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    setStatus(getString(R.string.logs_cleared))
+                                    refreshLogs()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread { setStatus(e.javaClass.simpleName) }
+                        }
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null).show()
+        })
+        content.addView(panel)
+        refreshLogs()
+    }
+
+    private fun refreshLogs() {
+        if (tab != 5 || !logsReading.compareAndSet(false, true)) return
+        val selected = logsFilter
+        thread(name = "nodexlm-logs-read", isDaemon = true) {
+            try {
+                val items = RuntimeLogs.read(this)
+                val mode = RuntimeLogFormat.lastMode(items)
+                val visible = items.filter { event ->
+                    when (selected) {
+                        1 -> event.role == RuntimeRole.GUEST
+                        2 -> event.role == RuntimeRole.HOST
+                        3 -> event.role == RuntimeRole.APP || event.role == RuntimeRole.UPDATES
+                        0 -> mode == RuntimeMode.INACTIVE ||
+                            event.role == RuntimeRole.GUEST || event.role == RuntimeRole.HOST
+                        else -> true
+                    }
+                }
+                val english = !resources.configuration.locales.get(0).language.equals("pt", ignoreCase = true)
+                // Latest first: new events are visible without scrolling to
+                // the bottom of a growing TextView.
+                val text = RuntimeLogFormat.readable(visible.asReversed(), english)
+                runOnUiThread {
+                    if (tab == 5 && ::logsOutput.isInitialized && !isDestroyed) {
+                        displayedLogText = text
+                        val modeText = when (mode) {
+                            RuntimeMode.RPC_GUEST -> getString(R.string.logs_mode_rpc)
+                            RuntimeMode.WORKER_GUEST -> getString(R.string.logs_mode_worker)
+                            RuntimeMode.INACTIVE -> getString(R.string.logs_mode_inactive)
+                        }
+                        logsCounter.text = getString(R.string.logs_count, visible.size) + " · " + modeText
+                        logsOutput.text = if (text.isEmpty()) getString(R.string.logs_empty) else text
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("NodexLMLogs", "Cannot display structured operational events", e)
+            } finally {
+                logsReading.set(false)
+            }
+        }
+    }
+
     private fun settingsScreen() {
         val settings=card()
         settings.addView(label(getString(R.string.ui_14e59fc95d44),18,true))
@@ -303,7 +557,7 @@ class MainActivity : Activity() {
                 setStatus(getString(R.string.rpc_diagnostics_failed))
             }
         })
-        settings.addView(action(getString(R.string.ui_fd732a2b0a67)) {updateManager.check(manual=true)})
+        // Update controls live in the independent Updates tab.
         settings.addView(action(getString(R.string.ui_ff4f0c35cea3)) {
             try {
                 val notice = assets.open("THIRD_PARTY_NOTICES.txt").bufferedReader().use { it.readText() }
@@ -325,6 +579,7 @@ class MainActivity : Activity() {
         thread(name="nodexlm-pairing") {
             try {
                 val paired=PairingClient(this).join(code,endpoint,name,model)
+                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.PAIR_OK)
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         setStatus(getString(R.string.connected,paired))
@@ -334,7 +589,10 @@ class MainActivity : Activity() {
                         offerRpcGuestAfterPairing()
                     }
                 }
-            }catch(e:Exception) {runOnUiThread {setStatus(getString(R.string.pair_failed,e.message))}}
+            }catch(e:Exception) {
+                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.WARN, RuntimeEvent.PAIR_FAILED)
+                runOnUiThread {setStatus(getString(R.string.pair_failed,e.message))}
+            }
         }
     }
 
@@ -412,9 +670,20 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        uiResumed = true
+        if (tab == 4 || tab == 5) {
+            uiHandler.removeCallbacks(tabRefresh)
+            uiHandler.post(tabRefresh)
+        }
         try {updateManager.onResume()} catch(e:Exception) {Log.w("NodexLMStartup","Updater resume failed",e)}
     }
+    override fun onPause() {
+        uiResumed = false
+        uiHandler.removeCallbacks(tabRefresh)
+        super.onPause()
+    }
     override fun onDestroy() {
+        uiHandler.removeCallbacks(tabRefresh)
         try {updateManager.stop()} catch(_:Exception) {}
         super.onDestroy()
     }
