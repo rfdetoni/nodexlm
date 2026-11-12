@@ -10,3 +10,17 @@ else()
     message(FATAL_ERROR "Pinned RPC patch cannot be applied to this source")
   endif()
 endif()
+
+# Android armeabi-v7a needs fixed 64-bit GGML RPC message lengths.
+# Optionally apply a second pinned patch after the Unix socket transport patch.
+if(DEFINED EXTRA_PATCH)
+  execute_process(COMMAND git -C "${SOURCE}" apply --check "${EXTRA_PATCH}" RESULT_VARIABLE extra_clean)
+  if(extra_clean EQUAL 0)
+    execute_process(COMMAND git -C "${SOURCE}" apply "${EXTRA_PATCH}" COMMAND_ERROR_IS_FATAL ANY)
+  else()
+    execute_process(COMMAND git -C "${SOURCE}" apply --reverse --check "${EXTRA_PATCH}" RESULT_VARIABLE extra_applied)
+    if(NOT extra_applied EQUAL 0)
+      message(FATAL_ERROR "Pinned Android RPC wire-format patch cannot be applied to this source")
+    endif()
+  endif()
+endif()
