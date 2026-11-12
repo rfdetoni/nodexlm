@@ -289,3 +289,9 @@ do `llama-server`: nesse caso o problema está além da preflight.
 A passagem de `HELLO` confirma apenas a disponibilidade inicial do
 worker. Não garante RAM suficiente para o modelo de 27B, transferência
 de pesos ou desempenho de inferência.
+
+## Linux: retentativas RPC após revogação ou saturação
+
+Se um Guest Linux receber HTTP **401/403** ao abrir o túnel, as retentativas encerram e o CLI informa que é necessário novo pareamento (`nodexlm guest --rejoin` com um novo código autorizado). O token inválido não é registrado nos logs.
+
+Em HTTP **503**, o Host pode estar com o limite de túneis ocupado ou o nó pode estar em `draining`. O cliente faz retentativas com jitter para não sincronizar oito conexões simultâneas, chegando a no máximo 30 segundos de atraso base por 503. Falhas de rede ordinárias mantêm o limite de 10 segundos. O Host ainda pode encerrar streams ativos quando um Guest deixar de responder; não existe migração transparente da sessão GGML.
