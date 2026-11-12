@@ -66,6 +66,9 @@ class RpcGuestService : Service() {
     private val localSockets = Collections.synchronizedSet(mutableSetOf<android.net.LocalSocket>())
     private lateinit var energyPolicy: EnergyPolicy
     private val reconnectFailures=AtomicLong()
+    private val heartbeatFailed = AtomicBoolean(false)
+    private val offlineLogged = AtomicBoolean(false)
+    private val lastHeartbeatLog = AtomicLong(0L)
     // A single shared daemon handles diagnostics for claimed (not idle) tunnels.
     private val diagnostics = ScheduledThreadPoolExecutor(1) { task ->
         Thread(task, "nodexlm-rpc-watchdog").apply { isDaemon = true }
@@ -149,8 +152,20 @@ class RpcGuestService : Service() {
                 // be shared with RAM and must never be counted twice by the Host.
                 thread(name = "nodexlm-rpc-heartbeat", isDaemon = true) {
                     while (running.get()) {
-                        try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
-                        catch (e: Exception) { if (running.get()) Log.w(LOG, "Heartbeat failed: ${e.message}") }
+                        try {
+                            sendHeartbeat(endpoint, node, token, name, mode, sslContext)
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            val previouslyFailed = heartbeatFailed.getAndSet(false)
+                            if (previouslyFailed || now - lastHeartbeatLog.get() > 300_000L) {
+                                lastHeartbeatLog.set(now)
+                                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_HEARTBEAT_OK)
+                            }
+                        } catch (e: Exception) {
+                            if (heartbeatFailed.compareAndSet(false, true)) {
+                                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.WARN, RuntimeEvent.HOST_HEARTBEAT_FAILED)
+                            }
+                            if (running.get()) Log.w(LOG, "Heartbeat failed: ${e.message}")
+                        }
                         sleepWhileRunning(15_000)
                     }
                 }
@@ -166,9 +181,13 @@ class RpcGuestService : Service() {
                             // pinned identity when the active network changes.
                             val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
                             if (connectivity.activeNetwork == null) {
+                                if (offlineLogged.compareAndSet(false, true)) {
+                                    RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.WARN, RuntimeEvent.HOST_NET_OFFLINE)
+                                }
                                 sleepWhileRunning(2_000L)
                                 continue
                             }
+                            offlineLogged.set(false)
                             var retryCeiling = 10_000L
                             var failed = false
                             try {
@@ -176,11 +195,15 @@ class RpcGuestService : Service() {
                                 backoff = 1000L
                             } catch (e: SecurityException) {
                                 Log.e(LOG, "RPC Host rejected credentials; stopping Guest", e)
+                                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.ERROR, RuntimeEvent.HOST_AUTH_FAILED)
                                 shutdown()
                                 break
                             } catch (e: Exception) {
                                 failed = true
-                                reconnectFailures.incrementAndGet()
+                                val failures = reconnectFailures.incrementAndGet()
+                                if (failures == 1L || failures % 10L == 0L) {
+                                    RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.WARN, RuntimeEvent.HOST_RETRY, failures)
+                                }
                                 // Saturated Host relays need slower retries, not
                                 // eight synchronized attempts every second.
                                 if (e.message?.contains(" 503 ") == true) retryCeiling = 30_000L
@@ -264,7 +287,8 @@ class RpcGuestService : Service() {
                 .filter { it.processName == "$packageName:rpc" }
                 .maxByOrNull { it.timestamp }
             if (previous?.reason == ApplicationExitInfo.REASON_LOW_MEMORY) {
-                Log.w(LOG, "Previous RPC process terminated by Android low-memory killer; " +
+                RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.WARN, RuntimeEvent.GUEST_LOWMEM_PREVIOUS)
+            Log.w(LOG, "Previous RPC process terminated by Android low-memory killer; " +
                     "timestamp_ms=${previous.timestamp}. Reduce Guest RAM contribution.")
             }
         } catch (e: RuntimeException) {
@@ -547,11 +571,13 @@ class RpcGuestService : Service() {
             check(marker == 1) { "Missing Host RPC relay marker" }
             claimedNativeRelays.incrementAndGet()
             try {
+            RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_TUNNEL_CLAIMED, slot.toLong())
             Log.i(LOG, "RPC tunnel $slot claimed by Host; opening private native RPC socket")
             val local = android.net.LocalSocket()
             localSockets.add(local)
             try {
                 local.connect(android.net.LocalSocketAddress(rpcSocket,android.net.LocalSocketAddress.Namespace.FILESYSTEM))
+                RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.HOST_NATIVE_CONNECTED, slot.toLong())
                 Log.i(LOG, "RPC tunnel $slot connected to native GGML RPC server")
                 val toNative = AtomicLong(0)
                 val fromNative = AtomicLong(0)
@@ -581,6 +607,7 @@ class RpcGuestService : Service() {
                                 if (n == 0) continue
                                 output.write(buffer, 0, n)
                                 if (fromNative.getAndAdd(n.toLong()) == 0L) {
+                                    RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.HOST_FIRST_RESPONSE, slot.toLong())
                                     Log.i(LOG, "RPC tunnel $slot received first native response ($n bytes)")
                                 }
                             }
@@ -600,6 +627,7 @@ class RpcGuestService : Service() {
                             if (n == 0) continue
                             output.write(buffer, 0, n)
                             if (toNative.getAndAdd(n.toLong()) == 0L) {
+                                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_FIRST_REQUEST, slot.toLong())
                                 Log.i(LOG, "RPC tunnel $slot delivered first Host request to native server ($n bytes)")
                             }
                         }
@@ -615,6 +643,7 @@ class RpcGuestService : Service() {
                     val sent = toNative.get()
                     val received = fromNative.get()
                     if (sent > 0L || received > 0L) {
+                        RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_TUNNEL_CLOSED, slot.toLong())
                         Log.i(LOG, "RPC tunnel $slot closed; host_to_native_bytes=$sent, native_to_host_bytes=$received")
                     }
                 }
@@ -634,6 +663,24 @@ class RpcGuestService : Service() {
     private fun recordGuestEvent(state: String, reason: String = "") {
         try { RpcGuestDiagnostics.record(this, state, reason) }
         catch (e: Exception) { Log.w(LOG, "Cannot persist sanitized RPC Guest state", e) }
+        val event = when (state) {
+            "starting" -> RuntimeEvent.GUEST_START
+            "ready" -> if (reason == "cooled") RuntimeEvent.GUEST_RECOVERED else RuntimeEvent.GUEST_READY
+            "draining" -> when (reason) {
+                "thermal" -> RuntimeEvent.GUEST_DRAIN_THERMAL
+                "memory" -> RuntimeEvent.GUEST_DRAIN_MEMORY
+                "battery", "charging" -> RuntimeEvent.GUEST_DRAIN_POWER
+                else -> RuntimeEvent.GUEST_DRAIN_POLICY
+            }
+            "failed" -> RuntimeEvent.GUEST_FAILED
+            else -> RuntimeEvent.GUEST_STOP
+        }
+        val level = when (state) {
+            "failed" -> RuntimeLevel.ERROR
+            "draining" -> RuntimeLevel.WARN
+            else -> RuntimeLevel.INFO
+        }
+        RuntimeLogs.append(this, RuntimeRole.GUEST, level, event)
     }
 
     private fun shutdown(state: String = "stopped", reason: String = "service") {
