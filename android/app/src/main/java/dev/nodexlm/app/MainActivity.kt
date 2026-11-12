@@ -468,23 +468,30 @@ class MainActivity : Activity() {
         thread(name = "nodexlm-logs-read", isDaemon = true) {
             try {
                 val items = RuntimeLogs.read(this)
+                val mode = RuntimeLogFormat.lastMode(items)
                 val visible = items.filter { event ->
                     when (selected) {
                         1 -> event.role == RuntimeRole.GUEST
                         2 -> event.role == RuntimeRole.HOST
                         3 -> event.role == RuntimeRole.APP || event.role == RuntimeRole.UPDATES
-                        // Auto shows current Guest/worker activity together with
-                        // interactions with the remote Host; other events remain
-                        // visible so an update failure is not hidden.
+                        0 -> mode == RuntimeMode.INACTIVE ||
+                            event.role == RuntimeRole.GUEST || event.role == RuntimeRole.HOST
                         else -> true
                     }
                 }
                 val english = !resources.configuration.locales.get(0).language.equals("pt", ignoreCase = true)
-                val text = RuntimeLogFormat.readable(visible, english)
+                // Latest first: new events are visible without scrolling to
+                // the bottom of a growing TextView.
+                val text = RuntimeLogFormat.readable(visible.asReversed(), english)
                 runOnUiThread {
                     if (tab == 5 && ::logsOutput.isInitialized && !isDestroyed) {
                         displayedLogText = text
-                        logsCounter.text = getString(R.string.logs_count, visible.size)
+                        val modeText = when (mode) {
+                            RuntimeMode.RPC_GUEST -> getString(R.string.logs_mode_rpc)
+                            RuntimeMode.WORKER_GUEST -> getString(R.string.logs_mode_worker)
+                            RuntimeMode.INACTIVE -> getString(R.string.logs_mode_inactive)
+                        }
+                        logsCounter.text = getString(R.string.logs_count, visible.size) + " · " + modeText
                         logsOutput.text = if (text.isEmpty()) getString(R.string.logs_empty) else text
                     }
                 }
