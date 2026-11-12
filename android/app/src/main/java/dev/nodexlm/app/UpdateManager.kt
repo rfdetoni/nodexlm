@@ -41,10 +41,12 @@ class UpdateManager(private val activity: Activity) {
             if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
             if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) == prefs.getLong("download_id", -2L)) {
                 val status = status().downloadStatus
-                RuntimeLogs.append(activity, RuntimeRole.UPDATES,
-                    if (status == DownloadManager.STATUS_SUCCESSFUL) RuntimeLevel.INFO else RuntimeLevel.WARN,
-                    if (status == DownloadManager.STATUS_SUCCESSFUL) RuntimeEvent.UPDATE_DOWNLOADED
-                    else RuntimeEvent.UPDATE_DOWNLOAD_FAILED)
+                if (status == DownloadManager.STATUS_SUCCESSFUL || status == DownloadManager.STATUS_FAILED) {
+                    RuntimeLogs.append(activity, RuntimeRole.UPDATES,
+                        if (status == DownloadManager.STATUS_SUCCESSFUL) RuntimeLevel.INFO else RuntimeLevel.WARN,
+                        if (status == DownloadManager.STATUS_SUCCESSFUL) RuntimeEvent.UPDATE_DOWNLOADED
+                        else RuntimeEvent.UPDATE_DOWNLOAD_FAILED)
+                }
                 notifyChanged()
             }
         }
@@ -201,6 +203,8 @@ class UpdateManager(private val activity: Activity) {
         val id = prefs.getLong("download_id", 0L)
         if (id <= 0 || prefs.getLong("prompted_id", -1L) == id ||
             !verifying.compareAndSet(false, true)) return
+        RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_VERIFY)
+        notifyChanged()
         thread(name = "nodexlm-update-verify") {
             var staged: File? = null
             try {
@@ -211,6 +215,7 @@ class UpdateManager(private val activity: Activity) {
                 }
                 if (status == DownloadManager.STATUS_FAILED) {
                     prefs.edit().remove("download_id").apply()
+                    RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.WARN, RuntimeEvent.UPDATE_DOWNLOAD_FAILED)
                     toast(activity.getString(R.string.update_download_failed))
                     return@thread
                 }
@@ -245,6 +250,7 @@ class UpdateManager(private val activity: Activity) {
                     activity.getString(R.string.update_sha_failed)
                 }
                 verifyAPKSigner(verified, prefs.getInt("version", -1))
+                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_VERIFIED)
 
                 // The callback (or its install worker) owns the staging
                 // file now; the verifier must not delete it before it runs.
@@ -266,9 +272,12 @@ class UpdateManager(private val activity: Activity) {
                             try {
                                 installVerified(verified, id)
                                 prefs.edit().putLong("prompted_id", id).apply()
+                                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALL)
                             } catch (e: Exception) {
+                                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.ERROR, RuntimeEvent.UPDATE_INSTALL_FAILED)
                                 Log.e("NodexLMUpdate", "PackageInstaller session failed", e)
                                 toast(activity.getString(R.string.update_install_failed,e.message))
+                                notifyChanged()
                             } finally {
                                 verified.delete()
                             }
@@ -276,6 +285,7 @@ class UpdateManager(private val activity: Activity) {
                     }
                 }
             } catch (e: Exception) {
+                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.ERROR, RuntimeEvent.UPDATE_REJECTED)
                 Log.e("NodexLMUpdate", "Update verification failed", e)
                 prefs.edit().remove("download_id").apply()
                 toast(activity.getString(R.string.update_rejected,e.message))
@@ -284,6 +294,7 @@ class UpdateManager(private val activity: Activity) {
                 // download into a fresh private staging copy.
                 if (staged != null) staged?.delete()
                 verifying.set(false)
+                notifyChanged()
             }
         }
     }
@@ -298,6 +309,7 @@ class UpdateManager(private val activity: Activity) {
         @Suppress("DEPRECATION")
         val installed = activity.packageManager.getPackageInfo(
             activity.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        require(candidate.longVersionCode > installed.longVersionCode) { "APK is not newer than installed version" }
         val currentSigners = installed.signingInfo?.apkContentsSigners
             ?: error("Current APK signature unavailable")
         val nextSigners = candidate.signingInfo?.apkContentsSigners
