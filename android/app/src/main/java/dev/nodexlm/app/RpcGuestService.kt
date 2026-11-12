@@ -222,7 +222,8 @@ class RpcGuestService : Service() {
             } catch (e: Throwable) {
                 Log.e(LOG, "RPC Guest cannot start", e)
                 val reason = e.message ?: "Falha ao iniciar Guest RPC"
-                shutdown("failed", "runtime")
+                val stopReason = if (reason == getString(R.string.energy_thermal)) "thermal_severe" else "runtime"
+                shutdown("failed", stopReason)
                 getSystemService(NotificationManager::class.java).notify(44,
                     Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_notify_error)
                         .setContentTitle(getString(R.string.ui_8ea70b71b55f))
