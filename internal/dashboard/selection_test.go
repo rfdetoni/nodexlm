@@ -107,27 +107,29 @@ func TestExperimentalBackendSelectionAndGuard(t *testing.T) {
 func TestChooseRPCSpeedCanUseHostAlone(t *testing.T) {
 	const gib = uint64(1 << 30)
 	m, err := NewManager(t.TempDir(), t.TempDir(), "")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer m.Close()
 	node := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	settings := Settings{Model: "small.gguf", PlacementStrategy: "speed"}
 	meta := local.GGUFInfo{BlockCount: 40}
-	guest := []RPCGuest{{ID: node, CapacityBytes: 8*gib}}
-	local, err := m.chooseRPC(settings, meta, gib, 8*gib, guest)
-	if err != nil || len(local.Guests) != 0 || local.LocalLayers != 40 ||
-		len(local.Excluded) != 1 || local.Excluded[0] != node {
-		t.Fatalf("Host-only speed option was not selected: %+v %v", local, err)
+	guest := []RPCGuest{{ID: node, CapacityBytes: 8 * gib}}
+	hostOnly, err := m.chooseRPC(settings, meta, gib, 8*gib, guest)
+	if err != nil || len(hostOnly.Guests) != 0 || hostOnly.LocalLayers != 40 ||
+		len(hostOnly.Excluded) != 1 || hostOnly.Excluded[0] != node {
+		t.Fatalf("Host-only speed option was not selected: %+v %v", hostOnly, err)
 	}
 	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 10, MeasuredAt: time.Now()}
-	m.samples["small.gguf@"+node] = InferenceSample{Model: "small.gguf@"+node, TokensPerSecond: 30, MeasuredAt: time.Now()}
+	m.samples["small.gguf@"+node] = InferenceSample{Model: "small.gguf@" + node, TokensPerSecond: 30, MeasuredAt: time.Now()}
 	remote, err := m.chooseRPC(settings, meta, gib, 8*gib, guest)
 	if err != nil || len(remote.Guests) != 1 || remote.Guests[0].ID != node {
 		t.Fatalf("faster measured Guest must remain eligible: %+v %v", remote, err)
 	}
 	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 40, MeasuredAt: time.Now()}
-	local, err = m.chooseRPC(settings, meta, gib, 8*gib, guest)
-	if err != nil || len(local.Guests) != 0 {
-		t.Fatalf("faster measured Host must be eligible: %+v %v", local, err)
+	hostOnly, err = m.chooseRPC(settings, meta, gib, 8*gib, guest)
+	if err != nil || len(hostOnly.Guests) != 0 {
+		t.Fatalf("faster measured Host must be eligible: %+v %v", hostOnly, err)
 	}
 	settings.PlacementStrategy = "capacity"
 	required, err := m.chooseRPC(settings, meta, gib, 8*gib, guest)
