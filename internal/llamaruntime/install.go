@@ -214,6 +214,7 @@ func unpackFile(dst string, src io.Reader, mode os.FileMode) error {
 	}
 	return nil
 }
+
 // extractTar accepts safe in-archive file aliases used for shared-library
 // SONAMEs in official llama.cpp releases. Never extract a symbolic link
 // directly: that would allow subsequent file entries to follow it outside
