@@ -85,7 +85,7 @@ class RpcGuestService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) {
-            shutdown()
+            shutdown("stopped", "manual")
             return START_NOT_STICKY
         }
         if (intent?.action != START) {
@@ -118,6 +118,7 @@ class RpcGuestService : Service() {
         try {
             createNotification()
             acquireLocks()
+            recordGuestEvent("starting")
         } catch (e: Exception) {
             Log.e(LOG, "Cannot start Android RPC foreground service", e)
             shutdown()
@@ -139,6 +140,7 @@ class RpcGuestService : Service() {
                 val message = NativeRpc.start(threads, mode, rpcSocket)
                 check(message.isEmpty()) { message }
                 awaitNativeRPC()
+                recordGuestEvent("ready")
                 Log.i(LOG, "Native GGML RPC socket ready; mode=$mode, threads=$threads")
                 val sslContext = pinnedSSLContext()
                 // Share measured Vulkan heap counters; on mobile GPUs memory can
@@ -196,6 +198,7 @@ class RpcGuestService : Service() {
                         drainReason = reason
                         drainStartedMs = android.os.SystemClock.elapsedRealtime()
                         if (draining.compareAndSet(false, true)) {
+                            recordGuestEvent("draining", reason)
                             Log.w(LOG, "RPC Guest draining because of $reason; " +
                                 "no automatic restart. Current claimed tunnels=${claimedNativeRelays.get()}")
                             // Publish withdrawal immediately, not only at the
@@ -210,7 +213,7 @@ class RpcGuestService : Service() {
                             elapsed >= 90_000L) {
                             Log.w(LOG, "RPC Guest drain finished: $drainReason, " +
                                 "claimed=${claimedNativeRelays.get()}, elapsed_ms=$elapsed")
-                            shutdown()
+                            shutdown("stopped", "drained_$drainReason")
                             break
                         }
                     }
@@ -219,7 +222,7 @@ class RpcGuestService : Service() {
             } catch (e: Throwable) {
                 Log.e(LOG, "RPC Guest cannot start", e)
                 val reason = e.message ?: "Falha ao iniciar Guest RPC"
-                shutdown()
+                shutdown("failed", "runtime")
                 getSystemService(NotificationManager::class.java).notify(44,
                     Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_notify_error)
                         .setContentTitle(getString(R.string.ui_8ea70b71b55f))
@@ -590,8 +593,14 @@ class RpcGuestService : Service() {
         }
     }
 
-    private fun shutdown() {
+    private fun recordGuestEvent(state: String, reason: String = "") {
+        try { RpcGuestDiagnostics.record(this, state, reason) }
+        catch (e: Exception) { Log.w(LOG, "Cannot persist sanitized RPC Guest state", e) }
+    }
+
+    private fun shutdown(state: String = "stopped", reason: String = "service") {
         if (!stopping.compareAndSet(false, true)) return
+        recordGuestEvent(state, reason)
         diagnostics.shutdownNow()
         running.set(false)
         synchronized(localSockets){localSockets.forEach {try{it.close()}catch(_:Exception){}};localSockets.clear()}
