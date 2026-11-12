@@ -66,7 +66,7 @@ FetchContent_Declare(llamacpp
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     GIT_TAG ${NODEXLM_LLAMA_COMMIT}
     GIT_SHALLOW FALSE
-    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/unix-rpc.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake
+    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/unix-rpc.patch -DEXTRA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/arm32-rpc-wire.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake
 )
 FetchContent_MakeAvailable(llamacpp)
 if(ANDROID_ABI STREQUAL "arm64-v8a" AND TARGET ggml-vulkan)
