@@ -5,6 +5,7 @@ package dev.nodexlm.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.DownloadManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -17,6 +18,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -31,9 +34,14 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.text.DateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /** Lightweight Android 10+ interface, inspired by the usability of PrivateLM.
@@ -54,6 +62,28 @@ class MainActivity : Activity() {
     private lateinit var library: ModelLibraryView
     private lateinit var toastStatus: TextView
     private var tab = 0
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val logsReading = AtomicBoolean(false)
+    private var logsFilter = 0
+    private var displayedLogText = ""
+    private var uiResumed = false
+    private lateinit var updatesStatus: TextView
+    private lateinit var updatesProgress: ProgressBar
+    private lateinit var updatesDownload: Button
+    private lateinit var updatesInstall: Button
+    private lateinit var logsOutput: TextView
+    private lateinit var logsCounter: TextView
+    private val tabRefresh = object : Runnable {
+        override fun run() {
+            if (!uiResumed || isFinishing || isDestroyed) return
+            when (tab) {
+                4 -> refreshUpdatesStatus()
+                5 -> refreshLogs()
+                else -> return
+            }
+            uiHandler.postDelayed(this, 2000L)
+        }
+    }
     private val pickModel = 900
     private val pickCertificate = 901
 
@@ -108,10 +138,13 @@ class MainActivity : Activity() {
             onSelected={ file -> setStatus(getString(R.string.model_selected,file.name)) }
         )
         showTab(0)
+        RuntimeLogs.append(this, RuntimeRole.APP, RuntimeLevel.INFO, RuntimeEvent.APP_OPEN)
+        updateManager.onStateChanged = { if (tab == 4) refreshUpdatesStatus() }
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
     }
 
     private fun showTab(index: Int) {
+        uiHandler.removeCallbacks(tabRefresh)
         if (tab == 1 && index != 1 && ::coordinator.isInitialized &&
             ::pairCode.isInitialized && ::deviceName.isInitialized) {
             coordinatorDraft = coordinator.text.toString()
@@ -125,6 +158,8 @@ class MainActivity : Activity() {
             getString(R.string.tab_connection),
             getString(R.string.tab_processing),
             getString(R.string.models),
+            getString(R.string.tab_updates),
+            getString(R.string.tab_logs),
             getString(R.string.settings)
         )
         titles.forEachIndexed { i, title ->
@@ -158,8 +193,11 @@ class MainActivity : Activity() {
             1 -> connectionScreen()
             2 -> processingScreen()
             3 -> { (library.parent as? ViewGroup)?.removeView(library); content.addView(library) }
+            4 -> updatesScreen()
+            5 -> logsScreen()
             else -> settingsScreen()
         }
+        if (uiResumed && (index == 4 || index == 5)) uiHandler.post(tabRefresh)
     }
 
     private fun overviewScreen() {
@@ -303,7 +341,7 @@ class MainActivity : Activity() {
                 setStatus(getString(R.string.rpc_diagnostics_failed))
             }
         })
-        settings.addView(action(getString(R.string.ui_fd732a2b0a67)) {updateManager.check(manual=true)})
+        // Update controls live in the independent Updates tab.
         settings.addView(action(getString(R.string.ui_ff4f0c35cea3)) {
             try {
                 val notice = assets.open("THIRD_PARTY_NOTICES.txt").bufferedReader().use { it.readText() }
@@ -325,6 +363,7 @@ class MainActivity : Activity() {
         thread(name="nodexlm-pairing") {
             try {
                 val paired=PairingClient(this).join(code,endpoint,name,model)
+                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.PAIR_OK)
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         setStatus(getString(R.string.connected,paired))
@@ -334,7 +373,10 @@ class MainActivity : Activity() {
                         offerRpcGuestAfterPairing()
                     }
                 }
-            }catch(e:Exception) {runOnUiThread {setStatus(getString(R.string.pair_failed,e.message))}}
+            }catch(e:Exception) {
+                RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.WARN, RuntimeEvent.PAIR_FAILED)
+                runOnUiThread {setStatus(getString(R.string.pair_failed,e.message))}
+            }
         }
     }
 
@@ -412,9 +454,20 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        uiResumed = true
+        if (tab == 4 || tab == 5) {
+            uiHandler.removeCallbacks(tabRefresh)
+            uiHandler.post(tabRefresh)
+        }
         try {updateManager.onResume()} catch(e:Exception) {Log.w("NodexLMStartup","Updater resume failed",e)}
     }
+    override fun onPause() {
+        uiResumed = false
+        uiHandler.removeCallbacks(tabRefresh)
+        super.onPause()
+    }
     override fun onDestroy() {
+        uiHandler.removeCallbacks(tabRefresh)
         try {updateManager.stop()} catch(_:Exception) {}
         super.onDestroy()
     }
