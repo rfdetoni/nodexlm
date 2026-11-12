@@ -1,0 +1,26 @@
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -327,8 +327,12 @@ static uint64_t fnv_hash(const uint8_t * data, size_t len, uint64_t hash = 0xcb
+ }
+ 
+ static bool send_msg(socket_ptr sock, const void * msg, size_t msg_size) {
+-    if (!sock->send_data(&msg_size, sizeof(msg_size))) {
++    // GGML RPC v9 has a fixed 8-byte little-endian response length.
++    // size_t is only four bytes on Android armeabi-v7a: sending it directly
++    // corrupts HELLO, DEVICE_COUNT, ALLOC_BUFFER and tensor responses.
++    const uint64_t wire_size = static_cast<uint64_t>(msg_size);
++    if (!sock->send_data(&wire_size, sizeof(wire_size))) {
+         return false;
+     }
+     if (!sock->send_data(msg, msg_size)) {
+@@ -386,7 +390,8 @@ static bool send_rpc_cmd_payload(socket_ptr sock, enum rpc_cmd cmd, const void
+     if (!sock->send_data(&cmd_byte, sizeof(cmd_byte))) {
+         return false;
+     }
+-    const size_t request_size = input_size + payload_size;
++    // Request lengths are also fixed-width, regardless of client ABI.
++    const uint64_t request_size = static_cast<uint64_t>(input_size) + static_cast<uint64_t>(payload_size);
+     if (!sock->send_data(&request_size, sizeof(request_size))) {
+         return false;
+     }
