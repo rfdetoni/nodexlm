@@ -95,7 +95,7 @@ func parseNVIDIASMI(out string) []protocol.GPUDevice {
 		total, er1 := strconv.ParseUint(strings.TrimSpace(columns[1]), 10, 64)
 		free, er2 := strconv.ParseUint(strings.TrimSpace(columns[2]), 10, 64)
 		if er1 != nil || er2 != nil || total == 0 || free > total ||
-			total > (^uint64(0) >> 20) {
+			total > (^uint64(0)>>20) {
 			continue
 		}
 		// nvidia-smi's FB memory is a dedicated device allocation pool.
