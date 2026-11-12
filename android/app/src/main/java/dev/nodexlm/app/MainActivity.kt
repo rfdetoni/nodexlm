@@ -5,6 +5,8 @@ package dev.nodexlm.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -289,6 +291,16 @@ class MainActivity : Activity() {
                     .putInt("rpc_max_contribution_mib",cap).putInt("rpc_memory_reserve_mib",reserve)
                     .putInt("rpc_threads",threads).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
+            }
+        })
+        settings.addView(action(getString(R.string.rpc_diagnostics_copy)) {
+            try {
+                val report = RpcGuestDiagnostics.report(this)
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("NodexLM RPC diagnostic", report))
+                setStatus(getString(R.string.rpc_diagnostics_copied))
+            } catch (e: Exception) {
+                setStatus(getString(R.string.rpc_diagnostics_failed))
             }
         })
         settings.addView(action(getString(R.string.ui_fd732a2b0a67)) {updateManager.check(manual=true)})
