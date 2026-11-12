@@ -141,7 +141,7 @@ class RpcGuestService : Service() {
                 check(message.isEmpty()) { message }
                 awaitNativeRPC()
                 recordGuestEvent("ready")
-                Log.i(LOG, "Native GGML RPC socket ready; mode=$mode, threads=$threads")
+                Log.i(LOG, "Native GGML RPC socket ready; requested=$mode, selected=${NativeRpc.selectedBackends()}, threads=$threads")
                 val sslContext = pinnedSSLContext()
                 // Share measured Vulkan heap counters; on mobile GPUs memory can
                 // be shared with RAM and must never be counted twice by the Host.
@@ -384,11 +384,7 @@ class RpcGuestService : Service() {
                 JSONArray()
             })
             .put("runtime", JSONObject()
-                .put("engine", when(mode) {
-                    "cpu" -> "ggml-rpc-cpu"
-                    "gpu" -> "ggml-rpc-vulkan"
-                    else -> "ggml-rpc-cpu-vulkan"
-                })
+                .put("engine", "ggml-rpc-" + NativeRpc.selectedBackends())
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
                 .put("benchmark", true)
