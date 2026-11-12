@@ -49,6 +49,7 @@ class ComputeService : Service() {
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
         if (intent?.action==STOP) {stopWorker();return START_NOT_STICKY}
         if (!running.compareAndSet(false,true))return START_STICKY
+        RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_START)
         val manager=getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL,"NodexLM background inference",NotificationManager.IMPORTANCE_LOW))
         val stop=PendingIntent.getService(this,11,Intent(this,ComputeService::class.java).setAction(STOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -77,6 +78,7 @@ class ComputeService : Service() {
 
     private fun stopWorker() {
         running.set(false)
+        RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_STOP)
         releaseWorkerWakeLock()
         try{NativeEntry.cancel()}catch (_:Throwable){}
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -92,7 +94,10 @@ class ComputeService : Service() {
         var backoff=1000L
         val model=ModelFiles.selected(this)
         val coordinator=(prefs.getString("coordinator","")?:"").trimEnd('/')
-        if (!coordinator.startsWith("https://")||model == null || !model.isFile){Log.e(logTag,"Invalid worker configuration");stopWorker();return}
+        if (!coordinator.startsWith("https://")||model == null || !model.isFile){
+            RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.ERROR, RuntimeEvent.WORKER_FAILED)
+            Log.e(logTag,"Invalid worker configuration");stopWorker();return
+        }
         try {
             var id=prefs.getString("node_id","")?:""
             val token=NodeSecrets.read(this)
@@ -117,6 +122,7 @@ class ComputeService : Service() {
                         continue
                     }
                     val jid=job.getString("id")
+                    RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.WORKER_JOB_RECEIVED)
                     var answer="";var failure=""
                     val pm=getSystemService(POWER_SERVICE) as PowerManager
                     val wake=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"NodexLM:inference")
@@ -127,6 +133,7 @@ class ComputeService : Service() {
                             val init=NativeEntry.load(model!!.absolutePath,2048,maxOf(1,Runtime.getRuntime().availableProcessors()-2))
                             if(init.isNotEmpty())throw IllegalStateException(init)
                             loaded=true
+                            RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_MODEL_LOADED)
                         }
                         val input=job.getJSONObject("request")
                         val messages=input.getJSONArray("messages")
@@ -177,14 +184,23 @@ class ComputeService : Service() {
                     lastInference=android.os.SystemClock.elapsedRealtime()
                     val result=JSONObject().put("result",answer).put("error",failure.take(1000))
                     request(coordinator+"/v1/nodes/result/$jid",token,id,result)
+                    RuntimeLogs.append(this, RuntimeRole.GUEST,
+                        if (failure.isEmpty()) RuntimeLevel.INFO else RuntimeLevel.WARN,
+                        if (failure.isEmpty()) RuntimeEvent.WORKER_JOB_DONE else RuntimeEvent.WORKER_JOB_FAILED)
                     backoff=1000L
                 }catch(e:Exception) {
+                    if (backoff == 1000L || backoff >= 30_000L) {
+                        RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.WARN, RuntimeEvent.WORKER_RETRY)
+                    }
                     Log.w(logTag,"Worker request failed (will retry): ${e.message}")
                     Thread.sleep(backoff)
                     backoff=min(backoff*2,30_000L)
                 }
             }
-        }catch(e:Exception){Log.e(logTag,"Worker stopped",e)}
+        }catch(e:Exception){
+            RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.ERROR, RuntimeEvent.WORKER_FAILED)
+            Log.e(logTag,"Worker stopped",e)
+        }
         finally {
             try { NativeEntry.unload() } catch (_: Throwable) {}
             releaseWorkerWakeLock()
