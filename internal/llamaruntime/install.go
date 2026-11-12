@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -213,6 +214,12 @@ func unpackFile(dst string, src io.Reader, mode os.FileMode) error {
 	}
 	return nil
 }
+// extractTar accepts safe in-archive file aliases used for shared-library
+// SONAMEs in official llama.cpp releases. Never extract a symbolic link
+// directly: that would allow subsequent file entries to follow it outside
+// the staging directory. Instead, defer all aliases until the complete
+// regular-file payload has been extracted, resolve chains only to archive
+// regular files, then materialize aliases with hard links to those files.
 func extractTar(r io.Reader, root string) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -221,21 +228,60 @@ func extractTar(r io.Reader, root string) error {
 	defer gz.Close()
 	t := tar.NewReader(gz)
 	var total int64
+	regular := make(map[string]bool)
+	aliases := make(map[string]string)
+	aliasOrder := make([]string, 0)
+	finishAliases := func() error {
+		for _, name := range aliasOrder {
+			current := aliases[name]
+			seen := map[string]bool{name: true}
+			for !regular[current] {
+				if seen[current] {
+					return fmt.Errorf("runtime archive contains cyclic link at %q", name)
+				}
+				seen[current] = true
+				next, ok := aliases[current]
+				if !ok {
+					return fmt.Errorf("runtime archive link %q does not target an extracted regular file", name)
+				}
+				current = next
+			}
+			source, err := securePath(root, current)
+			if err != nil {
+				return err
+			}
+			destination, err := securePath(root, name)
+			if err != nil {
+				return err
+			}
+			// Hard links stay within the staging filesystem and preserve the
+			// executable flag. Unlike symlinks, they cannot later escape root
+			// through a relative path or symlink resolution.
+			if err := os.Link(source, destination); err != nil {
+				return fmt.Errorf("materialize runtime library alias %q: %w", name, err)
+			}
+		}
+		return nil
+	}
 	for i := 0; i < 4096; i++ {
 		h, err := t.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return finishAliases()
 		}
 		if err != nil {
 			return err
 		}
-		path, err := securePath(root, h.Name)
+		extracted, err := securePath(root, h.Name)
 		if err != nil {
 			return err
 		}
+		name := path.Clean(h.Name)
 		switch h.Typeflag {
 		case tar.TypeDir:
-			if err = os.MkdirAll(path, 0700); err != nil {
+			if aliases[name] != "" || regular[name] {
+				return fmt.Errorf("runtime archive duplicate directory %q", name)
+			}
+			if err = os.MkdirAll(extracted, 0700); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
@@ -246,15 +292,40 @@ func extractTar(r io.Reader, root string) error {
 			if total > 2<<30 {
 				return errors.New("runtime archive expanded size limit exceeded")
 			}
-			if err = unpackFile(path, t, os.FileMode(h.Mode)); err != nil {
+			if aliases[name] != "" || regular[name] {
+				return fmt.Errorf("runtime archive duplicate file %q", name)
+			}
+			if err = unpackFile(extracted, t, os.FileMode(h.Mode)); err != nil {
 				return err
 			}
+			regular[name] = true
+		case tar.TypeSymlink, tar.TypeLink:
+			// Preserve only aliases to regular files already present in the
+			// verified archive. Symlink targets are relative to their parent;
+			// TAR hardlink targets are relative to the archive root.
+			if h.Linkname == "" || strings.HasPrefix(h.Linkname, "/") ||
+				strings.ContainsAny(h.Linkname, ":\\") {
+				return fmt.Errorf("unsafe runtime archive link target for %q", name)
+			}
+			if aliases[name] != "" || regular[name] {
+				return fmt.Errorf("runtime archive duplicate alias %q", name)
+			}
+			target := path.Clean(h.Linkname)
+			if h.Typeflag == tar.TypeSymlink {
+				target = path.Clean(path.Join(path.Dir(name), target))
+			}
+			if _, err = securePath(root, target); err != nil {
+				return fmt.Errorf("unsafe runtime archive link %q: %w", name, err)
+			}
+			aliases[name] = target
+			aliasOrder = append(aliasOrder, name)
 		default:
-			return errors.New("runtime archive contains symlink or unsupported entry")
+			return fmt.Errorf("runtime archive contains unsupported entry type %d at %q", h.Typeflag, h.Name)
 		}
 	}
 	return errors.New("runtime archive has too many files")
 }
+
 func extractZip(f *os.File, root string) error {
 	info, err := f.Stat()
 	if err != nil {
