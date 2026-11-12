@@ -91,3 +91,18 @@ func TestAggregateDoesNotSumSharedGPUHeaps(t *testing.T) {
 		t.Fatalf("shared memory double counted: %+v", summary)
 	}
 }
+
+func TestAggregateDrainingExcludesMemoryBudget(t *testing.T) {
+	device := protocol.Device{
+		ID: "phone", Name: "phone", Platform: "android", CPUCount: 8,
+		RAMBytes: 8 * GiB, AvailableRAMBytes: 4 * GiB,
+		Status: "draining", UnavailableReason: "thermal", LastSeen: time.Now(),
+		Runtime: protocol.RuntimeCapability{Installed: true, RPCReady: true},
+	}
+	result := Aggregate([]protocol.Device{device}, time.Now())
+	if result.Online != 0 || result.InferenceReady != 0 || result.AggregateBudgetBytes != 0 ||
+		len(result.Nodes) != 1 || result.Nodes[0].Status != "draining" ||
+		result.Nodes[0].ReservedUsableBytes != 0 {
+		t.Fatalf("draining node was admitted to planner: %+v", result)
+	}
+}
