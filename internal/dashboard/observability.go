@@ -69,8 +69,12 @@ func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duratio
 	m.mu.Lock()
 	// A live distributed result is not evidence of Host-only performance;
 	// keep it distinct from local and per-Guest benchmark samples.
-	if m.engine != nil && len(m.engine.RPCServers) > 0 {
-		model += "@cluster"
+	if m.engine != nil {
+		if len(m.engine.RPCServers) > 0 {
+			model += "@cluster"
+		} else {
+			model += "@live-host"
+		}
 	}
 	sample := InferenceSample{Model: model, MeasuredAt: time.Now(), Tokens: tokens,
 		PromptTokens: out.Usage.Prompt, CachedTokens: out.Usage.Details.Cached,
