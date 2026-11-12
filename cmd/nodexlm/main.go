@@ -304,7 +304,13 @@ func serve(args []string) error {
 				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
 					continue
 				}
-				out = append(out, dashboard.RPCGuest{ID: profile.ID, Name: profile.Name, Endpoint: endpoint, CapacityBytes: clusterplan.Budget(profile)})
+				memory := clusterplan.RPCMemory(profile)
+				out = append(out, dashboard.RPCGuest{
+					ID: profile.ID, Name: profile.Name, Endpoint: endpoint,
+					CapacityBytes: clusterplan.Budget(profile),
+					RPCDeviceKinds: append([]string(nil), profile.Runtime.RPCDevices...),
+					RAMBudgetBytes: memory.RAM, GPUBudgetBytes: memory.GPU,
+				})
 			}
 			return out
 		})
