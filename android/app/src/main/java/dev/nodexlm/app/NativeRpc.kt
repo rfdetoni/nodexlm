@@ -13,6 +13,8 @@ internal object NativeRpc {
     external fun start(threads: Int, mode: String, socketPath: String): String
     /** Reports whether the native GGML RPC server thread is still running. */
     external fun isRunning(): Boolean
+    /** Selected native devices after backend initialization; not measured throughput. */
+    external fun selectedBackends(): String
     /** JSON object with hardware-backed Vulkan GPU metrics (can be empty). */
     external fun inspect(): String
 }
