@@ -182,7 +182,8 @@ func validDevice(d protocol.Device) bool {
 		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
 		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(d) || !validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
-		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 {
+		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 ||
+		len(d.UnavailableReason) > 128 {
 		return false
 	}
 	for _, m := range d.Models {
@@ -636,7 +637,12 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	profile.ID = id
 	profile.LastSeen = time.Now()
-	profile.Status = "online"
+	// A retiring Guest must not receive a new tensor placement, even while
+	// the already authenticated tunnels remain attached to finish work.
+	if profile.Status != "draining" {
+		profile.Status = "online"
+		profile.UnavailableReason = ""
+	}
 	profile.Busy = n.device.Busy
 	// RPCReady is asserted only when a tunnel is authenticated, not by a guest.
 	profile.Runtime.RPCReady = false
