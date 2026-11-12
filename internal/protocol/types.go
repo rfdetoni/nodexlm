@@ -47,6 +47,10 @@ type RuntimeCapability struct {
 	Version           string `json:"version,omitempty"`
 	Installed         bool   `json:"installed"`
 	RPCReady          bool   `json:"rpc_ready"`
+	// RPCDevices lists native device kinds in ggml-rpc-server exposure order.
+	// For example ["gpu","cpu"] means two distinct RPC devices on one Guest.
+	// Empty is a legacy worker whose device topology is unknown.
+	RPCDevices       []string `json:"rpc_devices,omitempty"`
 }
 
 type Device struct {
