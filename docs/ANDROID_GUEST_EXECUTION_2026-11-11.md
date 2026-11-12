@@ -43,3 +43,20 @@ P2: benchmarks comparáveis de topologia Host-only/Guest, Vulkan CPU/híbrido su
 P3: estudo de OpenCL/Adreno/Hexagon com configuração concreta de driver/SDK e prova de RPC, não apenas inferência local.
 
 Este documento registra limites da entrega, não substitui issues nem afirma conclusão integral.
+
+## Continuação — PR #45 (2026-11-12)
+
+Implementações adicionais, com aceite de código condicionado aos workflows do PR:
+
+| ID | Alteração | Limite de verificação |
+| --- | --- | --- |
+| AND-02 | O Android reserva pelo menos o limiar `ActivityManager.MemoryInfo.threshold` da ROM, além da reserva configurada. Se o SO anunciar `lowMemory`, o Guest anuncia `draining` antes de encerrar, preservando sessões existentes até o limite temporal. | Não equivale a medição das alocações reais GGML/KV nem previne toda morte por LMK. |
+| AND-04 | `ThermalRecovery` exige 30 s continuamente frio **e sem sessão RPC reivindicada** para reabrir os túneis após status MODERATE. O serviço ainda encerra após 90 s sem recuperação ou imediatamente em SEVERE; política de bateria/horário permanece stop-only. | Android FGS/Doze e temperatura física precisam de testes em aparelhos reais. Não existe ajuste de threads a quente. |
+| AND-05 | O planejador exclui Guests com orçamento de RAM zerado sem eliminar os Guests saudáveis. Modo capacity mantém todos os *elegíveis*; IDs duplicados continuam rejeitados. | Não é otimização preditiva de tokens/s. |
+| AND-10 | O Host rejeita novos `CONNECT` de Guest em `draining` (HTTP 503) sem restaurar online. Linux/Unix Guests param de repetir conexões após HTTP 401/403; 503 usa atraso exponencial com jitter e limite 30 s. Sessões em uso continuam até terminar ou sofrer timeout. | Verificar perda de Wi-Fi, token revogado e reconexão em instalações reais. |
+| AND-12 | Testes Go para exclusão de RAM zerada, drenagem, recusas TLS 401/403/503, backoff; testes Kotlin para histerese e relógio. | Checks Go, UI e compilação JNI não simulam ROM/OEM. |
+| AND-13 | O PR #44 anterior **passou** no workflow Android APK ARMv7/ARM64 e verificação 16 KiB. O PR #45 executa novamente esses gates para a nova implementação. | APK de produção assinado por credencial permanente e testes físicos continuam pendentes. |
+
+Outra correção de capacidade Host/Linux: a saída `nvidia-smi` com framebuffer medido e válido passa a marcar VRAM como dedicada, evitando classificá-la como heap integrado. Dados inválidos são descartados; memória compartilhada de Android/iGPU continua sem soma com RAM.
+
+**Permanecem sem implementação/aceite:** cache de tensores Android com quota real, patch de upload paralelo r2 promovido com hashes/interop, telemetria nativa de alocação/concorrência, recuperação pós-crash do driver, auto-tuning sustentado e aceleradores OpenCL/Hexagon reais. Os testes físicos e comparativos precisam ser executados em dispositivos e rede reais, sem inventar números.
