@@ -77,6 +77,7 @@ class RpcGuestService : Service() {
     @Volatile private var drainStartedMs = 0L
     private val claimedNativeRelays = AtomicLong()
     private val thermalRecovery = ThermalRecovery()
+    private val thermalHeadroomWarningLogged = AtomicBoolean(false)
     private val cpuSampler = CpuUsageSampler()
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
     private var cpuLock: PowerManager.WakeLock? = null
@@ -424,8 +425,17 @@ class RpcGuestService : Service() {
                 .put("rpc_ready", false))
         if (percent in 0..100) device.put("battery_percent", percent)
         if (Build.VERSION.SDK_INT >= 30) {
-            // Android limits polling of thermal headroom. Heartbeats are 15s apart.
-            val headroom = power.getThermalHeadroom(10)
+            // Thermal headroom is optional and some OEM services fail this
+            // query. Never lose a valid heartbeat because telemetry failed.
+            // Android limits polling; heartbeats are 15 seconds apart.
+            val headroom = try {
+                power.getThermalHeadroom(10)
+            } catch (e: RuntimeException) {
+                if (thermalHeadroomWarningLogged.compareAndSet(false, true)) {
+                    Log.w(LOG, "Thermal headroom unsupported by this ROM; omitting metric", e)
+                }
+                Float.NaN
+            }
             if (headroom.isFinite() && headroom >= 0f && headroom <= 10f) {
                 device.put("thermal_headroom", headroom.toDouble())
             }
