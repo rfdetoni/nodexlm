@@ -120,13 +120,13 @@ func TestChooseRPCSpeedCanUseHostAlone(t *testing.T) {
 		len(hostOnly.Excluded) != 1 || hostOnly.Excluded[0] != node {
 		t.Fatalf("Host-only speed option was not selected: %+v %v", hostOnly, err)
 	}
-	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 10, MeasuredAt: time.Now()}
-	m.samples["small.gguf@"+node] = InferenceSample{Model: "small.gguf@" + node, TokensPerSecond: 30, MeasuredAt: time.Now()}
+	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 10, MeasuredAt: time.Now(), Kind: "benchmark"}
+	m.samples["small.gguf@"+node] = InferenceSample{Model: "small.gguf@" + node, TokensPerSecond: 30, MeasuredAt: time.Now(), Kind: "benchmark"}
 	remote, err := m.chooseRPC(settings, meta, gib, 8*gib, guest)
 	if err != nil || len(remote.Guests) != 1 || remote.Guests[0].ID != node {
 		t.Fatalf("faster measured Guest must remain eligible: %+v %v", remote, err)
 	}
-	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 40, MeasuredAt: time.Now()}
+	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 40, MeasuredAt: time.Now(), Kind: "benchmark"}
 	hostOnly, err = m.chooseRPC(settings, meta, gib, 8*gib, guest)
 	if err != nil || len(hostOnly.Guests) != 0 {
 		t.Fatalf("faster measured Host must be eligible: %+v %v", hostOnly, err)
