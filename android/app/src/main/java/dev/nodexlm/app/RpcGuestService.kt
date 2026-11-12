@@ -365,7 +365,9 @@ class RpcGuestService : Service() {
             .put("charging", charging)
             // Only expose GPU memory when this worker allows Vulkan offload.
             // A CPU-only Guest must not make the Host allocate layers to GPU.
-            .put("gpus", if (mode == "cpu") JSONArray() else try {
+            // Only announce devices that survived native backend init. In
+            // auto mode a failed Vulkan probe must not report a GPU to Host.
+            .put("gpus", if (!NativeRpc.selectedBackends().contains("vulkan")) JSONArray() else try {
                 val gpus = JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
                 for (i in 0 until gpus.length()) {
                     val gpu = gpus.optJSONObject(i) ?: continue
