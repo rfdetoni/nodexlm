@@ -173,7 +173,6 @@ func TestChooseRPCSkipsGuestsWithoutUsableRAM(t *testing.T) {
 	}
 }
 
-
 func TestSpeedUsesLocalByDefaultAndNeverTrustsUnmeasuredHost(t *testing.T) {
 	const gib = uint64(1 << 30)
 	m, err := NewManager(t.TempDir(), t.TempDir(), "")
@@ -191,7 +190,7 @@ func TestSpeedUsesLocalByDefaultAndNeverTrustsUnmeasuredHost(t *testing.T) {
 	// A live Guest sample is not a comparable benchmark. Even a real
 	// Guest benchmark alone cannot prove that it beats an unmeasured Host.
 	m.samples[s.Model+"@"+node] = InferenceSample{
-		Model: s.Model+"@"+node, TokensPerSecond: 35, MeasuredAt: time.Now(), Kind: "benchmark"}
+		Model: s.Model + "@" + node, TokensPerSecond: 35, MeasuredAt: time.Now(), Kind: "benchmark"}
 	choice, err := m.chooseRPC(s, meta, 3*gib, 8*gib, guest)
 	if err != nil || choice.LocalLayers != 32 || len(choice.Guests) != 0 {
 		t.Fatalf("small unmeasured model was distributed needlessly: %+v %v", choice, err)
