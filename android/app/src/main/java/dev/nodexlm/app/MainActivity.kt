@@ -286,6 +286,216 @@ class MainActivity : Activity() {
         content.addView(worker)
     }
 
+    private fun updatesScreen() {
+        val card = card()
+        card.addView(label(getString(R.string.updates_title), 18, true))
+        card.addView(label(getString(R.string.updates_description), 13, false))
+        updatesStatus = label(getString(R.string.updates_never_checked), 13, false)
+        card.addView(updatesStatus)
+        updatesProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            visibility = View.GONE
+        }
+        card.addView(updatesProgress, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(8)).apply { bottomMargin = dp(12) })
+
+        val updatePrefs = getSharedPreferences(UpdateFeed.PREFS, MODE_PRIVATE)
+        val automatic = CheckBox(this).apply {
+            text = getString(R.string.updates_wifi_auto)
+            isChecked = updatePrefs.getBoolean("auto_download", false)
+            setOnCheckedChangeListener { _, enabled ->
+                updatePrefs.edit().putBoolean("auto_download", enabled).apply()
+                if (enabled) {
+                    // Check on an explicit opt-in; the next normal daily check
+                    // also downloads on unmetered connections if available.
+                    updateManager.check(manual = false)
+                }
+            }
+        }
+        card.addView(automatic)
+
+        card.addView(action(getString(R.string.updates_check_now)) {
+            updateManager.check(manual = true)
+            refreshUpdatesStatus()
+        })
+        updatesDownload = action(getString(R.string.updates_download)) {
+            updateManager.downloadAvailable()
+            refreshUpdatesStatus()
+        }
+        card.addView(updatesDownload)
+        updatesInstall = action(getString(R.string.updates_install)) {
+            updateManager.installDownloaded()
+            refreshUpdatesStatus()
+        }
+        card.addView(updatesInstall)
+        card.addView(action(getString(R.string.updates_open_github)) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateFeed.RELEASES_URL)))
+        })
+        content.addView(card)
+        refreshUpdatesStatus()
+    }
+
+    private fun refreshUpdatesStatus() {
+        if (tab != 4 || !::updatesStatus.isInitialized) return
+        val snapshot = try { updateManager.status() } catch (e: Exception) {
+            updatesStatus.text = getString(R.string.updates_error, e.javaClass.simpleName)
+            return
+        }
+        val message = StringBuilder(getString(R.string.updates_current_version, snapshot.currentVersion))
+        message.append("\n")
+        if (snapshot.feed == "available" && !snapshot.availableVersion.isNullOrBlank()) {
+            message.append(getString(R.string.updates_latest_version, snapshot.availableVersion)).append("\n")
+        }
+        if (snapshot.lastSuccess > 0) {
+            val formatted = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                .format(Date(snapshot.lastSuccess))
+            message.append(getString(R.string.updates_last_check, formatted))
+        } else {
+            message.append(getString(R.string.updates_never_checked))
+        }
+        message.append("\n")
+        message.append(when {
+            snapshot.checking -> getString(R.string.updates_checking)
+            snapshot.feed == "error" -> getString(R.string.updates_error, snapshot.error ?: "?")
+            snapshot.feed == "unpublished" -> getString(R.string.updates_no_release)
+            snapshot.feed == "available" -> getString(R.string.updates_available)
+            snapshot.feed == "current" -> getString(R.string.updates_current_status)
+            else -> getString(R.string.updates_never_checked)
+        })
+        message.append("\n")
+        if (snapshot.verifying) {
+            message.append(getString(R.string.updates_verifying))
+        } else if (snapshot.installRequested) {
+            message.append(getString(R.string.updates_install_pending))
+        } else {
+            when (snapshot.downloadStatus) {
+                DownloadManager.STATUS_PENDING -> message.append(getString(R.string.updates_download_pending))
+                DownloadManager.STATUS_RUNNING -> {
+                    if (snapshot.total > 0L) {
+                        val percent = ((snapshot.downloaded.toDouble() / snapshot.total) * 100).toInt().coerceIn(0, 100)
+                        message.append(getString(R.string.updates_download_progress, percent))
+                    } else message.append(getString(R.string.updates_download_pending))
+                }
+                DownloadManager.STATUS_PAUSED -> message.append(getString(R.string.updates_download_paused))
+                DownloadManager.STATUS_SUCCESSFUL -> message.append(getString(R.string.updates_download_ready))
+                DownloadManager.STATUS_FAILED -> message.append(getString(R.string.updates_download_failed))
+            }
+        }
+        updatesStatus.text = message.toString()
+        updatesProgress.visibility = if (snapshot.downloadStatus == DownloadManager.STATUS_RUNNING) View.VISIBLE else View.GONE
+        updatesProgress.isIndeterminate = snapshot.downloadStatus == DownloadManager.STATUS_RUNNING && snapshot.total <= 0L
+        if (snapshot.total > 0L) {
+            updatesProgress.progress = ((snapshot.downloaded.toDouble() / snapshot.total) * 1000).toInt().coerceIn(0, 1000)
+        }
+        updatesDownload.isEnabled = snapshot.feed == "available" && !snapshot.checking &&
+            snapshot.downloadStatus != DownloadManager.STATUS_RUNNING &&
+            snapshot.downloadStatus != DownloadManager.STATUS_PENDING &&
+            snapshot.downloadStatus != DownloadManager.STATUS_PAUSED &&
+            snapshot.downloadStatus != DownloadManager.STATUS_SUCCESSFUL && !snapshot.verifying
+        updatesInstall.isEnabled = snapshot.downloadStatus == DownloadManager.STATUS_SUCCESSFUL &&
+            !snapshot.verifying && !snapshot.installRequested
+    }
+
+    private fun logsScreen() {
+        val panel = card()
+        panel.addView(label(getString(R.string.logs_title), 18, true))
+        panel.addView(label(getString(R.string.logs_description), 13, false))
+        panel.addView(label(getString(R.string.logs_host_note), 12, false))
+        val options = listOf(
+            getString(R.string.logs_filter_auto),
+            getString(R.string.logs_filter_guest),
+            getString(R.string.logs_filter_host),
+            getString(R.string.logs_filter_updates),
+            getString(R.string.logs_filter_all)
+        )
+        val filter = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, options)
+            setSelection(logsFilter)
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long
+                ) {
+                    logsFilter = position
+                    refreshLogs()
+                }
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            }
+        }
+        panel.addView(filter)
+        logsCounter = label(getString(R.string.logs_count, 0), 12, false)
+        panel.addView(logsCounter)
+        logsOutput = label(getString(R.string.logs_empty), 12, false).apply {
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(8), dp(12), dp(8), dp(12))
+            setBackgroundColor(0xff20252a.toInt())
+        }
+        panel.addView(logsOutput, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        panel.addView(action(getString(R.string.logs_copy)) {
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("NodexLM operational logs", displayedLogText))
+            setStatus(getString(R.string.rpc_diagnostics_copied))
+        })
+        panel.addView(action(getString(R.string.logs_clear)) {
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.logs_clear))
+                .setMessage(R.string.logs_clear_confirm)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    thread(name = "nodexlm-logs-clear") {
+                        try {
+                            RuntimeLogs.clear(this)
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    setStatus(getString(R.string.logs_cleared))
+                                    refreshLogs()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread { setStatus(e.javaClass.simpleName) }
+                        }
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null).show()
+        })
+        content.addView(panel)
+        refreshLogs()
+    }
+
+    private fun refreshLogs() {
+        if (tab != 5 || !logsReading.compareAndSet(false, true)) return
+        val selected = logsFilter
+        thread(name = "nodexlm-logs-read", isDaemon = true) {
+            try {
+                val items = RuntimeLogs.read(this)
+                val visible = items.filter { event ->
+                    when (selected) {
+                        1 -> event.role == RuntimeRole.GUEST
+                        2 -> event.role == RuntimeRole.HOST
+                        3 -> event.role == RuntimeRole.APP || event.role == RuntimeRole.UPDATES
+                        // Auto shows current Guest/worker activity together with
+                        // interactions with the remote Host; other events remain
+                        // visible so an update failure is not hidden.
+                        else -> true
+                    }
+                }
+                val english = !resources.configuration.locales.get(0).language.equals("pt", ignoreCase = true)
+                val text = RuntimeLogFormat.readable(visible, english)
+                runOnUiThread {
+                    if (tab == 5 && ::logsOutput.isInitialized && !isDestroyed) {
+                        displayedLogText = text
+                        logsCounter.text = getString(R.string.logs_count, visible.size)
+                        logsOutput.text = if (text.isEmpty()) getString(R.string.logs_empty) else text
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("NodexLMLogs", "Cannot display structured operational events", e)
+            } finally {
+                logsReading.set(false)
+            }
+        }
+    }
+
     private fun settingsScreen() {
         val settings=card()
         settings.addView(label(getString(R.string.ui_14e59fc95d44),18,true))
