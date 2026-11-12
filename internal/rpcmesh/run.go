@@ -124,6 +124,7 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	fatal := make(chan error, 1)
 	var wg sync.WaitGroup
 	for i := 0; i < slots; i++ {
 		wg.Add(1)
@@ -132,6 +133,13 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 			delay := time.Second
 			for runCtx.Err() == nil {
 				err := Connect(runCtx, client, listen)
+				if errors.Is(err, ErrGuestCredentialsRejected) {
+					select {
+					case fatal <- err:
+					default:
+					}
+					return
+				}
 				if err == nil {
 					// A completed RPC session must not inherit a previous failure backoff.
 					delay = time.Second
@@ -147,14 +155,9 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 				select {
 				case <-runCtx.Done():
 					return
-				case <-time.After(delay):
+				case <-time.After(jitteredRPCBackoff(delay)):
 				}
-				if err != nil && delay < 10*time.Second {
-					delay *= 2
-					if delay > 10*time.Second {
-						delay = 10 * time.Second
-					}
-				}
+				delay = nextRPCBackoff(delay, err)
 			}
 		}(i)
 	}
@@ -163,6 +166,10 @@ func RunNativeGuest(ctx context.Context, client *netclient.Client, executable, l
 		cancel()
 		wg.Wait()
 		return nil
+	case err := <-fatal:
+		cancel()
+		wg.Wait()
+		return fmt.Errorf("RPC Guest must be re-paired: %w", err)
 	case <-processExited:
 		cancel()
 		wg.Wait()
