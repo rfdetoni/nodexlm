@@ -199,4 +199,7 @@
     <string name="logs_empty">No operational events recorded for this filter.</string>
     <string name="logs_count">%1$d recent events</string>
     <string name="logs_clear_confirm">Clear all local Host/Guest/update diagnostics? This cannot be undone.</string>
+    <string name="logs_mode_rpc">Last recorded mode: RPC Guest</string>
+    <string name="logs_mode_worker">Last recorded mode: inference worker</string>
+    <string name="logs_mode_inactive">Last recorded mode: inactive/unknown</string>
 </resources>
