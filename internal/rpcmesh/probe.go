@@ -3,8 +3,8 @@
 package rpcmesh
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -129,7 +129,6 @@ func writeRPCProbe(conn net.Conn, data []byte) error {
 	}
 	return nil
 }
-
 
 const (
 	rpcProbeTensorBytes = 64 << 10
