@@ -15,7 +15,13 @@ const {chromium} = require('playwright');
   try {
     const page = await browser.newPage({viewport: {width: 1280, height: 900}});
     const errors = [];
+    const chatRequests = [];
     page.on('pageerror', error => errors.push(error.message));
+    page.on('request', request => {
+      if(request.url().endsWith('/api/chat') && request.method()==='POST') {
+        try { chatRequests.push(request.postDataJSON()); } catch { /* invalid test payload is caught by assertions */ }
+      }
+    });
     await page.goto(base);
     await page.locator('#secret').fill(token);
     await page.locator('#login button').click();
@@ -26,17 +32,28 @@ const {chromium} = require('playwright');
     await page.locator('#view-chat').waitFor({state: 'visible'});
     await page.waitForFunction(() => document.querySelector('#chatModel').options.length > 0);
     await page.locator('#chatTokens').fill('8');
+    await page.locator('#chatEffort').selectOption('none');
     for (const prompt of ['Once upon a time', 'Then the little bird']) {
       await page.locator('#prompt').fill(prompt);
       await page.locator('#sendChat').click();
       await page.waitForFunction(() => document.querySelector('#prompt').value === '' && !document.querySelector('#sendChat').disabled);
     }
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('nodexlm-chat')).length), 4);
+    assert.equal(chatRequests.length,2,'both conversations must reach the native backend');
+    assert(chatRequests.every(x=>x.reasoning_effort==='none' && x.reasoning_budget_tokens===undefined),
+      'disabling thinking must be forwarded as reasoning_effort none without an active token budget');
+    await page.locator('#chatEffort').selectOption('max');
+    await page.locator('#chatThinkingBudget').fill('4');
+    await page.locator('#chatThinkingBudget').dispatchEvent('change');
     await page.reload();
     await page.locator('#app').waitFor({state: 'visible'});
     await page.locator('#nav-chat').click();
     await page.locator('#view-chat').waitFor({state: 'visible'});
     await page.locator('#chatOutput').getByText('Then the little bird', {exact:true}).waitFor();
+    assert.equal(await page.locator('#chatEffort').inputValue(), 'max',
+      'reasoning effort must persist across browser reload');
+    assert.equal(await page.locator('#chatThinkingBudget').inputValue(), '4',
+      'thinking token budget must persist across browser reload');
     await page.locator('#nav-inference').click();
     await page.locator('#view-inference').waitFor({state: 'visible'});
     await page.locator('#previewPlan').click();
