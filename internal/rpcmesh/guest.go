@@ -17,6 +17,13 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/netclient"
 )
 
+// ErrGuestCredentialsRejected requires re-pairing; automatic retries with an
+// invalid token can never restore connectivity.
+var ErrGuestCredentialsRejected = errors.New("RPC Guest credentials rejected")
+
+// ErrTunnelCapacity is a transient, authenticated Host-side capacity limit.
+var ErrTunnelCapacity = errors.New("RPC tunnel capacity exhausted")
+
 // Connect creates one outgoing secure, pinned, authenticated connection from a
 // Guest to its Host. Native RPC is contacted only when an inference starts.
 func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) error {
@@ -93,7 +100,14 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 		return err
 	}
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("RPC tunnel refused: HTTP %d", response.StatusCode)
+		switch response.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return fmt.Errorf("%w: HTTP %d", ErrGuestCredentialsRejected, response.StatusCode)
+		case http.StatusServiceUnavailable:
+			return fmt.Errorf("%w: HTTP %d", ErrTunnelCapacity, response.StatusCode)
+		default:
+			return fmt.Errorf("RPC tunnel refused: HTTP %d", response.StatusCode)
+		}
 	}
 	// The relay intentionally remains idle until model loading requests a slot.
 	if err = secured.SetDeadline(time.Time{}); err != nil {
