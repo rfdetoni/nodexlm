@@ -40,8 +40,21 @@ class UpdateManager(private val activity: Activity) {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
             if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) == prefs.getLong("download_id", -2L)) {
-                tryInstallPending()
+                val status = status().downloadStatus
+                RuntimeLogs.append(activity, RuntimeRole.UPDATES,
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) RuntimeLevel.INFO else RuntimeLevel.WARN,
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) RuntimeEvent.UPDATE_DOWNLOADED
+                    else RuntimeEvent.UPDATE_DOWNLOAD_FAILED)
+                notifyChanged()
             }
+        }
+    }
+
+    var onStateChanged: (() -> Unit)? = null
+
+    private fun notifyChanged() {
+        activity.runOnUiThread {
+            if (!activity.isFinishing && !activity.isDestroyed) onStateChanged?.invoke()
         }
     }
 
@@ -49,11 +62,9 @@ class UpdateManager(private val activity: Activity) {
         if (!receiverRegistered) {
             val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                // DownloadManager broadcasts originate from a separate system app UID.
-                // ACTION_DOWNLOAD_COMPLETE is not a protected system broadcast on
-                // Android 14+, so an explicit receiver flag is mandatory.
-                // Never trust its payload without checking the stored download ID
-                // and re-querying DownloadManager for completion and SHA-256.
+                // Only installed DownloadManager broadcasts are expected. Never
+                // trust the broadcast alone: verify stored ID, status, SHA
+                // and the installed app's signing certificate separately.
                 activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             } else {
                 @Suppress("DEPRECATION")
@@ -61,10 +72,12 @@ class UpdateManager(private val activity: Activity) {
             }
             receiverRegistered = true
         }
-        // Check at most once a day when the application is opened; never keep
-        // polling in the foreground compute service or while the UI is closed.
+        // The UI checks while opened, not on a headless RPC loop.
         val now = System.currentTimeMillis()
-        if (now - prefs.getLong("last_check", 0L) > 24L * 60 * 60 * 1000) check(manual = false)
+        val last = prefs.getLong("last_attempt", 0L)
+        if (last <= 0L || now < last || now - last >= 24L * 60 * 60 * 1000) {
+            check(manual = false)
+        }
     }
 
     fun stop() {
@@ -72,77 +85,116 @@ class UpdateManager(private val activity: Activity) {
             activity.unregisterReceiver(receiver)
             receiverRegistered = false
         }
+        onStateChanged = null
     }
 
-    fun onResume() = tryInstallPending()
+    fun onResume() { notifyChanged() }
 
     fun check(manual: Boolean) {
         if (!checking.compareAndSet(false, true)) return
-        if (!manual) prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
+        RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_CHECK)
+        notifyChanged()
         thread(name = "nodexlm-update-check") {
             try {
-                val endpoint = "https://github.com/rfdetoni/nodexlm/releases/latest/download/update.json"
-                val conn = URL(endpoint).openConnection() as HttpURLConnection
-                conn.connectTimeout = 10_000
-                conn.readTimeout = 15_000
-                conn.setRequestProperty("Accept", "application/json")
-                val metadata = try {
-                    if (conn.responseCode != 200) throw IllegalStateException("releases HTTP ${conn.responseCode}")
-                    val data = ByteArray(8193)
-                    var read = 0
-                    conn.inputStream.use { stream ->
-                        while (read < data.size) {
-                            val n = stream.read(data, read, data.size - read)
-                            if (n < 0) break
-                            read += n
-                        }
+                val available = UpdateFeed.check(activity)
+                when (prefs.getString("feed_status", "")) {
+                    "available" -> {
+                        RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_AVAILABLE)
+                        if (manual) toast(activity.getString(R.string.update_found, available?.versionName ?: "?"))
                     }
-                    require(read <= 8192) { "Update manifest too large" }
-                    JSONObject(String(data, 0, read, Charsets.UTF_8))
-                } finally { conn.disconnect() }
-                val version = metadata.getInt("versionCode")
-                val name = metadata.getString("versionName")
-                val checksum = metadata.getString("sha256").lowercase()
-                val url = metadata.getString("apkUrl")
-                require(version > 0 && name.length in 1..48 && name.all { it.isLetterOrDigit() || it in ".-_+" })
-                require(checksum.matches(Regex("[0-9a-f]{64}")))
-                require(url.startsWith("https://github.com/rfdetoni/nodexlm/releases/download/"))
-                // Preserve compatibility with early arm64-only releases while moving
-                // to one APK for both ARMv7 and ARM64 Android 10+ devices.
-                require(url.endsWith("/NodexLM-android-universal.apk") ||
-                    url.endsWith("/NodexLM-android-arm64.apk"))
-                val installed = activity.packageManager.getPackageInfo(activity.packageName, 0).longVersionCode
-                prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
-                if (version <= installed) {
-                    if (manual) toast(activity.getString(R.string.update_current))
-                    return@thread
+                    "unpublished" -> {
+                        RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_UNPUBLISHED)
+                        if (manual) toast(activity.getString(R.string.update_unpublished))
+                    }
+                    else -> {
+                        RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_CURRENT)
+                        if (manual) toast(activity.getString(R.string.update_current))
+                    }
                 }
-                val old = prefs.getLong("download_id", 0)
-                if (prefs.getInt("version", -1) == version && old > 0) {
-                    if (manual) toast(activity.getString(R.string.update_downloading,name))
-                    tryInstallPending()
-                    return@thread
+                // The opt-in mode downloads on unmetered connections, but
+                // NEVER invokes the package installer without a user click.
+                if (available != null) {
+                    try {
+                        val currentId = prefs.getLong("download_id", 0L)
+                        UpdateFeed.maybeAutomaticDownload(activity, available)
+                        if (prefs.getLong("download_id", 0L) != currentId) {
+                            RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_DOWNLOAD)
+                        }
+                    } catch (e: Exception) {
+                        RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.WARN, RuntimeEvent.UPDATE_DOWNLOAD_FAILED)
+                        Log.w("NodexLMUpdate", "Automatic update download unavailable", e)
+                    }
                 }
-                val destination = File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "NodexLM-$version.apk")
-                if (destination.exists()) destination.delete()
-                val request = DownloadManager.Request(Uri.parse(url))
-                    .setTitle("NodexLM $name")
-                    .setDescription(activity.getString(R.string.update_verified))
-                    .setMimeType("application/vnd.android.package-archive")
-                    .setDestinationUri(Uri.fromFile(destination))
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    .setAllowedOverMetered(manual) // automatic download waits for unmetered Wi-Fi
-                    .setAllowedOverRoaming(false)
-                val id = downloads.enqueue(request)
-                prefs.edit().putLong("download_id", id).putString("sha256", checksum)
-                    .putInt("version", version).putString("file_path", destination.absolutePath)
-                    .remove("prompted_id").apply()
-                if (manual) toast(activity.getString(R.string.update_started,name))
             } catch (e: Exception) {
+                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.WARN, RuntimeEvent.UPDATE_CHECK_FAILED)
                 Log.w("NodexLMUpdate", "Cannot check GitHub Releases", e)
-                if (manual) toast(activity.getString(R.string.update_check_failed,e.message))
-            } finally { checking.set(false) }
+                if (manual) toast(activity.getString(R.string.update_check_failed, e.message))
+            } finally {
+                checking.set(false)
+                notifyChanged()
+            }
         }
+    }
+
+    fun downloadAvailable() {
+        thread(name = "nodexlm-update-download") {
+            try {
+                val available = UpdateFeed.available(activity)
+                    ?: error(activity.getString(R.string.update_not_available))
+                val old = prefs.getLong("download_id", 0L)
+                val id = UpdateFeed.enqueue(activity, available, allowMetered = true)
+                if (id != old) RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_DOWNLOAD)
+                toast(activity.getString(R.string.update_started, available.versionName))
+            } catch (e: Exception) {
+                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.WARN, RuntimeEvent.UPDATE_DOWNLOAD_FAILED)
+                toast(activity.getString(R.string.update_download_failed))
+                Log.w("NodexLMUpdate", "Cannot queue verified update download", e)
+            } finally { notifyChanged() }
+        }
+    }
+
+    fun installDownloaded() { tryInstallPending() }
+
+    data class Status(
+        val feed: String,
+        val currentVersion: String,
+        val availableVersion: String?,
+        val lastSuccess: Long,
+        val checking: Boolean,
+        val verifying: Boolean,
+        val error: String?,
+        val downloadStatus: Int,
+        val downloaded: Long,
+        val total: Long,
+        val installRequested: Boolean
+    )
+
+    fun status(): Status {
+        val id = prefs.getLong("download_id", 0L)
+        var status = -1
+        var downloaded = 0L
+        var total = 0L
+        if (id > 0) try {
+            downloads.query(DownloadManager.Query().setFilterById(id))?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                    downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)).coerceAtLeast(0)
+                    total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)).coerceAtLeast(0)
+                }
+            }
+        } catch (e: Exception) { Log.w("NodexLMUpdate", "Cannot query DownloadManager", e) }
+        val current = activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "?"
+        return Status(
+            prefs.getString("feed_status", "") ?: "",
+            current,
+            prefs.getString("available_name", null),
+            prefs.getLong("last_success", 0L),
+            checking.get(),
+            verifying.get(),
+            prefs.getString("check_error", null),
+            status, downloaded, total,
+            id > 0 && id == prefs.getLong("prompted_id", -1L)
+        )
     }
 
     private fun tryInstallPending() {
