@@ -90,6 +90,9 @@ func Aggregate(devices []protocol.Device, now time.Time) Summary {
 		if online {
 			status = "online"
 			out.Online++
+		} else if d.Status == "draining" && !d.LastSeen.IsZero() &&
+			now.Sub(d.LastSeen) <= 65*time.Second {
+			status = "draining"
 		}
 		budget := uint64(0)
 		if online {
