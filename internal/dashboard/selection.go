@@ -8,46 +8,87 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
+// effectivePlacementStrategy uses low-latency execution unless the user
+// explicitly opts into capacity mode. Empty legacy settings are speed-first.
+func effectivePlacementStrategy(value string) string {
+	if value == "" {
+		return "speed"
+	}
+	return value
+}
+
 // chooseRPC is used both for preview and actual native model loading.
 func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest) (clusterplan.Selection, error) {
 	samples := m.InferenceSamples()
 	now := time.Now()
-	// Speed is an automatic preference, unlike capacity's explicit RPC
-	// distribution. A Host-only placement is valid when the entire working
-	// set fits locally. Prefer a measured faster Guest when one exists.
-	if s.PlacementStrategy == "speed" &&
+	strategy := effectivePlacementStrategy(s.PlacementStrategy)
+	// When the complete GGUF and context fit on the Host, split execution
+	// incurs extra RPC synchronization on EVERY decoded token. A remote
+	// benchmark may only beat Host-only when both were measured with the same
+	// benchmark and the chosen remote can fit the whole model independently.
+	// Never compare an unmeasured Host with a measured Guest and assume RPC
+	// is faster; and never infer split-cluster speed from Guest-only metrics.
+	if strategy == "speed" &&
 		validatePlacementMemory(meta, s, size, hostBudget, nil) == nil &&
 		meta.BlockCount > 0 && size > 0 {
-		var hostSpeed, bestGuestSpeed float64
-		knownGuests := make(map[string]bool, len(guests))
-		for _, guest := range guests {
-			knownGuests[guest.ID] = true
-		}
+		var hostSpeed float64
+		guestSpeed := make(map[string]float64, len(guests))
 		for _, sample := range samples {
-			if sample.TokensPerSecond <= 0 || sample.MeasuredAt.After(now) ||
-				now.Sub(sample.MeasuredAt) >= 24*time.Hour {
+			if sample.Kind != "benchmark" || sample.TokensPerSecond <= 0 ||
+				sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour {
 				continue
 			}
 			if sample.Model == s.Model {
 				hostSpeed = sample.TokensPerSecond
-			} else if len(sample.Model) > len(s.Model)+1 &&
-				sample.Model[:len(s.Model)+1] == s.Model+"@" &&
-				knownGuests[sample.Model[len(s.Model)+1:]] &&
-				sample.TokensPerSecond > bestGuestSpeed {
-				bestGuestSpeed = sample.TokensPerSecond
 			}
-		}
-		if bestGuestSpeed == 0 || (hostSpeed > 0 && hostSpeed >= bestGuestSpeed) {
-			excluded := make([]string, 0, len(guests))
 			for _, guest := range guests {
-				excluded = append(excluded, guest.ID)
+				if sample.Model == s.Model+"@"+guest.ID {
+					guestSpeed[guest.ID] = sample.TokensPerSecond
+				}
 			}
-			reason := "Host-only memory admission passed; no comparable faster Guest measurement. Local-first is a latency heuristic, not a measured speed claim"
-			if hostSpeed > 0 && bestGuestSpeed > 0 {
-				reason = "Host-only measured throughput is at least as high as available Guest benchmarks for this model"
-			}
-			return clusterplan.Selection{LocalLayers: int(meta.BlockCount), Excluded: excluded, Reason: reason}, nil
 		}
+		var best *RPCGuest
+		var bestSpeed float64
+		// Require 15% headroom before claiming an RPC advantage. Small
+		// network fluctuations must not trigger topology thrashing.
+		if hostSpeed > 0 && size <= ^uint64(0)/115 {
+			required := size * 115 / 100
+			for i := range guests {
+				guest := &guests[i]
+				measured := guestSpeed[guest.ID]
+				if measured <= hostSpeed*1.15 || measured <= bestSpeed ||
+					guest.CapacityBytes < required {
+					continue
+				}
+				candidate := clusterplan.Candidate{ID: guest.ID, CapacityBytes: guest.CapacityBytes}
+				if validatePlacementMemory(meta, s, size, 0, []clusterplan.Candidate{candidate}) != nil {
+					continue
+				}
+				best, bestSpeed = guest, measured
+			}
+		}
+		if best != nil {
+			excluded := make([]string, 0, len(guests)-1)
+			for _, guest := range guests {
+				if guest.ID != best.ID {
+					excluded = append(excluded, guest.ID)
+				}
+			}
+			return clusterplan.Selection{
+				LocalLayers: 0,
+				Guests: []clusterplan.Candidate{{ID: best.ID, CapacityBytes: best.CapacityBytes}},
+				Excluded: excluded,
+				Reason: "Single remote Guest benchmark exceeded Host-only decode by at least 15%; no layer splitting between Host and Guest",
+			}, nil
+		}
+		excluded := make([]string, 0, len(guests))
+		for _, guest := range guests {
+			excluded = append(excluded, guest.ID)
+		}
+		return clusterplan.Selection{
+			LocalLayers: int(meta.BlockCount), Excluded: excluded,
+			Reason: "Host-only memory admission passed; keep sequential decode local unless the same benchmark proves a whole-model Guest at least 15% faster. Capacity mode remains available explicitly",
+		}, nil
 	}
 	candidates := make([]clusterplan.Candidate, 0, len(guests))
 	unavailable := make([]string, 0)
@@ -78,7 +119,7 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		}
 		candidates = append(candidates, candidate)
 	}
-	selection, err := clusterplan.Select(meta.BlockCount, size, hostBudget, candidates, s.PlacementStrategy)
+	selection, err := clusterplan.Select(meta.BlockCount, size, hostBudget, candidates, strategy)
 	if err != nil {
 		return selection, err
 	}
@@ -89,7 +130,7 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		}
 		return selection, nil
 	}
-	if s.PlacementStrategy != "speed" {
+	if strategy != "speed" {
 		return clusterplan.Selection{}, err
 	}
 	// A speed-optimized subset can fit the weights but not the KV/context.
