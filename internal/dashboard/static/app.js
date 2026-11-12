@@ -389,7 +389,7 @@ async function refresh(){
   const option=el('option','', (node.name||'Guest')+' · '+(node.platform||'')+' · '+node.id.slice(0,8));
   option.value=node.id;benchTarget.append(option);
  }
- if([...benchTarget.options].some(option=>option.value===selectedTarget))benchTarget.value=selectedTarget;
+ if([...benchTarget.children].some(option=>option.value===selectedTarget))benchTarget.value=selectedTarget;
  const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
  const gpus=Array.isArray(n.gpus)?n.gpus:[];
  const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
