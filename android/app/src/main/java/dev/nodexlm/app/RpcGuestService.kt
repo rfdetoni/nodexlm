@@ -76,6 +76,8 @@ class RpcGuestService : Service() {
     @Volatile private var drainReason = ""
     @Volatile private var drainStartedMs = 0L
     private val claimedNativeRelays = AtomicLong()
+    private val thermalRecovery = ThermalRecovery()
+    private val thermalHeadroomWarningLogged = AtomicBoolean(false)
     private val cpuSampler = CpuUsageSampler()
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
     private var cpuLock: PowerManager.WakeLock? = null
@@ -132,7 +134,7 @@ class RpcGuestService : Service() {
                 val threads = if (requestedThreads == 0) (cores - 1).coerceIn(1, 6)
                               else requestedThreads.coerceIn(1, minOf(8, cores))
                 check(checkThermalsAndBattery() == null) {
-                    "RPC Guest cannot start outside its thermal/energy policy"
+                    "RPC Guest cannot start outside its thermal/energy/memory policy"
                 }
                 val socketFile=File(filesDir,"rpc.sock")
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
@@ -155,7 +157,11 @@ class RpcGuestService : Service() {
                 repeat(TUNNELS) { slot ->
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
-                        while (running.get() && !draining.get()) {
+                        while (running.get()) {
+                            if (draining.get()) {
+                                sleepWhileRunning(1_000L)
+                                continue
+                            }
                             // Avoid a TLS reconnect storm while offline. Preserve
                             // pinned identity when the active network changes.
                             val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -198,9 +204,10 @@ class RpcGuestService : Service() {
                         drainReason = reason
                         drainStartedMs = android.os.SystemClock.elapsedRealtime()
                         if (draining.compareAndSet(false, true)) {
+                            thermalRecovery.reset()
                             recordGuestEvent("draining", reason)
                             Log.w(LOG, "RPC Guest draining because of $reason; " +
-                                "no automatic restart. Current claimed tunnels=${claimedNativeRelays.get()}")
+                                "claimed tunnels=${claimedNativeRelays.get()}")
                             // Publish withdrawal immediately, not only at the
                             // next scheduled heartbeat (up to 15s later).
                             try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
@@ -208,9 +215,25 @@ class RpcGuestService : Service() {
                         }
                     }
                     if (draining.get()) {
-                        val elapsed = android.os.SystemClock.elapsedRealtime() - drainStartedMs
-                        if ((elapsed >= 5_000L && claimedNativeRelays.get() == 0L) ||
-                            elapsed >= 90_000L) {
+                        val nowMs = android.os.SystemClock.elapsedRealtime()
+                        val elapsed = nowMs - drainStartedMs
+                        val idle = claimedNativeRelays.get() == 0L
+                        // Native GGML has no live thread throttling. After
+                        // MODERATE thermal status, allow a bounded cool-down
+                        // without dropping the process, then reconnect only
+                        // after 30 seconds cool *and* no claimed graph sessions.
+                        // Battery/charging/schedule policy remains stop-only.
+                        val recovered = drainReason == "thermal" &&
+                            thermalRecovery.eligible(nowMs, reason == null, idle)
+                        if (recovered && elapsed < 90_000L) {
+                            draining.set(false)
+                            drainReason = ""
+                            thermalRecovery.reset()
+                            recordGuestEvent("ready", "cooled")
+                            try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
+                            catch (e: Exception) { Log.w(LOG, "Cannot announce thermal recovery to Host", e) }
+                        } else if (elapsed >= 90_000L ||
+                            (drainReason != "thermal" && elapsed >= 5_000L && idle)) {
                             Log.w(LOG, "RPC Guest drain finished: $drainReason, " +
                                 "claimed=${claimedNativeRelays.get()}, elapsed_ms=$elapsed")
                             shutdown("stopped", "drained_$drainReason")
@@ -299,6 +322,9 @@ class RpcGuestService : Service() {
         // Native GGML does not support live thread-count reduction. Withdraw
         // instead of claiming a thermal throttle we cannot implement.
         if (thermal >= PowerManager.THERMAL_STATUS_MODERATE) return "thermal"
+        val memory = ActivityManager.MemoryInfo()
+        (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+        if (memory.lowMemory) return "memory"
         val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
         val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val state = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -339,6 +365,11 @@ class RpcGuestService : Service() {
         val available = if (Build.SUPPORTED_ABIS.firstOrNull()?.let { Build.SUPPORTED_32_BIT_ABIS.contains(it) } == true) {
             minOf(memory.availMem, 2L * 1024 * 1024 * 1024)
         } else memory.availMem
+        // Android's low-memory threshold varies by device/ROM. Keep it
+        // reserved even when a smaller user reserve was configured.
+        val configuredReserve = getSharedPreferences("nodexlm", MODE_PRIVATE)
+            .getInt("rpc_memory_reserve_mib", 1024).coerceIn(1024, 65536).toLong() * 1024L * 1024L
+        val effectiveReserve = maxOf(configuredReserve, memory.threshold)
         val power = getSystemService(POWER_SERVICE) as PowerManager
         val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
         val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -360,8 +391,7 @@ class RpcGuestService : Service() {
             .put("available_ram_bytes", available)
             .put("max_contribution_bytes", getSharedPreferences("nodexlm", MODE_PRIVATE)
                 .getInt("rpc_max_contribution_mib", 0).coerceIn(0, 65536).toLong() * 1024L * 1024L)
-            .put("memory_reserve_bytes", getSharedPreferences("nodexlm", MODE_PRIVATE)
-                .getInt("rpc_memory_reserve_mib", 1024).coerceIn(1024, 65536).toLong() * 1024L * 1024L)
+            .put("memory_reserve_bytes", effectiveReserve)
             .put("thermal_status", power.currentThermalStatus)
             .put("charging", charging)
             // Only expose GPU memory when this worker allows Vulkan offload.
@@ -395,8 +425,17 @@ class RpcGuestService : Service() {
                 .put("rpc_ready", false))
         if (percent in 0..100) device.put("battery_percent", percent)
         if (Build.VERSION.SDK_INT >= 30) {
-            // Android limits polling of thermal headroom. Heartbeats are 15s apart.
-            val headroom = power.getThermalHeadroom(10)
+            // Thermal headroom is optional and some OEM services fail this
+            // query. Never lose a valid heartbeat because telemetry failed.
+            // Android limits polling; heartbeats are 15 seconds apart.
+            val headroom = try {
+                power.getThermalHeadroom(10)
+            } catch (e: RuntimeException) {
+                if (thermalHeadroomWarningLogged.compareAndSet(false, true)) {
+                    Log.w(LOG, "Thermal headroom unsupported by this ROM; omitting metric", e)
+                }
+                Float.NaN
+            }
             if (headroom.isFinite() && headroom >= 0f && headroom <= 10f) {
                 device.put("thermal_headroom", headroom.toDouble())
             }

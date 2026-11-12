@@ -208,6 +208,15 @@ func TestHeartbeatDrainingExcludesGuestFromAdmission(t *testing.T) {
 		devices[0].UnavailableReason != "thermal" || devices[0].Runtime.RPCReady {
 		t.Fatalf("draining node must be visible but ineligible: %+v", devices)
 	}
+	// A reconnect racing a withdrawal must not turn the node online again.
+	denied := call(t, h, http.MethodConnect, "/v1/nodes/rpc/tunnel", cred.Token, cred.NodeID, nil)
+	if denied.Code != http.StatusServiceUnavailable {
+		t.Fatalf("draining Guest tunnel accepted: HTTP %d", denied.Code)
+	}
+	devices = s.DevicesSnapshot()
+	if devices[0].Status != "draining" || devices[0].UnavailableReason != "thermal" {
+		t.Fatalf("reconnect reset drain state: %+v", devices)
+	}
 	profile.Status = ""
 	profile.UnavailableReason = "stale"
 	out = call(t, h, "POST", "/v1/nodes/heartbeat", cred.Token, cred.NodeID, profile)

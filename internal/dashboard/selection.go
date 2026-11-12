@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"errors"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
@@ -49,7 +50,20 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		}
 	}
 	candidates := make([]clusterplan.Candidate, 0, len(guests))
+	unavailable := make([]string, 0)
+	seen := make(map[string]bool, len(guests))
 	for _, guest := range guests {
+		if guest.ID == "" || seen[guest.ID] {
+			return clusterplan.Selection{}, errors.New("duplicate or missing RPC Guest ID")
+		}
+		seen[guest.ID] = true
+		if guest.CapacityBytes == 0 {
+			// A connected Android may advertise 0 allocatable RAM during
+			// memory pressure. It cannot be selected but should not prevent
+			// other healthy Guests from contributing their free capacity.
+			unavailable = append(unavailable, guest.ID)
+			continue
+		}
 		candidate := clusterplan.Candidate{ID: guest.ID, CapacityBytes: guest.CapacityBytes}
 		if network := m.networkSample(guest.ID); network != nil {
 			candidate.Performance.NetworkMeasured = true
@@ -69,6 +83,10 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		return selection, err
 	}
 	if err = validatePlacementMemory(meta, s, size, hostBudget, selection.Guests); err == nil {
+		selection.Excluded = append(selection.Excluded, unavailable...)
+		if len(unavailable) > 0 {
+			selection.Reason += "; excluded Guests with no allocatable RAM"
+		}
 		return selection, nil
 	}
 	if s.PlacementStrategy != "speed" {
@@ -84,5 +102,6 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		return clusterplan.Selection{}, contextErr
 	}
 	full.Reason = "Context/batch memory requires additional RPC Guests; speed subset rejected"
+	full.Excluded = append(full.Excluded, unavailable...)
 	return full, nil
 }

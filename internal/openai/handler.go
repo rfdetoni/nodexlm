@@ -84,7 +84,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Preserve the existing standalone-worker extension; agent calls use the
 		// Host model, whose native execution can distribute layers through RPC.
-		allowed := map[string]bool{"model": true, "messages": true, "max_tokens": true, "temperature": true, "top_p": true, "stop": true, "stream": true, "stream_options": true, "cache_prompt": true, "priority": true, "target_node": true}
+		allowed := map[string]bool{"model": true, "messages": true, "max_tokens": true, "temperature": true, "top_p": true, "stop": true, "stream": true, "stream_options": true, "cache_prompt": true, "priority": true, "reasoning_effort": true, "reasoning_budget_tokens": true, "target_node": true}
 		for key := range input {
 			if !allowed[key] {
 				Error(w, 400, "Advanced agent inference uses the Host model and its RPC Guests", key, "unsupported_parameter")

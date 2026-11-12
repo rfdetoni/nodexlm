@@ -79,7 +79,10 @@ func memoryDarwin() (uint64, uint64) {
 	return n, available
 }
 func gpuNVIDIA() []protocol.GPUDevice {
-	out := command(2*time.Second, "nvidia-smi", "--query-gpu=name,memory.total,memory.free,utilization.gpu", "--format=csv,noheader,nounits")
+	return parseNVIDIASMI(command(2*time.Second, "nvidia-smi", "--query-gpu=name,memory.total,memory.free,utilization.gpu", "--format=csv,noheader,nounits"))
+}
+
+func parseNVIDIASMI(out string) []protocol.GPUDevice {
 	if out == "" {
 		return nil
 	}
@@ -91,10 +94,14 @@ func gpuNVIDIA() []protocol.GPUDevice {
 		}
 		total, er1 := strconv.ParseUint(strings.TrimSpace(columns[1]), 10, 64)
 		free, er2 := strconv.ParseUint(strings.TrimSpace(columns[2]), 10, 64)
-		if er1 != nil || er2 != nil {
+		if er1 != nil || er2 != nil || total == 0 || free > total ||
+			total > (^uint64(0)>>20) {
 			continue
 		}
-		gpu := protocol.GPUDevice{Name: strings.TrimSpace(columns[0]), Vendor: "nvidia", VRAMBytes: total << 20, FreeVRAMBytes: free << 20}
+		// nvidia-smi's FB memory is a dedicated device allocation pool.
+		// Unlike Android/iGPU shared heaps this may expand the usable
+		// runtime budget, but must never be added to host RAM twice.
+		gpu := protocol.GPUDevice{Name: strings.TrimSpace(columns[0]), Vendor: "nvidia", MemoryType: "dedicated", VRAMBytes: total << 20, FreeVRAMBytes: free << 20}
 		if free <= total {
 			used := (total - free) << 20
 			gpu.VRAMUsedBytes = &used

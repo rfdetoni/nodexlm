@@ -26,7 +26,7 @@ func TestChatReasoningControls(t *testing.T) {
 			t.Fatalf("lost llama.cpp reasoning control %q in %s", key, raw)
 		}
 	}
-	for _, effort := range []string{"", "none", "low", "medium", "high", "xhigh"} {
+	for _, effort := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
 		req.ReasoningEffort = effort
 		req.ReasoningBudgetTokens = 0
 		if why := ValidateChat(req); why != "" {

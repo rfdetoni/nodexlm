@@ -2,6 +2,7 @@ package rpcmesh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -63,6 +64,7 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	fatal := make(chan error, 1)
 	var wg sync.WaitGroup
 	for range slots {
 		wg.Add(1)
@@ -71,6 +73,13 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 			delay := time.Second
 			for runCtx.Err() == nil {
 				err := Connect(runCtx, client, address)
+				if errors.Is(err, ErrGuestCredentialsRejected) {
+					select {
+					case fatal <- err:
+					default:
+					}
+					return
+				}
 				if err != nil && runCtx.Err() == nil {
 					client.ReconnectFailures.Add(1)
 					slog.Warn("RPC Unix tunnel disconnected", "error", err)
@@ -83,14 +92,9 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 				select {
 				case <-runCtx.Done():
 					return
-				case <-time.After(delay):
+				case <-time.After(jitteredRPCBackoff(delay)):
 				}
-				if err != nil && delay < 10*time.Second {
-					delay *= 2
-					if delay > 10*time.Second {
-						delay = 10 * time.Second
-					}
-				}
+				delay = nextRPCBackoff(delay, err)
 			}
 		}()
 	}
@@ -99,6 +103,10 @@ func runUnixGuest(ctx context.Context, client *netclient.Client, executable, add
 		cancel()
 		wg.Wait()
 		return nil
+	case err := <-fatal:
+		cancel()
+		wg.Wait()
+		return fmt.Errorf("RPC Guest must be re-paired: %w", err)
 	case <-exited:
 		cancel()
 		wg.Wait()

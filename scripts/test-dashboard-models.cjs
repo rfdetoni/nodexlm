@@ -25,6 +25,12 @@ const calls=[];
 let pairingCalls = 0;
 let pairingRequestFails = false;
 const documentEvents = {};
+const browserStorage = new Map();
+const localStorage = {
+  getItem(key) {return browserStorage.get(key)||null},
+  setItem(key,value) {browserStorage.set(key,String(value))},
+  removeItem(key) {browserStorage.delete(key)}
+};
 const response=data=>({ok:true,status:200,text:async()=>JSON.stringify(data)});
 const fetch=async (url,options)=>{
   const method=options.method;
@@ -49,7 +55,7 @@ const fetch=async (url,options)=>{
 };
 const document={getElementById:get,createElement:tag=>new Element(tag),hidden:false,
  addEventListener(name,handler){documentEvents[name]=handler;}};
-const sandbox={document,performance:{now:()=>Date.now()},sessionStorage:{getItem:()=>null,removeItem(){},setItem(){}},setInterval(){},setTimeout(){},clearTimeout(){},fetch,confirm:()=>true,URL,console};
+const sandbox={document,performance:{now:()=>Date.now()},localStorage,sessionStorage:{getItem:()=>null,removeItem(){},setItem(){}},setInterval(){},setTimeout(){},clearTimeout(){},fetch,confirm:()=>true,URL,console};
 vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
@@ -105,6 +111,12 @@ async function main(){
   get('chatEffort').handlers.change();
   assert.equal(get('chatThinkingBudget').disabled,false,
     'reasoning budget must be editable for thinking-capable models');
+  get('chatEffort').value='max';
+  get('chatEffort').handlers.change();
+  get('chatThinkingBudget').value='128';
+  get('chatThinkingBudget').handlers.change();
+  assert.deepEqual(JSON.parse(localStorage.getItem('nodexlm-chat-reasoning')),
+    {effort:'max',budget:128}, 'chat tuning must persist without saving model responses');
   assert.ok(!get('loadingStatus').textContent.includes('Sem transferência RPC recente'),
     'active transfer should not warn about a stall');
   // The pairing code is not an admin session token. Its TTL comes from the Host.

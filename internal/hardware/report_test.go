@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
+	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
 
 func TestDRMGPU(t *testing.T) {
@@ -77,5 +80,26 @@ func TestMeasuredGPUUsage(t *testing.T) {
 	found = drmDevices(root)
 	if len(found) != 1 || found[0].UsagePercent != nil {
 		t.Fatal("Unavailable GPU usage must be null")
+	}
+}
+
+func TestNVIDIADedicatedVRAMBudgetAndMalformedCounters(t *testing.T) {
+	metrics := "NVIDIA RTX 4070, 12288, 6144, 27\nNVIDIA bad, 4096, 5000, N/A\n"
+	devices := parseNVIDIASMI(metrics)
+	if len(devices) != 1 {
+		t.Fatalf("invalid NVIDIA metrics must not reach the Host: %+v", devices)
+	}
+	gpu := devices[0]
+	if gpu.MemoryType != "dedicated" || gpu.VRAMBytes != 12288*clusterplan.MiB ||
+		gpu.FreeVRAMBytes != 6144*clusterplan.MiB || gpu.VRAMUsedBytes == nil ||
+		*gpu.VRAMUsedBytes != 6144*clusterplan.MiB ||
+		gpu.UsagePercent == nil || *gpu.UsagePercent != 27 {
+		t.Fatalf("NVIDIA dedicated VRAM was reported incorrectly: %+v", gpu)
+	}
+	host := protocol.Device{RAMBytes: 8 * clusterplan.GiB, AvailableRAMBytes: clusterplan.GiB + 512*clusterplan.MiB}
+	withoutGPU := clusterplan.Budget(host)
+	host.GPUs = devices
+	if withGPU := clusterplan.Budget(host); withGPU <= withoutGPU {
+		t.Fatalf("known dedicated VRAM was treated as shared: with=%d without=%d", withGPU, withoutGPU)
 	}
 }

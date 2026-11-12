@@ -606,6 +606,13 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "node authorization revoked")
 		return
 	}
+	// An already-draining Guest cannot re-advertise itself as healthy just
+	// because an in-flight tunnel reconnects after its withdrawal heartbeat.
+	// Existing claimed tunnels are unaffected until the Guest closes them.
+	if n.device.Status == "draining" {
+		fail(w, http.StatusServiceUnavailable, "RPC Guest draining")
+		return
+	}
 	n.device.LastSeen = time.Now()
 	n.device.Status = "online"
 	s.rpcHub.ServeTunnel(w, r, id)

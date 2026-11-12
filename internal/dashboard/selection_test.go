@@ -142,3 +142,33 @@ func TestChooseRPCSpeedCanUseHostAlone(t *testing.T) {
 		t.Fatalf("Host-only must work without an RPC provider: %+v %v", noGuest, err)
 	}
 }
+
+func TestChooseRPCSkipsGuestsWithoutUsableRAM(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	settings := Settings{Model: "small.gguf", PlacementStrategy: "capacity", ContextTokens: 2048}
+	guests := []RPCGuest{
+		{ID: "android-low-memory", CapacityBytes: 0},
+		{ID: "linux-healthy", CapacityBytes: 8 * gib},
+	}
+	meta := local.GGUFInfo{BlockCount: 32}
+	result, err := m.chooseRPC(settings, meta, 3*gib, gib, guests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Guests) != 1 || result.Guests[0].ID != "linux-healthy" ||
+		len(result.Excluded) != 1 || result.Excluded[0] != "android-low-memory" {
+		t.Fatalf("unavailable Android blocked healthy Guest: %+v", result)
+	}
+	if _, err := m.chooseRPC(settings, meta, 3*gib, gib, guests[:1]); err == nil {
+		t.Fatal("zero-memory Guest was admitted without a usable alternative")
+	}
+	if _, err := m.chooseRPC(settings, meta, 3*gib, gib,
+		[]RPCGuest{{ID: "duplicated", CapacityBytes: 0}, {ID: "duplicated", CapacityBytes: 8 * gib}}); err == nil {
+		t.Fatal("duplicate Guest ID must not become valid after filtering")
+	}
+}

@@ -119,3 +119,11 @@ bash scripts/android-rpc-acceptance.sh --output evidencias-android-doze --screen
 ```
 
 O script não lê configurações privadas do app nem credenciais e não testa velocidade. Registra somente informações de build/SoC/ABI, PID do processo RPC, disponibilidade de memória e estado de energia/térmica, antes/depois do período selecionado. Não reutilize a mesma pasta de saída: as evidências anteriores não são sobrescritas. `--doze` injeta um estado sintético do Android e não representa todos os comportamentos de ROMs OEM. Verifique separadamente no Host a integridade de HELLO/DEVICE_COUNT e o resultado de carga, geração e streaming.
+
+### Retirada por memória e retomada após resfriamento (PR #45)
+
+O Guest respeita o limiar `lowMemory` definido pela ROM e anuncia `draining` quando o Android sinaliza pressão de memória. Isso evita novas alocações de modelo naquele aparelho, mas o sistema ainda pode encerrar o processo por LMK se faltar RAM.
+
+Em temperatura MODERATE, a drenagem pausa **novas** conexões RPC, preservando as já reivindicadas. Se a temperatura normalizar por 30 segundos consecutivos **e nenhuma sessão RPC permanecer ativa**, os túneis podem voltar a conectar sem reinstalar a aplicação. Caso contrário, o serviço termina após até 90 segundos de drenagem. Temperatura SEVERE continua causando parada imediata. Ao violar bateria, carga ou horário, o serviço não retorna automaticamente. Esse mecanismo **não** reduz dinamicamente a carga da GPU nem realoca o KV de modelos ativos.
+
+Ajustes em Host/Linux também impedem que um Guest com 0 bytes disponíveis bloqueie todos os demais e preservam o estado draining mesmo se um CONNECT antigo chegar atrasado. Sem medições de hardware, não há garantia de melhora de tokens/s ou estabilidade em Doze.
