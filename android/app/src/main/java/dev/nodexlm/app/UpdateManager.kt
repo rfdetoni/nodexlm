@@ -268,12 +268,17 @@ class UpdateManager(private val activity: Activity) {
                             .setNegativeButton(activity.getString(R.string.ui_b8db71c3cce7), null)
                             .show()
                     } else {
+                        // Claim this download before the large PackageInstaller
+                        // stream starts. A second click must not commit two
+                        // installation sessions for the same verified APK.
+                        prefs.edit().putLong("prompted_id", id).apply()
+                        notifyChanged()
                         thread(name = "nodexlm-update-install") {
                             try {
                                 installVerified(verified, id)
-                                prefs.edit().putLong("prompted_id", id).apply()
                                 RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALL)
                             } catch (e: Exception) {
+                                prefs.edit().remove("prompted_id").apply()
                                 RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.ERROR, RuntimeEvent.UPDATE_INSTALL_FAILED)
                                 Log.e("NodexLMUpdate", "PackageInstaller session failed", e)
                                 toast(activity.getString(R.string.update_install_failed,e.message))
