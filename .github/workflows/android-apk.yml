@@ -11,6 +11,14 @@ on:
         description: 'Also validate minified release with disposable test signing (slower)'
         type: boolean
         default: false
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'internal/llamaruntime/revision.json'
+      - 'internal/llamaruntime/patches/**'
+      - 'scripts/apply-rpc-patch.cmake'
+      - 'scripts/verify-android-pages.sh'
+      - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
     paths:
@@ -172,7 +180,6 @@ jobs:
             :app:assembleDebug
 
       - name: Verify debug APK and native library
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         shell: bash
         run: |
           set -euo pipefail
@@ -190,7 +197,6 @@ jobs:
           echo "Built debug APK from \`$GITHUB_SHA\` (ARMv7 + ARM64, minSdk 29)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload debug APK
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@v4
         with:
           name: nodexlm-android-debug
