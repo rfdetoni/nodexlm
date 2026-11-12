@@ -511,6 +511,10 @@ class RpcGuestService : Service() {
         track(remote)
         try {
             remote.keepAlive = true
+            // GGML RPC decode is round-trip latency sensitive: small control
+            // frames must not wait for Nagle/delayed-ACK on Android TLS.
+            // This is especially important for CPU-only and Wi-Fi Guests.
+            remote.tcpNoDelay = true
             remote.connect(InetSocketAddress(host, port), 7000)
             remote.soTimeout = 10_000
             val params = remote.sslParameters
