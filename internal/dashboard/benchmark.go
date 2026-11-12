@@ -12,7 +12,8 @@ import (
 )
 
 // BenchmarkInference runs the same bounded text workload locally or on one
-// authenticated RPC Guest, keeping output/embedding tensors on the Host.
+// authenticated RPC Guest with the configured context and runtime options.
+// Report decode measurements separately from live end-to-end timings.
 // It must run with resident models unloaded, avoiding an undisclosed eviction.
 func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) (InferenceSample, error) {
 	m.poolMu.Lock()
@@ -62,7 +63,7 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	if err != nil {
 		return InferenceSample{}, err
 	}
-	engine := &local.Managed{Backend: settings.Backend, Binary: binary, ModelPath: path, Alias: model, Threads: settings.Threads, ContextTokens: 512, GPULayers: settings.GPULayers, FlashAttention: settings.FlashAttention, KVCacheType: settings.KVCacheType, BatchSize: settings.BatchSize, UBatchSize: settings.UBatchSize, SpeculativeMode: settings.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
+	engine := &local.Managed{Backend: settings.Backend, Binary: binary, ModelPath: path, Alias: model, Threads: settings.Threads, ContextTokens: settings.ContextTokens, GPULayers: settings.GPULayers, FlashAttention: settings.FlashAttention, KVCacheType: settings.KVCacheType, BatchSize: settings.BatchSize, UBatchSize: settings.UBatchSize, SpeculativeMode: settings.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
 	if nodeID != "" {
 		if provider == nil {
 			return InferenceSample{}, errors.New("no RPC Guests")
@@ -101,6 +102,10 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	m.recordInference(key, raw, time.Since(start))
 	m.mu.Lock()
 	sample, ok := m.samples[key]
+	if ok {
+		sample.Kind = "benchmark"
+		m.samples[key] = sample
+	}
 	m.mu.Unlock()
 	if !ok {
 		return sample, errors.New("backend did not report a completion token count")

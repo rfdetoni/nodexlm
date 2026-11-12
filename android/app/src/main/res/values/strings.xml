@@ -78,7 +78,7 @@
     <string name="minimum_battery">Minimum battery (%)</string>
     <string name="start_hour">Start hour (0–23)</string>
     <string name="end_hour">End hour (0–23; same as start = all day)</string>
-    <string name="backend_auto">Automatic (GPU + CPU, CPU fallback)</string>
+    <string name="backend_auto">Automatic (one device: Vulkan, CPU fallback)</string>
     <string name="backend_cpu">CPU only</string>
     <string name="backend_gpu">Vulkan GPU only</string>
     <string name="backend_hybrid">Vulkan GPU + CPU</string>

@@ -48,10 +48,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	host := clusterplan.Budget(hardware.Collect("Host", nil))
 	nodes := []placement{}
 	localLayers := int(meta.BlockCount)
-	strategy := settings.PlacementStrategy
-	if strategy == "" {
-		strategy = "capacity"
-	}
+	strategy := effectivePlacementStrategy(settings.PlacementStrategy)
 	excluded := []string{}
 	selectionReason := "Local-only inference"
 	if settings.Distributed {

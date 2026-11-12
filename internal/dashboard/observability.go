@@ -15,6 +15,12 @@ type InferenceSample struct {
 	CachedTokens    int       `json:"cached_tokens"`
 	Seconds         float64   `json:"seconds"`
 	TokensPerSecond float64   `json:"tokens_per_second"`
+	// benchmark = identical fixed prompt/output run on Host or a Guest.
+	// live measurements must never be used to select faster hardware.
+	Kind string `json:"kind,omitempty"`
+	// native_decode uses the llama.cpp predicted_ms timing. When absent,
+	// rate includes prefill and first-token latency (end_to_end).
+	RateBasis string `json:"rate_basis,omitempty"`
 }
 
 func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duration) {
@@ -56,8 +62,24 @@ func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duratio
 	if seconds <= 0 {
 		return
 	}
-	sample := InferenceSample{model, time.Now(), tokens, out.Usage.Prompt, out.Usage.Details.Cached, seconds, float64(tokens) / seconds}
+	basis := "end_to_end"
+	if out.Timings.Milliseconds > 0 {
+		basis = "native_decode"
+	}
 	m.mu.Lock()
+	// A live distributed result is not evidence of Host-only performance;
+	// keep it distinct from local and per-Guest benchmark samples.
+	if m.engine != nil {
+		if len(m.engine.RPCServers) > 0 {
+			model += "@cluster"
+		} else {
+			model += "@live-host"
+		}
+	}
+	sample := InferenceSample{Model: model, MeasuredAt: time.Now(), Tokens: tokens,
+		PromptTokens: out.Usage.Prompt, CachedTokens: out.Usage.Details.Cached,
+		Seconds: seconds, TokensPerSecond: float64(tokens) / seconds,
+		Kind: "live", RateBasis: basis}
 	if len(m.samples) >= 32 {
 		for name := range m.samples {
 			delete(m.samples, name)

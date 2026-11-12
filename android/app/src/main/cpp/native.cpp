@@ -210,8 +210,11 @@ Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
 
 // Run in an isolated Android :rpc process. The pinned upstream has no
 // shutdown API; killing this process releases all Vulkan/CPU allocations.
-// Mode: auto = GPU + CPU when available else CPU; cpu = CPU only;
-// gpu = Vulkan only; hybrid = Vulkan + CPU (requires Vulkan).
+// Mode: auto = ONE device (Vulkan if initialized, otherwise CPU).
+// cpu = CPU only; gpu = Vulkan only; hybrid = Vulkan + CPU (explicit).
+// Exposing both CPU and shared-memory Vulkan on Auto causes GGML to spread
+// a single decode across two RPC devices on the same phone, multiplying
+// synchronization and transfers each token without evidence of speed gain.
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jstring socketValue) {
     const std::string socketPath=utf(env,socketValue);
@@ -253,22 +256,24 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         rpcStarted.store(false);
         return env->NewStringUTF("Vulkan unavailable on this Android device; select CPU or Auto");
     }
-    if((mode == "auto" || mode == "cpu" || mode == "hybrid") && !cpu) {
+    if((mode == "cpu" || mode == "hybrid") && !cpu) {
         rpcStarted.store(false);
         return env->NewStringUTF("GGML CPU backend unavailable");
     }
+    const bool useGPU = gpu != nullptr && mode != "cpu";
+    const bool useCPU = cpu != nullptr &&
+        (mode == "cpu" || mode == "hybrid" || (mode == "auto" && !useGPU));
     std::vector<ggml_backend_dev_t> devices;
-    if(mode != "cpu" && gpu) devices.push_back(gpu);
-    if(mode != "gpu" && cpu) devices.push_back(cpu);
+    if(useGPU) devices.push_back(gpu);
+    if(useCPU) devices.push_back(cpu);
     if(devices.empty()) {
         rpcStarted.store(false);
         return env->NewStringUTF("No usable CPU or Vulkan RPC backend found");
     }
-    activeRPCBackends.store((gpu && mode != "cpu" ? 1 : 0) |
-                            (cpu && mode != "gpu" ? 2 : 0));
+    activeRPCBackends.store((useGPU ? 1 : 0) | (useCPU ? 2 : 0));
     __android_log_print(ANDROID_LOG_INFO, "NodexLM-RPC",
         "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
-        devices.size(),gpu?"yes":"no",cpu?"yes":"no");
+        devices.size(),useGPU?"yes":"no",useCPU?"yes":"no");
     try {
         std::thread([threads, devices, socketPath] {
             try {
