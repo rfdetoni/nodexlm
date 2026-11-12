@@ -28,9 +28,10 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 	// benchmark and the chosen remote can fit the whole model independently.
 	// Never compare an unmeasured Host with a measured Guest and assume RPC
 	// is faster; and never infer split-cluster speed from Guest-only metrics.
-	if strategy == "speed" &&
+	if strategy == "speed" && size > 0 && size <= ^uint64(0)/115 &&
+		size*115/100 <= hostBudget &&
 		validatePlacementMemory(meta, s, size, hostBudget, nil) == nil &&
-		meta.BlockCount > 0 && size > 0 {
+		meta.BlockCount > 0 {
 		var hostSpeed float64
 		guestSpeed := make(map[string]float64, len(guests))
 		for _, sample := range samples {
