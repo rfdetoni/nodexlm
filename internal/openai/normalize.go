@@ -15,7 +15,7 @@ func normalize(in map[string]json.RawMessage, path string) error {
 		if json.Unmarshal(extra, &params) != nil {
 			return invalid("extra_params", "extra_params must be an object")
 		}
-		for _, key := range []string{"model", "messages", "input", "tools", "tool_choice", "stream", "modalities", "audio", "response_format"} {
+		for _, key := range []string{"model", "messages", "input", "tools", "tool_choice", "stream", "modalities", "audio", "response_format", "reasoning_effort", "reasoning_budget_tokens"} {
 			if _, ok := params[key]; ok {
 				return invalid("extra_params."+key, "extra_params cannot replace OpenAI request fields")
 			}
@@ -68,6 +68,9 @@ func normalize(in map[string]json.RawMessage, path string) error {
 		return invalid("audio", "Audio generation requires an audio-capable runtime")
 	}
 	if path == "/v1/chat/completions" || path == "/v1/chat/completions/input_tokens" {
+		if err := normalizeReasoningControls(in); err != nil {
+			return err
+		}
 		var messages []map[string]json.RawMessage
 		if json.Unmarshal(in["messages"], &messages) != nil || len(messages) == 0 {
 			return invalid("messages", "messages must be a nonempty array")
@@ -128,6 +131,41 @@ func textContent(raw json.RawMessage) error {
 		case "text", "input_text", "output_text", "refusal":
 		default:
 			return invalid("content", "Image, audio, file and video content require a multimodal model/runtime")
+		}
+	}
+	return nil
+}
+
+// Reasoning controls are forwarded intact to llama.cpp after validating
+// types and contradictory combinations. Models may ignore effort levels
+// absent matching Jinja chat-template capabilities.
+func normalizeReasoningControls(in map[string]json.RawMessage) error {
+	var effort string
+	if raw := in["reasoning_effort"]; len(raw) != 0 && string(raw) != "null" {
+		if json.Unmarshal(raw, &effort) != nil {
+			return invalid("reasoning_effort", "reasoning_effort must be a string")
+		}
+		switch effort {
+		case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		default:
+			return invalid("reasoning_effort", "Unsupported reasoning_effort for llama.cpp")
+		}
+	}
+	budget := 0
+	if raw := in["reasoning_budget_tokens"]; len(raw) != 0 && string(raw) != "null" {
+		if json.Unmarshal(raw, &budget) != nil || budget < 0 || budget > 262144 {
+			return invalid("reasoning_budget_tokens", "reasoning_budget_tokens must be an integer between 0 and 262144")
+		}
+	}
+	if effort == "none" && budget > 0 {
+		return invalid("reasoning_budget_tokens", "reasoning_budget_tokens cannot be positive when reasoning_effort is none")
+	}
+	if budget > 0 {
+		if raw := in["max_tokens"]; len(raw) != 0 && string(raw) != "null" {
+			var maxTokens int
+			if json.Unmarshal(raw, &maxTokens) == nil && maxTokens > 0 && budget > maxTokens {
+				return invalid("reasoning_budget_tokens", "reasoning_budget_tokens cannot exceed max_tokens")
+			}
 		}
 	}
 	return nil
