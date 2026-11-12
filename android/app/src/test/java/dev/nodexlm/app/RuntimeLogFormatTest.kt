@@ -26,6 +26,20 @@ class RuntimeLogFormatTest {
         )) assertNull("Unexpected decoded log: $value", RuntimeLogFormat.decode(value))
     }
 
+    @Test fun autoFilterUsesLatestRecordedRuntimeRole() {
+        val history = mutableListOf(
+            RuntimeLogEntry(1L, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_START),
+            RuntimeLogEntry(2L, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_STOP),
+            RuntimeLogEntry(3L, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.GUEST_START)
+        )
+        assertEquals(RuntimeMode.RPC_GUEST, RuntimeLogFormat.lastMode(history))
+        history.add(RuntimeLogEntry(4L, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_TUNNEL_CLAIMED))
+        assertEquals(RuntimeMode.RPC_GUEST, RuntimeLogFormat.lastMode(history))
+        history.add(RuntimeLogEntry(5L, RuntimeRole.GUEST, RuntimeLevel.WARN, RuntimeEvent.GUEST_STOP))
+        assertEquals(RuntimeMode.INACTIVE, RuntimeLogFormat.lastMode(history))
+        assertEquals(RuntimeMode.INACTIVE, RuntimeLogFormat.lastMode(emptyList()))
+    }
+
     @Test fun rendersRoleLevelAndTimeWithoutPayloads() {
         val display = RuntimeLogFormat.readable(listOf(
             RuntimeLogEntry(1762963200000, RuntimeRole.GUEST,
