@@ -94,18 +94,29 @@ internal object RuntimeLogFormat {
 
     // Only the latest *recorded* lifecycle transition; not an OS liveness check.
     fun lastMode(entries: List<RuntimeLogEntry>): RuntimeMode {
+        // ComputeService may finish shutdown *after* :rpc logs its start.
+        // Track the latest lifecycle transition per service independently:
+        // a late Worker STOP must never hide an active RPC Guest.
+        var rpcActive: Boolean? = null
+        var workerActive: Boolean? = null
         for (entry in entries.asReversed()) {
             when (entry.event) {
                 RuntimeEvent.GUEST_START, RuntimeEvent.GUEST_READY, RuntimeEvent.GUEST_RECOVERED ->
-                    return RuntimeMode.RPC_GUEST
-                RuntimeEvent.WORKER_START -> return RuntimeMode.WORKER_GUEST
-                RuntimeEvent.GUEST_STOP, RuntimeEvent.GUEST_FAILED,
+                    if (rpcActive == null) rpcActive = true
+                RuntimeEvent.GUEST_STOP, RuntimeEvent.GUEST_FAILED ->
+                    if (rpcActive == null) rpcActive = false
+                RuntimeEvent.WORKER_START ->
+                    if (workerActive == null) workerActive = true
                 RuntimeEvent.WORKER_STOP, RuntimeEvent.WORKER_FAILED ->
-                    return RuntimeMode.INACTIVE
+                    if (workerActive == null) workerActive = false
                 else -> continue
             }
         }
-        return RuntimeMode.INACTIVE
+        return when {
+            rpcActive == true -> RuntimeMode.RPC_GUEST
+            workerActive == true -> RuntimeMode.WORKER_GUEST
+            else -> RuntimeMode.INACTIVE
+        }
     }
 
     fun readable(entries: List<RuntimeLogEntry>, english: Boolean): String {
