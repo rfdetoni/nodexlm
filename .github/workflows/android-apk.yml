@@ -18,6 +18,7 @@ on:
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
       - 'scripts/apply-rpc-patch.cmake'
+      - 'scripts/verify-android-pages.sh'
       - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
@@ -44,7 +45,7 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             native="$(python3 scripts/native-revision-changed.py)"
-            app_changes="$(git diff --name-only HEAD^ HEAD -- android/ scripts/apply-rpc-patch.cmake .github/workflows/android-apk.yml)"
+            app_changes="$(git diff --name-only HEAD^ HEAD -- android/ scripts/apply-rpc-patch.cmake scripts/verify-android-pages.sh .github/workflows/android-apk.yml)"
             if [[ "$native" == "true" || -n "$app_changes" ]]; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
               {
@@ -182,6 +183,7 @@ jobs:
           done
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify "$apk"
+          bash scripts/verify-android-pages.sh "$apk"
           mkdir -p dist
           cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-android10-plus-debug.apk"
           sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
@@ -239,6 +241,7 @@ jobs:
           done
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
+          bash scripts/verify-android-pages.sh "$apk"
           cp "$apk" dist/NodexLM-android-universal.apk
           (cd dist && sha256sum NodexLM-android-universal.apk > SHA256SUMS-android.txt)
 
