@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
 func TestReportedTokensAndCumulativeLatencyBuckets(t *testing.T) {
@@ -27,5 +29,22 @@ func TestReportedTokensAndCumulativeLatencyBuckets(t *testing.T) {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("missing %q in metrics %s", want, w.Body.String())
 		}
+	}
+}
+
+func TestLiveDistributedSampleDoesNotPoisonHostBenchmark(t *testing.T) {
+	m := &Manager{
+		samples: map[string]InferenceSample{},
+		engine:  &local.Managed{RPCServers: []string{"127.0.0.1:50052"}},
+	}
+	raw := []byte(`{"usage":{"completion_tokens":8},"timings":{"predicted_ms":16000}}`)
+	m.recordInference("small.gguf", raw, 18*time.Second)
+	if _, ok := m.samples["small.gguf"]; ok {
+		t.Fatal("distributed decode was stored as a Host-only benchmark")
+	}
+	sample, ok := m.samples["small.gguf@cluster"]
+	if !ok || sample.Kind != "live" || sample.RateBasis != "native_decode" ||
+		sample.TokensPerSecond != 0.5 {
+		t.Fatalf("unexpected distributed sample: %+v", sample)
 	}
 }
