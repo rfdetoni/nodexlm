@@ -183,6 +183,7 @@ func validDevice(d protocol.Device) bool {
 		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(d) || !validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
 		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 ||
+		!validRPCDeviceTopology(d.Runtime.RPCDevices) ||
 		len(d.UnavailableReason) > 128 {
 		return false
 	}
@@ -200,6 +201,22 @@ func validDevice(d protocol.Device) bool {
 		}
 	}
 	return true
+}
+
+// Only one GPU and one CPU are automatically mapped to native RPC indices.
+// Malformed or unsupported topology must not become an artificial memory
+// budget in a Host's cluster planner.
+func validRPCDeviceTopology(kinds []string) bool {
+	switch len(kinds) {
+	case 0:
+		return true
+	case 1:
+		return kinds[0] == "cpu" || kinds[0] == "gpu"
+	case 2:
+		return kinds[0] == "gpu" && kinds[1] == "cpu"
+	default:
+		return false
+	}
 }
 
 func validMobileTelemetry(d protocol.Device) bool {
@@ -267,7 +284,8 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
 		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(req) || !validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
-		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 {
+		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 ||
+		!validRPCDeviceTopology(req.Runtime.RPCDevices) {
 		fail(w, 400, "invalid node resources")
 		return
 	}
@@ -342,6 +360,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.Runtime.Engine = req.Runtime.Engine
 			n.device.Runtime.Version = req.Runtime.Version
 			n.device.Runtime.Benchmark = req.Runtime.Benchmark
+			n.device.Runtime.RPCDevices = append([]string(nil), req.Runtime.RPCDevices...)
 			// RPC readiness is set exclusively by the authenticated tunnel.
 		}
 		if n.active == "" {
@@ -669,6 +688,7 @@ func (s *Server) DevicesSnapshot() []protocol.Device {
 		d := n.device
 		d.GPUs = append([]protocol.GPUDevice(nil), d.GPUs...)
 		d.Models = append([]string(nil), d.Models...)
+		d.Runtime.RPCDevices = append([]string(nil), d.Runtime.RPCDevices...)
 		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
 		}

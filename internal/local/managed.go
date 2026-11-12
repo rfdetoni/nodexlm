@@ -44,6 +44,11 @@ type Managed struct {
 	Idle                                         time.Duration
 	KeepLoaded                                   bool
 	RPCServers                                   []string
+	// Native RPC devices are selected by the Host before model loading.
+	// RPCDeviceNames contains registered llama.cpp names such as RPC0/RPC1;
+	// empty preserves upstream default behavior for legacy Guests.
+	RPCDeviceNames []string
+	RPCTensorSplit string
 	// RPCLocalLayers keeps the first N transformer blocks on the host CPU;
 	// remaining blocks are placed on RPC devices using layer-split mode.
 	RPCLocalLayers int
@@ -381,6 +386,12 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 			"--override-tensor", `^(output|token_embd)\.weight$=CPU`,
 			"--no-op-offload",
 		)
+		if len(m.RPCDeviceNames) > 0 {
+			args = append(args, "--device", strings.Join(m.RPCDeviceNames, ","))
+			if m.RPCTensorSplit != "" {
+				args = append(args, "--tensor-split", m.RPCTensorSplit)
+			}
+		}
 	}
 
 	return args

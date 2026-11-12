@@ -304,7 +304,13 @@ func serve(args []string) error {
 				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
 					continue
 				}
-				out = append(out, dashboard.RPCGuest{ID: profile.ID, Name: profile.Name, Endpoint: endpoint, CapacityBytes: clusterplan.Budget(profile)})
+				memory := clusterplan.RPCMemory(profile)
+				out = append(out, dashboard.RPCGuest{
+					ID: profile.ID, Name: profile.Name, Endpoint: endpoint,
+					CapacityBytes:  clusterplan.Budget(profile),
+					RPCDeviceKinds: append([]string(nil), profile.Runtime.RPCDevices...),
+					RAMBudgetBytes: memory.RAM, GPUBudgetBytes: memory.GPU,
+				})
 			}
 			return out
 		})
@@ -555,7 +561,7 @@ func traceRoutes(next http.Handler, component string) http.Handler {
 func guest(args []string) error {
 	f := fs("guest")
 	fingerprint := f.String("fingerprint", "", "optional full Host certificate SHA-256 obtained out of band")
-	device := f.String("rpc-device", "", "optional native device name; CPU forces a portable fallback")
+	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
 	name := f.String("name", "", "display name of this Guest")
 	code := f.String("code", "", "8-character pairing code; prompted when absent")
@@ -905,7 +911,7 @@ func localChat(args []string) error {
 // It never exposes the unprotected rpc-server outside 127.0.0.1.
 func rpcNode(args []string) error {
 	f := fs("rpc-node")
-	device := f.String("rpc-device", "", "optional native device name; CPU forces a portable fallback")
+	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
@@ -953,10 +959,22 @@ func rpcNode(args []string) error {
 		return fmt.Errorf("cannot authenticate Guest with Host; check HTTPS connectivity before starting RPC: %w", preflightErr)
 	}
 	executable := *bin
+	selectedBackend := *backend
 	if executable == "" {
+		if selectedBackend == "auto" {
+			selectedBackend = autoGuestBackend(profile)
+			if *device == "CPU" {
+				selectedBackend = "cpu"
+			}
+		}
 		c, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
 		defer cancel()
-		_, executable, err = llamaruntime.EnsureDistributed(c, *dir, *backend)
+		_, executable, err = llamaruntime.EnsureDistributed(c, *dir, selectedBackend)
+		if err != nil && *backend == "auto" && selectedBackend != "cpu" {
+			slog.Warn("Auto GPU RPC runtime unavailable; falling back to CPU", "backend", selectedBackend, "error", err)
+			selectedBackend = "cpu"
+			_, executable, err = llamaruntime.EnsureDistributed(c, *dir, selectedBackend)
+		}
 		if err != nil {
 			return err
 		}
@@ -964,12 +982,32 @@ func rpcNode(args []string) error {
 			return errors.New("llama.cpp runtime does not include an RPC worker; install or build matching ggml-rpc-server with GGML_RPC=ON")
 		}
 	}
-	if *device == "" {
-		selected, _ := llamaruntime.Backend(*backend)
-		if *backend == "cpu" || *bin == "" && selected == "cpu" {
-			*device = "CPU"
+	if *device == "" || *device == "auto" {
+		names := nativeRPCDeviceNames(executable)
+		choice := autoRPCDeviceChoice(names, profile)
+		if choice == "" && selectedBackend == "cpu" {
+			choice = "CPU"
 		}
+		// An 'auto' Vulkan bundle without a usable native GPU is not
+		// an acceleration path. Fall back to the CPU release only when
+		// the operator did not explicitly request Vulkan.
+		if *backend == "auto" && selectedBackend == "vulkan" &&
+			(choice == "" || choice == "CPU") && *bin == "" {
+			slog.Warn("Auto Vulkan GPU unavailable; falling back to CPU worker")
+			selectedBackend = "cpu"
+			c, stop := context.WithTimeout(context.Background(), 7*time.Minute)
+			_, executable, err = llamaruntime.EnsureDistributed(c, *dir, selectedBackend)
+			stop()
+			if err != nil {
+				return err
+			}
+			choice = "CPU"
+		}
+		*device = choice
 	}
+	slog.Info("Guest native device selection", "backend", selectedBackend,
+		"rpc_devices", *device, "ram_bytes", profile.AvailableRAMBytes,
+		"dedicated_gpu", guestDedicatedGPU(profile))
 	c, cancel := ctx()
 	defer cancel()
 	// A lightweight heartbeat informs the Host of real hardware availability.
@@ -978,6 +1016,9 @@ func rpcNode(args []string) error {
 		profile := hardware.Collect(name, nil)
 		if *device == "CPU" {
 			profile.GPUs = nil
+		}
+		if *device != "" {
+			profile.Runtime.RPCDevices = nativeDeviceKinds(*device, profile)
 		}
 		profile.Runtime.Installed = true
 		profile.Runtime.Benchmark = true

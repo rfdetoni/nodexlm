@@ -106,3 +106,61 @@ func TestAggregateDrainingExcludesMemoryBudget(t *testing.T) {
 		t.Fatalf("draining node was admitted to planner: %+v", result)
 	}
 }
+
+func TestDedicatedGPUHybridBudgetAddsOnlySeparateMemory(t *testing.T) {
+	d := protocol.Device{
+		Platform: "linux", RAMBytes: 28 * GiB, AvailableRAMBytes: 20 * GiB,
+		GPUs:    []protocol.GPUDevice{{MemoryType: "dedicated", VRAMBytes: 6 * GiB, FreeVRAMBytes: 5 * GiB}},
+		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu", "cpu"}},
+	}
+	memory := RPCMemory(d)
+	wantRAM := (20*GiB - GiB) * 80 / 100
+	wantGPU := (5*GiB - 256*MiB) * 90 / 100
+	if memory.RAM != wantRAM || memory.GPU != wantGPU {
+		t.Fatalf("unexpected independent device capacities: got %+v want RAM=%d GPU=%d", memory, wantRAM, wantGPU)
+	}
+	if Budget(d) != memory.RAM+memory.GPU {
+		t.Fatalf("hybrid worker cannot combine separate RAM and dedicated VRAM: %d", Budget(d))
+	}
+	d.Runtime.RPCDevices = []string{"gpu"}
+	if Budget(d) != memory.GPU || RPCMemory(d).RAM != 0 {
+		t.Fatal("GPU-only worker incorrectly advertises RAM capacity")
+	}
+	d.Runtime.RPCDevices = []string{"cpu"}
+	if Budget(d) != memory.RAM || RPCMemory(d).GPU != 0 {
+		t.Fatal("CPU-only worker incorrectly advertises VRAM capacity")
+	}
+	d.MaxContributionBytes = 3 * GiB
+	if Budget(d) != 3*GiB {
+		t.Fatal("max contribution limit not applied to hybrid workers")
+	}
+}
+
+func TestSharedGPUHybridNeverDoubleCountsRAM(t *testing.T) {
+	d := protocol.Device{Platform: "android", RAMBytes: 8 * GiB, AvailableRAMBytes: 5 * GiB,
+		GPUs:    []protocol.GPUDevice{{MemoryType: "shared", VRAMBytes: 8 * GiB, FreeVRAMBytes: 5 * GiB}},
+		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu", "cpu"}},
+	}
+	memory := RPCMemory(d)
+	if memory.GPU != 0 || memory.RAM == 0 || Budget(d) != memory.RAM {
+		t.Fatalf("shared VRAM was double-counted: %+v total %d", memory, Budget(d))
+	}
+	d.Platform = "linux"
+	d.GPUs[0].MemoryType = "" // Unknown memory class cannot be assumed discrete.
+	if RPCMemory(d).GPU != 0 || Budget(d) != memory.RAM {
+		t.Fatal("unknown GPU memory was added as dedicated VRAM")
+	}
+}
+
+func TestHybridBudgetDoesNotSumUnmappedMultipleGPUs(t *testing.T) {
+	d := protocol.Device{Platform: "linux", RAMBytes: 32 * GiB, AvailableRAMBytes: 12 * GiB,
+		GPUs: []protocol.GPUDevice{
+			{MemoryType: "dedicated", FreeVRAMBytes: 6 * GiB},
+			{MemoryType: "dedicated", FreeVRAMBytes: 6 * GiB},
+		},
+		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu", "cpu"}},
+	}
+	if RPCMemory(d).GPU >= 6*GiB {
+		t.Fatal("unmapped GPU cards were pooled into one native device's VRAM")
+	}
+}
