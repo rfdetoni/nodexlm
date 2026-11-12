@@ -110,7 +110,7 @@ func TestAggregateDrainingExcludesMemoryBudget(t *testing.T) {
 func TestDedicatedGPUHybridBudgetAddsOnlySeparateMemory(t *testing.T) {
 	d := protocol.Device{
 		Platform: "linux", RAMBytes: 28 * GiB, AvailableRAMBytes: 20 * GiB,
-		GPUs: []protocol.GPUDevice{{MemoryType: "dedicated", VRAMBytes: 6 * GiB, FreeVRAMBytes: 5 * GiB}},
+		GPUs:    []protocol.GPUDevice{{MemoryType: "dedicated", VRAMBytes: 6 * GiB, FreeVRAMBytes: 5 * GiB}},
 		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu", "cpu"}},
 	}
 	memory := RPCMemory(d)
@@ -138,7 +138,7 @@ func TestDedicatedGPUHybridBudgetAddsOnlySeparateMemory(t *testing.T) {
 
 func TestSharedGPUHybridNeverDoubleCountsRAM(t *testing.T) {
 	d := protocol.Device{Platform: "android", RAMBytes: 8 * GiB, AvailableRAMBytes: 5 * GiB,
-		GPUs: []protocol.GPUDevice{{MemoryType: "shared", VRAMBytes: 8 * GiB, FreeVRAMBytes: 5 * GiB}},
+		GPUs:    []protocol.GPUDevice{{MemoryType: "shared", VRAMBytes: 8 * GiB, FreeVRAMBytes: 5 * GiB}},
 		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu", "cpu"}},
 	}
 	memory := RPCMemory(d)
