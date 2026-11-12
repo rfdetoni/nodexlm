@@ -435,7 +435,7 @@ async function sendChat(){
  const prompt=$('prompt').value.trim();if(!prompt)return;
  const model=$('chatModel').value||latestStatus?.runtime?.model;if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
- const start=performance.now();let first=null;let answer='';let reasoning='';let usage=null;let done=false;let reader;
+ const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let done=false;let reader;
  renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');const details=el('details','reasoning-details');const summary=el('summary','','Raciocínio do modelo');const thoughts=el('p','reasoning-content');details.append(summary,thoughts);details.hidden=true;output.append(details,reply);
  try{
   const effort=$('chatEffort').value;
@@ -460,10 +460,14 @@ async function sendChat(){
     if(!data)continue;if(data==='[DONE]'){done=true;break}
     const event=JSON.parse(data);if(event.error)throw Error(event.error.message||event.error);
     if(event.usage)usage=event.usage;
+    const timing=event.timings;
+    if(Number(timing?.predicted_ms)>0&&Number(timing?.predicted_n)>0){
+     nativeDecode=1000*Number(timing.predicted_n)/Number(timing.predicted_ms);
+    }
     const thinking=event.choices?.[0]?.delta?.reasoning_content||'';
-    if(thinking){reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning}
+    if(thinking){if(firstGenerated===null)firstGenerated=performance.now();reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning}
     const text=event.choices?.[0]?.delta?.content||'';
-    if(text){if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer}
+    if(text){if(firstGenerated===null)firstGenerated=performance.now();if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer}
    }
    if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
   }
@@ -471,7 +475,17 @@ async function sendChat(){
   chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();$('prompt').value='';
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
-  $('chatMetrics').textContent='Tempo: '+elapsed.toFixed(2)+' s'+(first!==null?' · Primeiro token: '+((first-start)/1000).toFixed(2)+' s':'')+(usage?.completion_tokens?' · '+(usage.completion_tokens/elapsed).toFixed(1)+' tokens/s':'')+(usage?.completion_tokens_details?.reasoning_tokens?' · Thinking: '+usage.completion_tokens_details.reasoning_tokens+' tokens':'');
+  const tokens=Number(usage?.completion_tokens)||0;
+  const totalRate=tokens>0?tokens/elapsed:0;
+  const activeSec=firstGenerated===null?0:(performance.now()-firstGenerated)/1000;
+  const estimatedRate=tokens>3&&activeSec>0.15?tokens/activeSec:0;
+  let metrics='Tempo total: '+elapsed.toFixed(2)+' s';
+  if(first!==null)metrics+=' · Primeiro texto: '+((first-start)/1000).toFixed(2)+' s';
+  if(totalRate>0)metrics+=' · Média total (inclui prompt): '+totalRate.toFixed(1)+' t/s';
+  if(nativeDecode!==null)metrics+=' · Decode nativo: '+nativeDecode.toFixed(1)+' t/s';
+  else if(estimatedRate>0)metrics+=' · Geração após 1º evento (estimativa): '+estimatedRate.toFixed(1)+' t/s';
+  if(usage?.completion_tokens_details?.reasoning_tokens)metrics+=' · Thinking: '+usage.completion_tokens_details.reasoning_tokens+' tokens';
+  $('chatMetrics').textContent=metrics;
  }catch(error){
   const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;
   if(!answer)reply.textContent=message;if(!controller.signal.aborted)notice(message);
