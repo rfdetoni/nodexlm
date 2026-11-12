@@ -72,6 +72,10 @@ class RpcGuestService : Service() {
     }.apply { removeOnCancelPolicy = true }
     private val running = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
+    private val draining = AtomicBoolean(false)
+    @Volatile private var drainReason = ""
+    @Volatile private var drainStartedMs = 0L
+    private val claimedNativeRelays = AtomicLong()
     private val cpuSampler = CpuUsageSampler()
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
     private var cpuLock: PowerManager.WakeLock? = null
@@ -81,7 +85,7 @@ class RpcGuestService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) {
-            shutdown()
+            shutdown("stopped", "manual")
             return START_NOT_STICKY
         }
         if (intent?.action != START) {
@@ -114,6 +118,7 @@ class RpcGuestService : Service() {
         try {
             createNotification()
             acquireLocks()
+            recordGuestEvent("starting")
         } catch (e: Exception) {
             Log.e(LOG, "Cannot start Android RPC foreground service", e)
             shutdown()
@@ -126,14 +131,17 @@ class RpcGuestService : Service() {
                 val requestedThreads = energy.getInt("rpc_threads", 0)
                 val threads = if (requestedThreads == 0) (cores - 1).coerceIn(1, 6)
                               else requestedThreads.coerceIn(1, minOf(8, cores))
-                checkThermalsAndBattery()
+                check(checkThermalsAndBattery() == null) {
+                    "RPC Guest cannot start outside its thermal/energy policy"
+                }
                 val socketFile=File(filesDir,"rpc.sock")
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
                 rpcSocket=socketFile.absolutePath
                 val message = NativeRpc.start(threads, mode, rpcSocket)
                 check(message.isEmpty()) { message }
                 awaitNativeRPC()
-                Log.i(LOG, "Native GGML RPC socket ready; mode=$mode, threads=$threads")
+                recordGuestEvent("ready")
+                Log.i(LOG, "Native GGML RPC socket ready; requested=$mode, selected=${NativeRpc.selectedBackends()}, threads=$threads")
                 val sslContext = pinnedSSLContext()
                 // Share measured Vulkan heap counters; on mobile GPUs memory can
                 // be shared with RAM and must never be counted twice by the Host.
@@ -147,7 +155,7 @@ class RpcGuestService : Service() {
                 repeat(TUNNELS) { slot ->
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
-                        while (running.get()) {
+                        while (running.get() && !draining.get()) {
                             // Avoid a TLS reconnect storm while offline. Preserve
                             // pinned identity when the active network changes.
                             val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -182,13 +190,40 @@ class RpcGuestService : Service() {
                 // Do not keep publishing heartbeat or reconnecting to a dead worker.
                 while (running.get()) {
                     check(NativeRpc.isRunning()) { "Native GGML RPC server exited unexpectedly" }
-                    checkThermalsAndBattery()
+                    // SEVERE thermal status still stops immediately. Other policy
+                    // exits withdraw from new Host placements before closing
+                    // any active native RPC sessions.
+                    val reason = checkThermalsAndBattery()
+                    if (reason != null && !draining.get()) {
+                        drainReason = reason
+                        drainStartedMs = android.os.SystemClock.elapsedRealtime()
+                        if (draining.compareAndSet(false, true)) {
+                            recordGuestEvent("draining", reason)
+                            Log.w(LOG, "RPC Guest draining because of $reason; " +
+                                "no automatic restart. Current claimed tunnels=${claimedNativeRelays.get()}")
+                            // Publish withdrawal immediately, not only at the
+                            // next scheduled heartbeat (up to 15s later).
+                            try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
+                            catch (e: Exception) { Log.w(LOG, "Cannot announce drain to Host", e) }
+                        }
+                    }
+                    if (draining.get()) {
+                        val elapsed = android.os.SystemClock.elapsedRealtime() - drainStartedMs
+                        if ((elapsed >= 5_000L && claimedNativeRelays.get() == 0L) ||
+                            elapsed >= 90_000L) {
+                            Log.w(LOG, "RPC Guest drain finished: $drainReason, " +
+                                "claimed=${claimedNativeRelays.get()}, elapsed_ms=$elapsed")
+                            shutdown("stopped", "drained_$drainReason")
+                            break
+                        }
+                    }
                     sleepWhileRunning(1_000L)
                 }
             } catch (e: Throwable) {
                 Log.e(LOG, "RPC Guest cannot start", e)
                 val reason = e.message ?: "Falha ao iniciar Guest RPC"
-                shutdown()
+                val stopReason = if (reason == getString(R.string.energy_thermal)) "thermal_severe" else "runtime"
+                shutdown("failed", stopReason)
                 getSystemService(NotificationManager::class.java).notify(44,
                     Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_notify_error)
                         .setContentTitle(getString(R.string.ui_8ea70b71b55f))
@@ -255,19 +290,22 @@ class RpcGuestService : Service() {
         } catch (e: Exception) { Log.w(LOG, "Wi-Fi wake lock unavailable", e) }
     }
 
-    private fun checkThermalsAndBattery() {
+    private fun checkThermalsAndBattery(): String? {
         val power = getSystemService(POWER_SERVICE) as PowerManager
-        check(power.currentThermalStatus < PowerManager.THERMAL_STATUS_SEVERE) {
+        val thermal = power.currentThermalStatus
+        check(thermal < PowerManager.THERMAL_STATUS_SEVERE) {
             getString(R.string.energy_thermal)
         }
+        // Native GGML does not support live thread-count reduction. Withdraw
+        // instead of claiming a thermal throttle we cannot implement.
+        if (thermal >= PowerManager.THERMAL_STATUS_MODERATE) return "thermal"
         val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
         val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val state = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val charging = state == BatteryManager.BATTERY_STATUS_CHARGING || state == BatteryManager.BATTERY_STATUS_FULL
-        val reason = energyPolicy.pauseReason(percent, charging, java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
-        check(reason == null) { getString(when(reason){"charging"->R.string.energy_charging;"battery"->R.string.energy_battery;else->R.string.energy_schedule}) }
-
+        return energyPolicy.pauseReason(percent, charging,
+            java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
     }
 
     private fun sleepWhileRunning(duration: Long) {
@@ -309,6 +347,8 @@ class RpcGuestService : Service() {
         val charging = batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
             batteryStatus == BatteryManager.BATTERY_STATUS_FULL
         val device = JSONObject()
+            .put("status", if (draining.get()) "draining" else "online")
+            .put("unavailable_reason", if (draining.get()) drainReason else "")
             .put("name", name.take(80))
             .put("platform", "android")
             .put("architecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
@@ -326,7 +366,9 @@ class RpcGuestService : Service() {
             .put("charging", charging)
             // Only expose GPU memory when this worker allows Vulkan offload.
             // A CPU-only Guest must not make the Host allocate layers to GPU.
-            .put("gpus", if (mode == "cpu") JSONArray() else try {
+            // Only announce devices that survived native backend init. In
+            // auto mode a failed Vulkan probe must not report a GPU to Host.
+            .put("gpus", if (!NativeRpc.selectedBackends().contains("vulkan")) JSONArray() else try {
                 val gpus = JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
                 for (i in 0 until gpus.length()) {
                     val gpu = gpus.optJSONObject(i) ?: continue
@@ -345,11 +387,7 @@ class RpcGuestService : Service() {
                 JSONArray()
             })
             .put("runtime", JSONObject()
-                .put("engine", when(mode) {
-                    "cpu" -> "ggml-rpc-cpu"
-                    "gpu" -> "ggml-rpc-vulkan"
-                    else -> "ggml-rpc-cpu-vulkan"
-                })
+                .put("engine", "ggml-rpc-" + NativeRpc.selectedBackends())
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
                 .put("benchmark", true)
@@ -468,6 +506,8 @@ class RpcGuestService : Service() {
                 return
             }
             check(marker == 1) { "Missing Host RPC relay marker" }
+            claimedNativeRelays.incrementAndGet()
+            try {
             Log.i(LOG, "RPC tunnel $slot claimed by Host; opening private native RPC socket")
             val local = android.net.LocalSocket()
             localSockets.add(local)
@@ -543,14 +583,23 @@ class RpcGuestService : Service() {
                 localSockets.remove(local)
                 try { local.close() } catch (_: Exception) { }
             }
+            } finally {
+                claimedNativeRelays.decrementAndGet()
+            }
         } finally {
             sockets.remove(remote)
             try { remote.close() } catch (_: Exception) {}
         }
     }
 
-    private fun shutdown() {
+    private fun recordGuestEvent(state: String, reason: String = "") {
+        try { RpcGuestDiagnostics.record(this, state, reason) }
+        catch (e: Exception) { Log.w(LOG, "Cannot persist sanitized RPC Guest state", e) }
+    }
+
+    private fun shutdown(state: String = "stopped", reason: String = "service") {
         if (!stopping.compareAndSet(false, true)) return
+        recordGuestEvent(state, reason)
         diagnostics.shutdownNow()
         running.set(false)
         synchronized(localSockets){localSockets.forEach {try{it.close()}catch(_:Exception){}};localSockets.clear()}

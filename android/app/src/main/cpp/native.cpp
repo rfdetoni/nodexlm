@@ -21,6 +21,8 @@ std::mutex guard;
 std::atomic<bool> cancelled{false};
 std::once_flag initialized;
 std::atomic<bool> rpcStarted{false};
+// 1 = Vulkan, 2 = CPU. Selected for this RPC server, not measured speed.
+std::atomic<int> activeRPCBackends{0};
 jbyteArray bytes(JNIEnv* env,const std::string& value) {
     auto result=env->NewByteArray((jsize)value.size());
     if (result) env->SetByteArrayRegion(result,0,(jsize)value.size(),(const jbyte*)value.data());
@@ -227,6 +229,26 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         auto dev = ggml_backend_dev_get(i);
         if(dev && isGpu(dev)) { gpu = dev; break; }
     }
+    if(gpu && mode != "cpu") {
+        // Device enumeration does not prove that its backend can initialize.
+        // Release the small probe before GGML RPC owns backend resources.
+        ggml_backend_t probe = nullptr;
+        try {
+            probe = ggml_backend_dev_init(gpu, nullptr);
+        } catch (const std::exception& e) {
+            __android_log_print(ANDROID_LOG_WARN, "NodexLM-RPC",
+                                "Vulkan backend initialization failed: %s", e.what());
+        } catch (...) {
+            __android_log_print(ANDROID_LOG_WARN, "NodexLM-RPC",
+                                "Vulkan backend initialization failed");
+        }
+        if (probe) {
+            ggml_backend_free(probe);
+        } else {
+            // Auto can use CPU; GPU-only and hybrid fail explicitly below.
+            gpu = nullptr;
+        }
+    }
     if((mode == "gpu" || mode == "hybrid") && !gpu) {
         rpcStarted.store(false);
         return env->NewStringUTF("Vulkan unavailable on this Android device; select CPU or Auto");
@@ -242,6 +264,8 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         rpcStarted.store(false);
         return env->NewStringUTF("No usable CPU or Vulkan RPC backend found");
     }
+    activeRPCBackends.store((gpu && mode != "cpu" ? 1 : 0) |
+                            (cpu && mode != "gpu" ? 2 : 0));
     __android_log_print(ANDROID_LOG_INFO, "NodexLM-RPC",
         "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
         devices.size(),gpu?"yes":"no",cpu?"yes":"no");
@@ -258,9 +282,11 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
                 __android_log_print(ANDROID_LOG_ERROR,"NodexLM-RPC","Unknown native RPC error");
             }
             rpcStarted.store(false);
+            activeRPCBackends.store(0);
         }).detach();
     } catch(const std::exception& e) {
         rpcStarted.store(false);
+        activeRPCBackends.store(0);
         return env->NewStringUTF(e.what());
     }
     return env->NewStringUTF("");
@@ -271,4 +297,15 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
 extern "C" JNIEXPORT jboolean JNICALL
 Java_dev_nodexlm_app_NativeRpc_isRunning(JNIEnv*, jobject) {
     return rpcStarted.load() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Reports the devices this RPC server actually selected after Vulkan init
+// probe. Does not imply an inference benchmark or successful graph execution.
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_nodexlm_app_NativeRpc_selectedBackends(JNIEnv *env, jobject) {
+    const int selected = activeRPCBackends.load();
+    if (selected == 3) return env->NewStringUTF("cpu-vulkan");
+    if (selected == 1) return env->NewStringUTF("vulkan");
+    if (selected == 2) return env->NewStringUTF("cpu");
+    return env->NewStringUTF("unavailable");
 }

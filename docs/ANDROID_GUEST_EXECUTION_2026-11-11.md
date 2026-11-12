@@ -1,23 +1,23 @@
 # Android Guest — resultado incremental de implementação (2026-11-11)
 
-Base: `main` em `962af888cc227a43961aeca889f45d976ef934f8`. Alterações na PR #43. Esta revisão preserva Go, llama.cpp/GGML e o RPC sobre túneis TLS autenticados com socket privado. **Não é aceite integral do backlog AND-01–AND-14.**
+Base original: `962af888cc227a43961aeca889f45d976ef934f8`. PR #43 publicada na main em `9714d824cfb7e67aea4436dcaff4d5a325a1dece`. Continuação no PR #44. Esta revisão preserva Go, llama.cpp/GGML e o RPC sobre túneis TLS autenticados com socket privado. **Não é aceite integral do backlog AND-01–AND-14.**
 
 | ID | Situação | Implementado / limite concreto |
 | --- | --- | --- |
 | AND-01 | implementado sem validação física | Foreground `connectedDevice` e lock Wi-Fi ajustado por API; tela apagada, Doze e ROMs OEM continuam sem prova física. |
 | AND-02 | implementado sem validação física | Orçamento de memória compartilhada limitado à RAM física, limite do usuário, reserva do OS, CPU/GPU sem soma; LMK histórico no Android 11+. Admissão inicial usa estimativa limitada de KV/contexto/batch, aplicada tanto à prévia quanto à carga local/distribuída; alocação nativa exata, arquiteturas não usuais e cargas residentes concorrentes continuam sem garantias. |
 | AND-03 | corrigido e validado | `Managed.ensure()` invalida subprocesso reaped e não reutiliza endpoint morto; teste real com subprocesso que terminou, sem segundo `Wait()`. |
-| AND-04 | implementado sem validação física | Bateria, carregamento, status térmico e headroom disponíveis no heartbeat; parada SEVERE anterior preservada. Redução gradual, drenagem e cooldown ainda não implementados. |
-| AND-05 | não confirmado | Seleção ainda não compara Host sozinho em velocidade usando benchmark comparável de topologia. |
-| AND-06 | não confirmado | O modo automático nativo ainda não mede desempenho sustentado nem recupera crash Vulkan; GPU-only continua falhando explicitamente quando a GPU está ausente. |
+| AND-04 | implementado sem validação física | Bateria, carregamento, status térmico e headroom disponíveis no heartbeat; parada SEVERE anterior preservada. Drenagem limitada a 90s para violações previsíveis e térmica MODERATE, estado/motivo autenticado no Host, bloqueio de novas colocações, sem reinício automático; redução dinâmica de threads ainda não existe. A emergência SEVERE continua imediata. |
+| AND-05 | implementado sem validação física | O modo speed admite Host-only quando pesos/contexto cabem localmente e não há Guest com benchmark comparável mais rápido; modo capacity mantém RPC obrigatório. Mesma decisão na prévia/carga, com teste de regressão. Ainda faltam benchmarks físicos de topologias. |
+| AND-06 | implementado sem validação física | Antes de publicar prontidão, o JNI tenta inicializar Vulkan e libera o backend de prova. Auto usa CPU se a inicialização Vulkan falhar; GPU-only/hybrid falham. O heartbeat usa o backend nativo selecionado; não há benchmark sustentado, validação real de grafos, nem recuperação comprovada de crash de driver. |
 | AND-07 | implementado sem validação física | A prévia informa a release fixada e não anuncia/ativa automaticamente o patch paralelo sem capacidade declarada no manifesto. Candidato r2 não promovido nem aferido. |
-| AND-08 | não confirmado | Cache persistente opt-in de tensores não implementado; faltam contrato comprovado, quota, limpeza e controle por Host/revisão. |
+| AND-08 | não confirmado | Contrato `cache_dir` upstream confirmado, mas escreve arquivos por hash sem quota/expulsão garantida. Cache Android permanece desligado para não esgotar armazenamento; faltam implementação nativa segura e testes frio/quente. |
 | AND-09 | implementado sem validação física | Threads CPU ajustáveis, limitadas a 8 e ao número de núcleos; falta benchmark sustentado/topologia. |
 | AND-10 | implementado sem validação física | Retentativas com jitter, pausa sem rede, parada em 401/403 e espera maior em 503; testes de interrupção do Wi-Fi e drenagem permanecem pendentes. |
-| AND-11 | implementado sem validação física | Limites e bateria/temperatura transportados ao Host, revision/capability na prévia; falta relatório sanitizado completo e confirmação de protocolo HELLO/DEVICE_COUNT após cada reconexão. |
-| AND-12 | implementado sem validação física | Regressões de processo morto, memória compartilhada, contexto alto e seleção com Guests adicionais adicionadas. Não há teste físico Android; reproduzir matriz abaixo. |
-| AND-13 | já atendido e revalidado | Revisados workflows separados Go, UI Android e APK nativo com assinatura persistente opcional e verificação de proveniência. Build Android completo em release e assinatura dependem do fluxo/secrets. |
-| AND-14 | pendente externo | OpenCL/Adreno e Hexagon/NPU exigem aparelho/driver/SDK compatível, evidência RPC e benchmark; não habilitados sem prova. |
+| AND-11 | implementado sem validação física | Novo relatório sanitizado por ação Copiar diagnóstico (en/pt-BR), eventos persistidos sem credenciais/prompts; estado draining/motivo e backend selecionado visíveis no Host. A informação local é o último evento registrado, não prova de processo ativo. Falta correlação fase/HELLO depois de reconexão em aparelho. |
+| AND-12 | implementado sem validação física | Regressões de processo morto, memória compartilhada, contexto alto, seleção Host-only/Guest obrigatório e heartbeat drenando; Go race/vet e Android UI CI. A matriz física e testes nativos de ROM/driver continuam faltando. |
+| AND-13 | implementado sem validação física | Mantidos workflows Go/UI/APK e assinatura persistente por secrets. Adicionado gate de ZIP alinhado e segmentos ELF ARM64 para páginas de 16 KiB no build debug/release. Build completo do APK nesta revisão ainda precisa ser executado e passar; assinatura release depende de secrets. |
+| AND-14 | pendente externo | Documento [ANDROID_BACKEND_FEASIBILITY.md](ANDROID_BACKEND_FEASIBILITY.md) fundamenta suporte na revisão fixada e procedimentos. OpenCL/Adreno e Hexagon/NPU continuam desabilitados sem hardware, SDK, verificação do RPC e benchmark comparável. |
 
 ## Testes e medições
 
@@ -38,7 +38,7 @@ Releases nativas mantêm `rpc_release=nodexlm-rpc-b12255-r1`. O patch candidato 
 
 P1: validar estimativa de KV/contexto/batch contra o backend real e arquiteturas diferentes; reconciliar reservas concorrentes; garantir estado e causa da parada do Android no Host (inclusive falha térmica/rede); esgotar matriz de regressões de túnel e process exit.
 
-P2: seleção Host sozinho com medições comparáveis, benchmark real CPU/Vulkan/híbrido e fallback consciente, cache RPC opt-in protegido por quota, auto-tuning CPU, diagnósticos completos, teste de APK nativo e assinatura reprodutível.
+P2: benchmarks comparáveis de topologia Host-only/Guest, Vulkan CPU/híbrido sustentados e fallback após crash; cache RPC opt-in com quota, auto-tuning CPU, diagnosticar protocolo nativo pós-reconexão, build APK completo em ambas ABIs e assinatura persistente.
 
 P3: estudo de OpenCL/Adreno/Hexagon com configuração concreta de driver/SDK e prova de RPC, não apenas inferência local.
 

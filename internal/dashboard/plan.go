@@ -55,10 +55,13 @@ func (m *Manager) Plan() (map[string]any, error) {
 	excluded := []string{}
 	selectionReason := "Local-only inference"
 	if settings.Distributed {
-		if provider == nil {
+		if provider == nil && strategy != "speed" {
 			return nil, errors.New("RPC provider unavailable")
 		}
-		guests := provider()
+		var guests []RPCGuest
+		if provider != nil {
+			guests = provider()
+		}
 		selection, selectErr := m.chooseRPC(settings, meta, uint64(size), host, guests)
 		if selectErr != nil {
 			return nil, selectErr

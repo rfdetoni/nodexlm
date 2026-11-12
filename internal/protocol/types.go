@@ -71,8 +71,10 @@ type Device struct {
 	Runtime         RuntimeCapability `json:"runtime"`
 	Models          []string          `json:"models,omitempty"`
 	LastSeen        time.Time         `json:"last_seen"`
-	Status          string            `json:"status"`
-	Busy            bool              `json:"busy"`
+	// Authenticated Guest may withdraw from new placements (draining).
+	Status            string `json:"status"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	Busy              bool   `json:"busy"`
 }
 
 type Enrollment struct {

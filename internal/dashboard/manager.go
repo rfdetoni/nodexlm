@@ -427,11 +427,14 @@ func (m *Manager) load(ctx context.Context) error {
 	localLayers := 0
 	if s.Distributed {
 		m.setPhase("selecting_guests")
-		if provider == nil {
+		if provider == nil && s.PlacementStrategy != "speed" {
 			return errors.New("distributed inference needs a Host coordinator")
 		}
-		guests := provider()
-		if len(guests) == 0 {
+		var guests []RPCGuest
+		if provider != nil {
+			guests = provider()
+		}
+		if len(guests) == 0 && s.PlacementStrategy != "speed" {
 			return errors.New("nenhum Guest RPC autenticado está conectado. Pareamento/heartbeat não habilitam inferência distribuída: execute 'nodexlm guest --backend cpu' em cada Linux; confirme 'NodexLM RPC worker ready' e 'RPC conectado' no painel antes de aplicar o modelo")
 		}
 		model, err := local.InspectGGUF(path)
@@ -471,18 +474,20 @@ func (m *Manager) load(ctx context.Context) error {
 		m.mu.Lock()
 		m.loadRPCNodes = selectedIDs
 		m.mu.Unlock()
-		m.setPhase("verifying_rpc_guests")
-		if err := preflightRPCGuests(ctx, selection.Guests, rpcEndpoints); err != nil {
-			return err
+		if len(rpcEndpoints) > 0 {
+			m.setPhase("verifying_rpc_guests")
+			if err := preflightRPCGuests(ctx, selection.Guests, rpcEndpoints); err != nil {
+				return err
+			}
+			// HELLO and DEVICE_COUNT are not model tensor uploads. Reset the
+			// transfer baseline so the dashboard only shows bytes from actual
+			// model loading, not from the preflight handshake.
+			m.mu.Lock()
+			if m.rpcStatsProvider != nil {
+				m.loadRPCBaseline = m.rpcStatsProvider()
+			}
+			m.mu.Unlock()
 		}
-		// HELLO and DEVICE_COUNT are not model tensor uploads. Reset the
-		// transfer baseline so the dashboard only shows bytes from actual
-		// model loading, not from the preflight handshake.
-		m.mu.Lock()
-		if m.rpcStatsProvider != nil {
-			m.loadRPCBaseline = m.rpcStatsProvider()
-		}
-		m.mu.Unlock()
 	} else {
 		// The preview and the actual local load must use the same memory
 		// guard. Do not silently ignore high-context KV on the Host.
@@ -502,10 +507,13 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	m.setPhase("resolving_runtime")
 	var resolved string
+	// Speed preference may legitimately choose Host-only while the user
+	// keeps distributed capability enabled in settings.
+	usingRPC := s.Distributed && len(rpcEndpoints) > 0
 	if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {
 		// This opt-in backend is separately resolved by local.Managed.
 		resolved = ""
-	} else if s.Distributed && (m.binary == "" || m.binary == "llama-server") {
+	} else if usingRPC && (m.binary == "" || m.binary == "llama-server") {
 		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, "auto")
 	} else {
 		resolved, err = llamaruntime.AutoExecutable(ctx, m.dir, m.binary)
@@ -513,7 +521,7 @@ func (m *Manager) load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if s.Distributed && !llamaruntime.SupportsRPC(ctx, resolved) {
+	if usingRPC && !llamaruntime.SupportsRPC(ctx, resolved) {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
 	}
 	draftPath, err := m.resolveDraftModel(s)
@@ -522,7 +530,7 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	m.setPhase("loading_model")
 	engine := &local.Managed{Backend: s.Backend, Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType, BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
-	if s.Distributed {
+	if usingRPC {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers
 		if s.GPULayers == "auto" {
