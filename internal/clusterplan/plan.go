@@ -72,9 +72,10 @@ func exposedRPCMemory(d protocol.Device) RPCDeviceMemory {
 		if gpu.VRAMBytes > 0 && free > gpu.VRAMBytes {
 			free = gpu.VRAMBytes
 		}
-		// Reserve at least 512 MiB per GPU for driver/kernel/graph buffers.
-		if free > 512*MiB {
-			add := (free - 512*MiB) * 80 / 100
+		// Reserve a fixed driver allowance plus 10% of the remainder
+		// for native graph/KV allocation variability and fragmentation.
+		if free > 256*MiB {
+			add := (free - 256*MiB) * 90 / 100
 			// Only one native GPU is automatically exposed. Do not sum
 			// multiple cards until individual RPC device IDs are mapped to
 			// hardware telemetry, or single-card workers could overcommit.
