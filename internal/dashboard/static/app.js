@@ -402,6 +402,20 @@ try {if(typeof localStorage!=='undefined'){
  if(Array.isArray(saved))chatHistory=saved.filter(m=>m&&['user','assistant'].includes(m.role)&&typeof m.content==='string'&&m.content.length<=65536).slice(-62);
 }}catch { /* Unavailable or damaged browser storage must not break chat. */ }
 function saveChat(){try{localStorage.setItem('nodexlm-chat',JSON.stringify(chatHistory))}catch{notice('Não foi possível salvar o histórico neste navegador.')}}
+// Keep only non-sensitive chat tuning preferences in browser storage.
+const effortLevels=new Set(['auto','none','minimal','low','medium','high','xhigh','max']);
+try{
+ const saved=JSON.parse(localStorage.getItem('nodexlm-chat-reasoning')||'null');
+ if(saved&&effortLevels.has(saved.effort))$('chatEffort').value=saved.effort;
+ if(saved&&Number.isInteger(saved.budget)&&saved.budget>=0&&saved.budget<=4096)$('chatThinkingBudget').value=String(saved.budget);
+ if($('chatEffort').value==='none'){$('chatThinkingBudget').disabled=true;$('chatThinkingBudget').value='0'}
+}catch{/* Invalid browser storage must not prevent the chat from loading. */}
+function saveReasoningPreference(){
+ const effort=$('chatEffort').value;
+ const budget=Number($('chatThinkingBudget').value);
+ if(!effortLevels.has(effort)||!Number.isInteger(budget)||budget<0||budget>4096)return;
+ try{localStorage.setItem('nodexlm-chat-reasoning',JSON.stringify({effort,budget}))}catch{/* Private browser mode can disable storage. */}
+}
 function renderChat(){const output=$('chatOutput');output.replaceChildren();for(const message of chatHistory){output.append(el('strong','',message.role==='user'?'Você':'NodexLM'),el('p','',message.content))}}
 function confirmAction(text,label){
  const dialog=$('confirmation');$('confirmationText').textContent=text;$('confirmAction').textContent=label;
@@ -416,6 +430,7 @@ async function sendChat(){
  renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');const details=el('details','reasoning-details');const summary=el('summary','','Raciocínio do modelo');const thoughts=el('p','reasoning-content');details.append(summary,thoughts);details.hidden=true;output.append(details,reply);
  try{
   const effort=$('chatEffort').value;
+  if(!effortLevels.has(effort))throw Error('Esforço de raciocínio inválido.');
   const maxTokens=+$('chatTokens').value;
   const thinkingBudget=+$('chatThinkingBudget').value;
   if(!Number.isInteger(thinkingBudget)||thinkingBudget<0||thinkingBudget>4096||thinkingBudget>maxTokens)throw Error('O orçamento de raciocínio deve estar entre 0 e o máximo de tokens da resposta.');
@@ -574,7 +589,13 @@ $('previewPlan').addEventListener('click',()=>guard(async()=>{
  area.append(el('p','muted','Camadas e KV F16 são estimativas; a alocação final depende do runtime. Aviso de rede: RTT acima de 10 ms ou eco abaixo de 50 MiB/s. Tokens/s são medidos, sem previsão pela banda; mudar a configuração ou os nós pode invalidar a comparação.'));
 }));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
-$('chatEffort').addEventListener('change',()=>{const disabled=$('chatEffort').value==='none';$('chatThinkingBudget').disabled=disabled;if(disabled)$('chatThinkingBudget').value='0'});
+$('chatEffort').addEventListener('change',()=>{
+ const disabled=$('chatEffort').value==='none';
+ $('chatThinkingBudget').disabled=disabled;
+ if(disabled)$('chatThinkingBudget').value='0';
+ saveReasoningPreference();
+});
+$('chatThinkingBudget').addEventListener('change',saveReasoningPreference);
 $('stopChat').addEventListener('click',()=>chatController?.abort());
 $('clearChat').addEventListener('click',()=>guard(async()=>{
  if(!await confirmAction('Apagar o histórico de conversas salvo neste navegador?','Apagar histórico'))return;
