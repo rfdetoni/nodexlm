@@ -1,7 +1,7 @@
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -327,8 +327,12 @@ static uint64_t fnv_hash(const uint8_t * data, size_t len, uint64_t hash = 0xcb
+@@ -327,7 +327,11 @@ static uint64_t fnv_hash(const uint8_t * data, size_t len, uint64_t hash = 0xcb
  }
  
  static bool send_msg(socket_ptr sock, const void * msg, size_t msg_size) {
