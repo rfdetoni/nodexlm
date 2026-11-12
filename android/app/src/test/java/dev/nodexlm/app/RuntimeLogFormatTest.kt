@@ -35,7 +35,10 @@ class RuntimeLogFormatTest {
         assertEquals(RuntimeMode.RPC_GUEST, RuntimeLogFormat.lastMode(history))
         history.add(RuntimeLogEntry(4L, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_TUNNEL_CLAIMED))
         assertEquals(RuntimeMode.RPC_GUEST, RuntimeLogFormat.lastMode(history))
-        history.add(RuntimeLogEntry(5L, RuntimeRole.GUEST, RuntimeLevel.WARN, RuntimeEvent.GUEST_STOP))
+        // Stopping an old worker can race a newly started RPC service.
+        history.add(RuntimeLogEntry(5L, RuntimeRole.GUEST, RuntimeLevel.WARN, RuntimeEvent.WORKER_STOP))
+        assertEquals(RuntimeMode.RPC_GUEST, RuntimeLogFormat.lastMode(history))
+        history.add(RuntimeLogEntry(6L, RuntimeRole.GUEST, RuntimeLevel.WARN, RuntimeEvent.GUEST_STOP))
         assertEquals(RuntimeMode.INACTIVE, RuntimeLogFormat.lastMode(history))
         assertEquals(RuntimeMode.INACTIVE, RuntimeLogFormat.lastMode(emptyList()))
     }
