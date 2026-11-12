@@ -430,6 +430,7 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	rpcEndpoints := []string(nil)
 	localLayers := 0
+	var devicePlacement RPCDevicePlacement
 	if s.Distributed {
 		m.setPhase("selecting_guests")
 		// The Host can still load locally if there are no RPC Guests,
@@ -456,6 +457,7 @@ func (m *Manager) load(ctx context.Context) error {
 			return selectErr
 		}
 		localLayers = selection.LocalLayers
+		devicePlacement = planRPCDevices(selection, guests, model, s, uint64(size))
 		selectedIDs := make([]string, 0, len(selection.Guests))
 		for _, candidate := range selection.Guests {
 			selectedIDs = append(selectedIDs, candidate.ID)
@@ -472,6 +474,7 @@ func (m *Manager) load(ctx context.Context) error {
 		slog.Info("Model placement planned", "selected_guests", len(selection.Guests),
 			"available_guests", len(guests), "host_layers", localLayers, "total_layers", model.BlockCount,
 			"strategy", effectivePlacementStrategy(s.PlacementStrategy), "using_rpc", len(selection.Guests) > 0,
+			"rpc_devices", devicePlacement.DeviceArg(), "device_modes", devicePlacement.Modes,
 			"parallel_rpc_upload", len(selection.Guests) > 1 && llamaruntime.BundledParallelRPCUploadsSupported())
 		m.mu.Lock()
 		m.loadRPCNodes = selectedIDs
@@ -535,6 +538,8 @@ func (m *Manager) load(ctx context.Context) error {
 	if usingRPC {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers
+		engine.RPCDeviceNames = devicePlacement.Devices
+		engine.RPCTensorSplit = devicePlacement.TensorSplitArg()
 		if s.GPULayers == "auto" {
 			engine.GPULayers = "all"
 		}
