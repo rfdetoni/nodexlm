@@ -153,4 +153,7 @@
     <string name="rpc_memory_cap">Contribuição máxima de RAM (MiB; 0 = automática)</string>
     <string name="rpc_memory_reserve">RAM mínima reservada para Android (MiB; pelo menos 1024)</string>
     <string name="rpc_cpu_threads">Threads nativas da CPU (0 = automática; reinicie o Guest)</string>
+    <string name="rpc_diagnostics_copy">Copiar diagnóstico RPC sanitizado</string>
+    <string name="rpc_diagnostics_copied">Diagnóstico copiado (sem credenciais nem prompts)</string>
+    <string name="rpc_diagnostics_failed">Não foi possível obter o diagnóstico do dispositivo</string>
 </resources>
