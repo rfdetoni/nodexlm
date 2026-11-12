@@ -101,6 +101,13 @@ func nativeDeviceKinds(device string, profile protocol.Device) []string {
 			return nil // Do not guess budgets for a custom native device name.
 		}
 	}
+	// Host indices are intentionally deterministic for one GPU plus CPU.
+	// Multiple GPUs remain supported manually by upstream llama.cpp, but
+	// they are reported as unknown until per-card native mapping exists.
+	if len(kinds) > 2 || (len(kinds) == 2 &&
+		(kinds[0] != "gpu" || kinds[1] != "cpu")) {
+		return nil
+	}
 	return kinds
 }
 
