@@ -15,12 +15,16 @@ var unixRPCPatch []byte
 //go:embed patches/parallel-rpc-loader.patch
 var parallelRPCPatch []byte
 
+//go:embed patches/arm32-rpc-wire.patch
+var fixedRPCWirePatch []byte
+
 func applyRPCPatch(ctx context.Context, source string) error {
 	for _, patch := range []struct {
 		name string
 		data []byte
 	}{
 		{name: "Unix RPC", data: unixRPCPatch},
+		{name: "fixed-width RPC wire framing", data: fixedRPCWirePatch},
 		{name: "parallel tensor upload", data: parallelRPCPatch},
 	} {
 		cmd := exec.CommandContext(ctx, "git", "-C", source, "apply", "-")
