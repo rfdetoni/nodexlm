@@ -107,3 +107,15 @@ Em **Ajustes**, use **Copiar diagnóstico RPC sanitizado** para obter um JSON lo
 O modo `auto` tenta inicializar Vulkan antes de selecioná-lo; se a inicialização falhar, pode selecionar CPU. A seleção anunciada não prova execução correta de grafos nem desempenho. Se o processo nativo falhar após iniciar, não há recuperação transparente da sessão; consulte o log. Consulte [viabilidade de OpenCL/Hexagon e cache RPC](ANDROID_BACKEND_FEASIBILITY.md).
 
 O build completo do APK verifica páginas de 16 KiB com `scripts/verify-android-pages.sh` sobre os artefatos gerados; resultados de CI de Kotlin isoladamente não comprovam ELF/zipalign nem comportamento físico.
+
+### Coleta física reproduzível via ADB
+
+Com um aparelho Android físico pareado e o Guest ativo, execute, de forma voluntária:
+
+```sh
+bash scripts/android-rpc-acceptance.sh --output evidencias-android --screen-off-minutes 30
+# Para teste sintético de Doze, com liberação automática no final:
+bash scripts/android-rpc-acceptance.sh --output evidencias-android-doze --screen-off-minutes 30 --doze
+```
+
+O script não lê configurações privadas do app nem credenciais e não testa velocidade. Registra somente informações de build/SoC/ABI, PID do processo RPC, disponibilidade de memória e estado de energia/térmica, antes/depois do período selecionado. Não reutilize a mesma pasta de saída: as evidências anteriores não são sobrescritas. `--doze` injeta um estado sintético do Android e não representa todos os comportamentos de ROMs OEM. Verifique separadamente no Host a integridade de HELLO/DEVICE_COUNT e o resultado de carga, geração e streaming.
