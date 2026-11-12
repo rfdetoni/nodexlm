@@ -39,3 +39,43 @@ Use a mesma versão do GGUF, hash, prompt, contexto, `batch_size`, `ubatch_size`
 Não paraleliza um token autoregressivo entre várias CPUs/GPU de maneira automaticamente mais rápida; não elimina as barreiras da implementação GGML RPC; não garante mais tokens/s por adicionar Androids. A validação em CI cobre compilação e regressões de seleção, não benchmarking físico de Android/Wi-Fi.
 
 A publicação/atualização do APK requer a assinatura de releases persistente descrita na documentação Android.
+
+## Guest Linux com GPU dedicada + RAM (modo automático)
+
+O CLI `nodexlm guest --backend auto --debug` procura primeiro uma GPU
+dedicada com VRAM livre conhecida, usa o bundle **Vulkan verificado** no Linux
+AMD64 quando disponível e passa para CPU se o bundle ou o driver não estiver
+operacional. Com uma GPU dedicada válida, o worker descobre os dispositivos
+nativos do GGML e expõe `Vulkan0,CPU` (ou o nome real equivalente), sem usar
+dois processos RPC/túneis distintos. Para testes individuais use
+`--backend vulkan --rpc-device Vulkan0` e
+`--backend vulkan --rpc-device Vulkan0,CPU`. O modo manual é preservado.
+
+A partir da informação autenticada no heartbeat, o Host sabe a ordem de
+dispositivos e orça **VRAM dedicada e RAM separadamente**, com reserva em
+ambos. No modo de velocidade, o modelo que cabe no Host fica no Host,
+a menos que haja benchmark controlado comparável favorecendo o Guest.
+Ao distribuir, o Host aplica `--device RPC0` se a parte remota do modelo e
+contexto couber na VRAM de forma conservadora. Quando não couber,
+inclui a CPU remota (`--device RPC0,RPC1`) e passa proporções
+`--tensor-split` para priorizar a VRAM e usar RAM como complemento.
+O painel **Ver plano** indica GPU, GPU + RAM ou RAM, com os budgets.
+
+- Cada RTX 2060 tem aproximadamente 6 GiB físicos de VRAM, mas a
+  capacidade utilizável é menor e varia com a ocupação, buffers e contexto.
+- GPU e RAM **não** são somadas em Android/iGPU com memória compartilhada.
+  Nodes com metadata RPC antiga continuam com a seleção nativa conservadora.
+- Os índices `RPC0, RPC1` são do **processo llama-server no Host**, não o
+  `Vulkan0` local usado no Guest.
+- A distribuição real de tensors é determinada pelo llama.cpp. O plano é uma
+  estimativa com limite conservador, não promessa de que o GGUF caberá.
+- O suporte automático à escolha de GPU para CLI é inicialmente limitado
+  ao bundle RPC Vulkan Linux AMD64 com memória dedicada detectável. Backend
+  `cpu`, `vulkan` e dispositivos específicos podem ser escolhidos manualmente
+  nos demais ambientes.
+
+**Comparação recomendada:** no mesmo prompt/contexto execute Host local,
+Guest Vulkan (apenas GPU), auto GPU+RAM, e capacidade distribuída, registrando
+TTFT, decode nativo, média total, RAM/VRAM e as camadas do plano. A inferência
+híbrida pode reduzir tokens/s se parte da geração passar pela CPU; prefira GPU
+sozinha sempre que houver capacidade suficiente.
