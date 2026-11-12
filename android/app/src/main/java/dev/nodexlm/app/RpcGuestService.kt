@@ -133,7 +133,7 @@ class RpcGuestService : Service() {
                 val threads = if (requestedThreads == 0) (cores - 1).coerceIn(1, 6)
                               else requestedThreads.coerceIn(1, minOf(8, cores))
                 check(checkThermalsAndBattery() == null) {
-                    "RPC Guest cannot start outside its thermal/energy policy"
+                    "RPC Guest cannot start outside its thermal/energy/memory policy"
                 }
                 val socketFile=File(filesDir,"rpc.sock")
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
@@ -321,6 +321,9 @@ class RpcGuestService : Service() {
         // Native GGML does not support live thread-count reduction. Withdraw
         // instead of claiming a thermal throttle we cannot implement.
         if (thermal >= PowerManager.THERMAL_STATUS_MODERATE) return "thermal"
+        val memory = ActivityManager.MemoryInfo()
+        (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+        if (memory.lowMemory) return "memory"
         val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
         val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val state = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
