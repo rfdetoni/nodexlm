@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -241,5 +242,54 @@ func TestSpeedRequiresComparableBenchmarksAndRemoteOnlyForFasterGuest(t *testing
 	choice, err = m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
 	if err != nil || len(choice.Guests) != 0 {
 		t.Fatalf("Guest-only speed was wrongly applied to an unmeasured split: %+v %v", choice, err)
+	}
+}
+
+func TestNoGuestsFallsBackToHostRegardlessOfSavedStrategy(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	meta := local.GGUFInfo{BlockCount: 32}
+	for _, strategy := range []string{"", "speed", "capacity"} {
+		t.Run("strategy_"+strategy, func(t *testing.T) {
+			settings := Settings{Model: "small.gguf", Distributed: true, PlacementStrategy: strategy, ContextTokens: 2048}
+			selection, err := m.chooseRPC(settings, meta, 3*gib, 8*gib, nil)
+			if err != nil {
+				t.Fatalf("local Host model wrongly requires an RPC Guest: %v", err)
+			}
+			if selection.LocalLayers != 32 || len(selection.Guests) != 0 || len(selection.Excluded) != 0 ||
+				!strings.Contains(selection.Reason, "Host") {
+				t.Fatalf("invalid local fallback for %q: %+v", strategy, selection)
+			}
+			selection, err = m.chooseRPC(settings, meta, 3*gib, 8*gib, []RPCGuest{})
+			if err != nil || selection.LocalLayers != 32 || len(selection.Guests) != 0 {
+				t.Fatalf("empty provider must behave as missing provider: %+v %v", selection, err)
+			}
+		})
+	}
+}
+
+func TestNoGuestsOnlyFailsWhenLocalMemoryIsInsufficient(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	settings := Settings{Model: "large.gguf", Distributed: true, PlacementStrategy: "capacity", ContextTokens: 2048}
+	meta := local.GGUFInfo{BlockCount: 32}
+	if _, err := m.chooseRPC(settings, meta, 5*gib, 3*gib, nil); err == nil ||
+		!strings.Contains(err.Error(), "memória local insuficiente") {
+		t.Fatalf("no Guest and insufficient Host RAM must report memory instead of credentials: %v", err)
+	}
+	// The same runtime can fit on the Host when enough memory is available.
+	got, err := m.chooseRPC(settings, meta, 5*gib, 8*gib, nil)
+	if err != nil || got.LocalLayers != 32 || len(got.Guests) != 0 {
+		t.Fatalf("sufficient Host RAM must lift the error: %+v %v", got, err)
 	}
 }

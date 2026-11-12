@@ -427,15 +427,11 @@ func (m *Manager) load(ctx context.Context) error {
 	localLayers := 0
 	if s.Distributed {
 		m.setPhase("selecting_guests")
-		if provider == nil && effectivePlacementStrategy(s.PlacementStrategy) != "speed" {
-			return errors.New("distributed inference needs a Host coordinator")
-		}
+		// The Host can still load locally if there are no RPC Guests,
+		// independently of a previously saved capacity strategy.
 		var guests []RPCGuest
 		if provider != nil {
 			guests = provider()
-		}
-		if len(guests) == 0 && effectivePlacementStrategy(s.PlacementStrategy) != "speed" {
-			return errors.New("nenhum Guest RPC autenticado está conectado. Pareamento/heartbeat não habilitam inferência distribuída: execute 'nodexlm guest --backend cpu' em cada Linux; confirme 'NodexLM RPC worker ready' e 'RPC conectado' no painel antes de aplicar o modelo")
 		}
 		model, err := local.InspectGGUF(path)
 		if err != nil {
@@ -468,9 +464,10 @@ func (m *Manager) load(ctx context.Context) error {
 		if len(rpcEndpoints) != len(selection.Guests) {
 			return errors.New("RPC relay became unavailable while planning layers; reconnect the selected Guests")
 		}
-		slog.Info("Distributed model placement planned", "selected_guests", len(selection.Guests),
+		slog.Info("Model placement planned", "selected_guests", len(selection.Guests),
 			"available_guests", len(guests), "host_layers", localLayers, "total_layers", model.BlockCount,
-			"strategy", s.PlacementStrategy, "parallel_rpc_upload", len(selection.Guests) > 1 && llamaruntime.BundledParallelRPCUploadsSupported())
+			"strategy", effectivePlacementStrategy(s.PlacementStrategy), "using_rpc", len(selection.Guests) > 0,
+			"parallel_rpc_upload", len(selection.Guests) > 1 && llamaruntime.BundledParallelRPCUploadsSupported())
 		m.mu.Lock()
 		m.loadRPCNodes = selectedIDs
 		m.mu.Unlock()
