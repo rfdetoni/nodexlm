@@ -8,8 +8,6 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
-// estimateTransientBytes is deliberately a lower-bound estimate of KV and
-// minimum activation buffers. Architectures with unknown KV layout return nil.
 // estimateKVBytes returns the shared, lower-bound KV estimate used by
 // admission and the plan preview. Unknown metadata stays unknown.
 func estimateKVBytes(meta local.GGUFInfo, s Settings) *uint64 {
@@ -30,7 +28,8 @@ func estimateKVBytes(meta local.GGUFInfo, s Settings) *uint64 {
 	return &kv
 }
 
-// estimateTransientBytes adds the minimum activation allowance to KV.
+// estimateTransientBytes adds a minimum activation allowance to KV.
+// Architectures with unknown KV layout return nil.
 func estimateTransientBytes(meta local.GGUFInfo, s Settings) *uint64 {
 	if s.ContextTokens <= 0 {
 		return nil

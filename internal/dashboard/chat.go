@@ -13,8 +13,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
 
-// Serialize only the native generation. Admission is cancellable,
-// so a disconnected client cannot hold the next request in a mutex queue.
+// Use one bound for dashboard and OpenAI-compatible inference.
 func (m *Manager) inferenceTimeout() time.Duration {
 	if m.Settings().Distributed {
 		return 20 * time.Minute
@@ -22,6 +21,8 @@ func (m *Manager) inferenceTimeout() time.Duration {
 	return 4 * time.Minute
 }
 
+// Serialize only the native generation. Admission is cancellable,
+// so a disconnected client cannot hold the next request in a mutex queue.
 func (m *Manager) acquire(ctx context.Context) error {
 	select {
 	case m.admission <- struct{}{}:

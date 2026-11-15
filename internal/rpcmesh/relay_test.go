@@ -86,10 +86,19 @@ func TestEncryptedRPCTunnelTransportsBinary(t *testing.T) {
 	if fmt.Sprintf("%x", actual) != fmt.Sprintf("%x", input) {
 		t.Fatalf("unexpected output: %x", actual)
 	}
-	traffic := hub.Stats()["test"]
-	if traffic.BytesToGuest < uint64(len(input)) || traffic.BytesFromGuest < uint64(len(input)) ||
-		traffic.LastActivityMS == 0 {
-		t.Fatalf("real RPC bytes were not measured: %+v", traffic)
+	// The receiver can read the echo before the sender's Write returns and
+	// updates its counters. Wait for the asynchronous relay measurement.
+	deadline := time.Now().Add(time.Second)
+	for {
+		traffic := hub.Stats()["test"]
+		if traffic.BytesToGuest >= uint64(len(input)) && traffic.BytesFromGuest >= uint64(len(input)) &&
+			traffic.LastActivityMS != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("real RPC bytes were not measured: %+v", traffic)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	if _, idle := hub.IdleNodes()["test"]; idle {
 		t.Fatal("busy Guest tunnel without idle slots must not be selected for a new model load")
