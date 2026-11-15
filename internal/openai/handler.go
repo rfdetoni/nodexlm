@@ -21,6 +21,7 @@ type Handler struct {
 	Target  http.HandlerFunc
 	Models  func() []string
 	Observe func(string, []byte, time.Duration)
+	Timeout func() time.Duration
 	store   responseStore
 }
 
@@ -136,7 +137,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 	started := false
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	limit := 4 * time.Minute
+	if h.Timeout != nil {
+		limit = h.Timeout()
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), limit)
 	defer cancel()
 	err = h.Forward(ctx, model, path, raw, func(status int, headers http.Header, reader io.Reader) error {
 		if status < 200 || status >= 300 {

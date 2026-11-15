@@ -56,3 +56,52 @@ func TestSpeedSelectionCanAddGuestsForKVAdmission(t *testing.T) {
 		t.Fatalf("selection ignored KV context memory: %+v", selection)
 	}
 }
+
+// Verify the same KV estimate is used by the memory planner and the preview.
+func TestEstimatedKVBytesAreSharedAcrossMemoryChecks(t *testing.T) {
+	meta := local.GGUFInfo{BlockCount: 40, EmbeddingLength: 8192, HeadCount: 64, KVHeadCount: 16}
+	for _, tc := range []struct {
+		cache string
+		want  uint64
+	}{
+		{"f16", 671088640},
+		{"q8_0", 356515840},
+		{"q4_0", 188743680},
+	} {
+		t.Run(tc.cache, func(t *testing.T) {
+			s := Settings{ContextTokens: 2048, KVCacheType: tc.cache, BatchSize: 512}
+			got := estimateKVBytes(meta, s)
+			if got == nil || *got != tc.want {
+				t.Fatalf("KV estimate for %s = %v, want %d", tc.cache, got, tc.want)
+			}
+			transient := estimateTransientBytes(meta, s)
+			activation := uint64(512) * uint64(meta.EmbeddingLength) * 4
+			if transient == nil || *transient != tc.want+activation {
+				t.Fatalf("transient estimate for %s = %v", tc.cache, transient)
+			}
+		})
+	}
+	if estimateKVBytes(local.GGUFInfo{}, Settings{ContextTokens: 2048}) != nil {
+		t.Fatal("unknown KV metadata should remain unknown")
+	}
+	if estimateTransientBytes(meta, Settings{ContextTokens: 0}) != nil {
+		t.Fatal("missing context should not be admitted")
+	}
+}
+
+func TestModelExceedsBudgetPreservesExistingRounding(t *testing.T) {
+	for _, tc := range []struct {
+		bytes, budget uint64
+		tooLarge     bool
+	}{
+		{800, 1000, false},
+		{801, 1000, true},
+		{1000, 1150, false},
+		{1001, 1150, true},
+		{1, 0, true},
+	} {
+		if got := modelExceedsBudget(tc.bytes, tc.budget); got != tc.tooLarge {
+			t.Fatalf("model=%d budget=%d: got %v, want %v", tc.bytes, tc.budget, got, tc.tooLarge)
+		}
+	}
+}

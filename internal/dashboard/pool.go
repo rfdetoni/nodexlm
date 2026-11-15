@@ -30,7 +30,6 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 	// Pinned GGML RPC serves one client per Guest. Additional resident models
 	// run on the Host rather than blocking on an already-owned native backend.
 	settings.Distributed = false
-	provider := m.rpcEndpoints
 	if m.closed {
 		m.mu.Unlock()
 		return errors.New("manager closed")
@@ -56,11 +55,6 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 		return err
 	}
 	budget := clusterplan.Budget(hardware.Collect("Host", nil))
-	if settings.Distributed && provider != nil {
-		for _, node := range provider() {
-			budget += node.CapacityBytes
-		}
-	}
 	// Free reports can lag a prior distributed load. Subtract resident weights
 	// again as a conservative reservation rather than overcommitting stale RAM.
 	for _, model := range m.LoadedModels() {
@@ -77,7 +71,7 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 		}
 		budget -= uint64(n)
 	}
-	if uint64(size) > budget/115*100 {
+	if modelExceedsBudget(uint64(size), budget) {
 		return errors.New("insufficient available memory for another resident model")
 	}
 	sum := sha256.Sum256([]byte(name))
@@ -90,7 +84,6 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 		child.Close()
 		return err
 	}
-	child.SetRPCProvider(provider)
 	if err = child.Load(ctx); err != nil {
 		child.Close()
 		return err

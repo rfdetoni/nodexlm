@@ -63,7 +63,7 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	if err != nil {
 		return InferenceSample{}, err
 	}
-	engine := &local.Managed{Backend: settings.Backend, Binary: binary, ModelPath: path, Alias: model, Threads: settings.Threads, ContextTokens: settings.ContextTokens, GPULayers: settings.GPULayers, FlashAttention: settings.FlashAttention, KVCacheType: settings.KVCacheType, BatchSize: settings.BatchSize, UBatchSize: settings.UBatchSize, SpeculativeMode: settings.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
+	engine := managedFromSettings(settings, binary, path, model, draftPath)
 	if nodeID != "" {
 		if provider == nil {
 			return InferenceSample{}, errors.New("no RPC Guests")
@@ -71,7 +71,7 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 		found := false
 		for _, guest := range provider() {
 			if guest.ID == nodeID {
-				if uint64(size) > guest.CapacityBytes/115*100 {
+				if modelExceedsBudget(uint64(size), guest.CapacityBytes) {
 					return InferenceSample{}, errors.New("benchmark model exceeds Guest memory budget")
 				}
 				engine.RPCServers = []string{guest.Endpoint}

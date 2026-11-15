@@ -50,6 +50,19 @@ type Settings struct {
 	DraftModel        string `json:"draft_model,omitempty"`
 }
 
+// managedFromSettings keeps native options identical for loads and benchmarks.
+// RPC placement remains a caller-specific override.
+func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string) *local.Managed {
+	return &local.Managed{
+		Backend: s.Backend, Binary: binary, ModelPath: modelPath, Alias: alias,
+		Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
+		MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB,
+		FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType,
+		BatchSize: s.BatchSize, UBatchSize: s.UBatchSize,
+		SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
+	}
+}
+
 type Download struct {
 	ShardCount int    `json:"shard_count,omitempty"`
 	Name       string `json:"name"`
@@ -534,7 +547,7 @@ func (m *Manager) load(ctx context.Context) error {
 		return err
 	}
 	m.setPhase("loading_model")
-	engine := &local.Managed{Backend: s.Backend, Binary: resolved, ModelPath: path, Alias: s.Model, Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers, MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB, FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType, BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true}
+	engine := managedFromSettings(s, resolved, path, s.Model, draftPath)
 	if usingRPC {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers
