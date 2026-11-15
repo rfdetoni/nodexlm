@@ -260,6 +260,7 @@ func (d *Dashboard) Handler() http.Handler {
 		mux.ServeHTTP(w, r)
 	}))
 }
+
 // bearerHash parses and hashes an Authorization bearer token once.
 func bearerHash(header string) ([32]byte, bool) {
 	if !strings.HasPrefix(header, "Bearer ") {

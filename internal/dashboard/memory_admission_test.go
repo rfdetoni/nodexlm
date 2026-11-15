@@ -92,7 +92,7 @@ func TestEstimatedKVBytesAreSharedAcrossMemoryChecks(t *testing.T) {
 func TestModelExceedsBudgetPreservesExistingRounding(t *testing.T) {
 	for _, tc := range []struct {
 		bytes, budget uint64
-		tooLarge     bool
+		tooLarge      bool
 	}{
 		{800, 1000, false},
 		{801, 1000, true},
