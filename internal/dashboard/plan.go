@@ -103,18 +103,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	}
 	nodes = append([]placement{{Name: "Host", Endpoint: "Host", Layers: localLayers, WeightBytes: uint64(size) * uint64(localLayers) / uint64(meta.BlockCount), Budget: host}}, nodes...)
 
-	var kvBytes *uint64
-	if meta.EmbeddingLength > 0 && meta.HeadCount > 0 && meta.KVHeadCount > 0 && meta.KVHeadCount <= meta.HeadCount && meta.EmbeddingLength%meta.HeadCount == 0 && meta.BlockCount <= 4096 && meta.EmbeddingLength <= 1<<20 {
-		// F16 K and V tensors; architectures with other KV layouts remain unknown.
-		width := uint64(meta.EmbeddingLength/meta.HeadCount) * uint64(meta.KVHeadCount)
-		value := uint64(4) * uint64(settings.ContextTokens) * uint64(meta.BlockCount) * width
-		if settings.KVCacheType == "q8_0" {
-			value = (uint64(2)*uint64(settings.ContextTokens)*uint64(meta.BlockCount)*width*34 + 31) / 32
-		} else if settings.KVCacheType == "q4_0" {
-			value = (uint64(2)*uint64(settings.ContextTokens)*uint64(meta.BlockCount)*width*18 + 31) / 32
-		}
-		kvBytes = &value
-	}
+	kvBytes := estimateKVBytes(meta, settings)
 	samples := m.InferenceSamples()
 	for i := range nodes {
 		key := settings.Model

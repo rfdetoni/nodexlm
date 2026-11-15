@@ -8,10 +8,10 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
-// estimateTransientBytes is deliberately a lower-bound estimate of KV and
-// minimum activation buffers. Architectures with unknown KV layout return nil.
-func estimateTransientBytes(meta local.GGUFInfo, s Settings) *uint64 {
-	if s.ContextTokens <= 0 || meta.BlockCount == 0 || meta.BlockCount > 4096 ||
+// estimateKVBytes returns the shared, lower-bound KV estimate used by
+// admission and the plan preview. Unknown metadata stays unknown.
+func estimateKVBytes(meta local.GGUFInfo, s Settings) *uint64 {
+	if meta.BlockCount == 0 || meta.BlockCount > 4096 ||
 		meta.EmbeddingLength == 0 || meta.EmbeddingLength > 1<<20 ||
 		meta.HeadCount == 0 || meta.KVHeadCount == 0 ||
 		meta.KVHeadCount > meta.HeadCount || meta.EmbeddingLength%meta.HeadCount != 0 {
@@ -25,6 +25,19 @@ func estimateTransientBytes(meta local.GGUFInfo, s Settings) *uint64 {
 	case "q4_0":
 		kv = (uint64(2)*uint64(s.ContextTokens)*uint64(meta.BlockCount)*width*18 + 31) / 32
 	}
+	return &kv
+}
+
+// estimateTransientBytes adds a minimum activation allowance to KV.
+// Architectures with unknown KV layout return nil.
+func estimateTransientBytes(meta local.GGUFInfo, s Settings) *uint64 {
+	if s.ContextTokens <= 0 {
+		return nil
+	}
+	kv := estimateKVBytes(meta, s)
+	if kv == nil {
+		return nil
+	}
 	batch := s.BatchSize
 	if batch == 0 {
 		batch = 512 // Minimum provisional allowance, not the native full footprint.
@@ -33,8 +46,14 @@ func estimateTransientBytes(meta local.GGUFInfo, s Settings) *uint64 {
 		batch = s.UBatchSize
 	}
 	activation := uint64(batch) * uint64(meta.EmbeddingLength) * 4
-	estimated := kv + activation
+	estimated := *kv + activation
 	return &estimated
+}
+
+// Preserve the historical whole-model check, including integer rounding.
+// Placement admission has its own additional context/batch calculation.
+func modelExceedsBudget(modelBytes, budget uint64) bool {
+	return modelBytes > budget/115*100
 }
 
 // The per-node weight budget already reserves 20% of post-OS memory for

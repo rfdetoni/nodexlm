@@ -42,7 +42,7 @@ func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dash
 }
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
-	openAI := &compat.Handler{Forward: d.Manager.openAI, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference}
+	openAI := &compat.Handler{Forward: d.Manager.openAI, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout}
 	inferenceAPI := d.inference(openAI.ServeHTTP)
 	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
 	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
@@ -260,14 +260,23 @@ func (d *Dashboard) Handler() http.Handler {
 		mux.ServeHTTP(w, r)
 	}))
 }
+
+// bearerHash parses and hashes an Authorization bearer token once.
+func bearerHash(header string) ([32]byte, bool) {
+	if !strings.HasPrefix(header, "Bearer ") {
+		return [32]byte{}, false
+	}
+	return sha256.Sum256([]byte(strings.TrimPrefix(header, "Bearer "))), true
+}
+
 func (d *Dashboard) api(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		digest, ok := bearerHash(auth)
+		if !ok {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
-		digest := sha256.Sum256([]byte(strings.TrimPrefix(auth, "Bearer ")))
 		if subtle.ConstantTimeCompare(digest[:], d.admin[:]) != 1 {
 			if compat.IsPath(r.URL.Path) {
 				compat.Error(w, 401, "Invalid API key", "", "invalid_api_key")
@@ -321,9 +330,8 @@ func (d *Dashboard) SetAPIKey(key string) error {
 }
 func (d *Dashboard) inference(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		value := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		hash := sha256.Sum256([]byte(value))
-		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || (subtle.ConstantTimeCompare(hash[:], d.admin[:]) != 1 && !(d.apiEnabled && subtle.ConstantTimeCompare(hash[:], d.apiKey[:]) == 1)) {
+		hash, ok := bearerHash(r.Header.Get("Authorization"))
+		if !ok || (subtle.ConstantTimeCompare(hash[:], d.admin[:]) != 1 && !(d.apiEnabled && subtle.ConstantTimeCompare(hash[:], d.apiKey[:]) == 1)) {
 			if compat.IsPath(r.URL.Path) {
 				compat.Error(w, 401, "Invalid API key", "", "invalid_api_key")
 			} else {

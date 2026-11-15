@@ -13,6 +13,14 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
 
+// Use one bound for dashboard and OpenAI-compatible inference.
+func (m *Manager) inferenceTimeout() time.Duration {
+	if m.Settings().Distributed {
+		return 20 * time.Minute
+	}
+	return 4 * time.Minute
+}
+
 // Serialize only the native generation. Admission is cancellable,
 // so a disconnected client cannot hold the next request in a mutex queue.
 func (m *Manager) acquire(ctx context.Context) error {
@@ -115,10 +123,7 @@ func (d *Dashboard) chat(w http.ResponseWriter, r *http.Request) {
 	// Distributed prefill/first-token latency can exceed the legacy
 	// 3-minute backend Client.Timeout. Bound the whole request at the
 	// API boundary, retaining prompt cancellation and a finite deadline.
-	limit := 4 * time.Minute
-	if d.Manager.Settings().Distributed {
-		limit = 20 * time.Minute
-	}
+	limit := d.Manager.inferenceTimeout()
 	ctx, cancel := context.WithTimeout(r.Context(), limit)
 	defer cancel()
 	if req.Stream {

@@ -173,3 +173,51 @@ func TestAsyncLoadDoesNotBlockStatusAndReportsError(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestInferenceTimeoutFollowsDistributedSetting(t *testing.T) {
+	_, m := newTestUI(t)
+	if got := m.inferenceTimeout(); got != 4*time.Minute {
+		t.Fatalf("local inference timeout = %v", got)
+	}
+	s := Settings{Threads: 2, ContextTokens: 2048, GPULayers: "auto", Distributed: true}
+	if err := m.Update(s); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.inferenceTimeout(); got != 20*time.Minute {
+		t.Fatalf("distributed inference timeout = %v", got)
+	}
+}
+
+func TestAdminAndInferenceCredentialsStaySeparated(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewManager(dir, filepath.Join(dir, "models"), "llama-server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	adminToken, inferenceToken := strings.Repeat("a", 64), strings.Repeat("c", 64)
+	s, err := coordinator.New(adminToken, strings.Repeat("b", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.CloseRPC()
+	d := New(m, s, adminToken)
+	if err := d.SetAPIKey(inferenceToken); err != nil {
+		t.Fatal(err)
+	}
+	h := d.Handler()
+	for _, tc := range []struct {
+		path, key string
+		want      int
+	}{
+		{"/api/status", adminToken, 200},
+		{"/api/status", inferenceToken, 401},
+		{"/v1/models", inferenceToken, 200},
+		{"/v1/models", adminToken, 200},
+		{"/v1/models", strings.Repeat("z", 64), 401},
+	} {
+		if got := req(h, http.MethodGet, tc.path, tc.key, "", nil).Code; got != tc.want {
+			t.Errorf("%s with key prefix %q: got %d, want %d", tc.path, tc.key[:2], got, tc.want)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func request(h http.Handler, method, path, key, body string) *httptest.ResponseRecorder {
@@ -147,5 +148,28 @@ func TestInvalidNativeResponseCannotPanicOrSucceed(t *testing.T) {
 		if w.Code != 502 || !strings.Contains(w.Body.String(), `"type":"server_error"`) {
 			t.Fatal(raw, w.Code, w.Body)
 		}
+	}
+}
+
+func TestConfiguredInferenceTimeoutReachesNativeForward(t *testing.T) {
+	var remaining time.Duration
+	h := &Handler{
+		Timeout: func() time.Duration { return 20 * time.Minute },
+		Forward: func(ctx context.Context, _, _ string, _ []byte, receive func(int, http.Header, io.Reader) error) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("native forward has no deadline")
+			}
+			remaining = time.Until(deadline)
+			return receive(http.StatusOK, http.Header{}, strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+		},
+	}
+	w := request(h, http.MethodPost, "/v1/chat/completions", "a",
+		`{"model":"m","messages":[{"role":"user","content":"hello"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("response: %d %s", w.Code, w.Body.String())
+	}
+	if remaining < 19*time.Minute || remaining > 20*time.Minute {
+		t.Fatalf("configured timeout not passed through: %v", remaining)
 	}
 }
