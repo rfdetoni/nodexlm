@@ -62,7 +62,9 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 		return errors.New("insufficient available memory for another resident model")
 	}
 	meta, err := local.InspectGGUF(path)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if err = validatePlacementMemory(meta, settings, uint64(size), budget, nil); err != nil {
 		return err
 	}

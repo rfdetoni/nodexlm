@@ -171,7 +171,7 @@ func TestHybridBudgetDoesNotSumUnmappedMultipleGPUs(t *testing.T) {
 func TestAndroidGPUOnlyUsesOneSharedMemoryBudget(t *testing.T) {
 	d := protocol.Device{
 		Platform: "android", RAMBytes: 8 * GiB, AvailableRAMBytes: 5 * GiB,
-		GPUs: []protocol.GPUDevice{{MemoryType: "shared", VRAMBytes: 2 * GiB, FreeVRAMBytes: 2 * GiB}},
+		GPUs:    []protocol.GPUDevice{{MemoryType: "shared", VRAMBytes: 2 * GiB, FreeVRAMBytes: 2 * GiB}},
 		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu"}},
 	}
 	memory := RPCMemory(d)

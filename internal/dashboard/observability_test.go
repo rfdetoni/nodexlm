@@ -70,15 +70,21 @@ func TestLiveLocalSamplePreservesControlledHostBenchmark(t *testing.T) {
 func TestSampleCacheEvictsOldestLiveBeforeBenchmark(t *testing.T) {
 	m := &Manager{samples: make(map[string]InferenceSample)}
 	now := time.Now()
-	m.samples["old-live"] = InferenceSample{Model: "old-live", Kind: "live", MeasuredAt: now.Add(-30*time.Minute)}
+	m.samples["old-live"] = InferenceSample{Model: "old-live", Kind: "live", MeasuredAt: now.Add(-30 * time.Minute)}
 	for i := 0; i < 31; i++ {
 		key := fmt.Sprintf("bench-%d", i)
 		m.samples[key] = InferenceSample{Model: key, Kind: "benchmark", MeasuredAt: now.Add(-time.Minute)}
 	}
 	m.recordInference("new-live", []byte(`{"usage":{"completion_tokens":8},"timings":{"predicted_ms":1000}}`), time.Second)
-	if _, ok := m.samples["old-live"]; ok { t.Fatal("old live measurement was retained over benchmarks") }
-	if _, ok := m.samples["new-live"]; !ok { t.Fatal("new live measurement was dropped") }
-	if len(m.samples) != 32 { t.Fatalf("expected 32 samples, got %d", len(m.samples)) }
+	if _, ok := m.samples["old-live"]; ok {
+		t.Fatal("old live measurement was retained over benchmarks")
+	}
+	if _, ok := m.samples["new-live"]; !ok {
+		t.Fatal("new live measurement was dropped")
+	}
+	if len(m.samples) != 32 {
+		t.Fatalf("expected 32 samples, got %d", len(m.samples))
+	}
 }
 
 func TestParseInferenceSampleKeepsPrefillSeparateFromDecode(t *testing.T) {

@@ -155,7 +155,9 @@ func TestConfiguredInferenceTimeoutReachesNativeForward(t *testing.T) {
 	var remaining time.Duration
 	h := &Handler{
 		Timeout: func(model string) time.Duration {
-			if model != "m" { t.Fatalf("wrong timeout model %q", model) }
+			if model != "m" {
+				t.Fatalf("wrong timeout model %q", model)
+			}
 			return 20 * time.Minute
 		},
 		Forward: func(ctx context.Context, _, _ string, _ []byte, receive func(int, http.Header, io.Reader) error) error {

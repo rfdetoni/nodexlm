@@ -112,13 +112,19 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	const runs = 3
 	measurements := make([]InferenceSample, 0, runs)
 	key := model
-	if nodeID != "" { key += "@" + nodeID }
+	if nodeID != "" {
+		key += "@" + nodeID
+	}
 	for i := 0; i < runs; i++ {
 		start := time.Now()
 		raw, err := engine.Complete(ctx, request)
-		if err != nil { return InferenceSample{}, err }
+		if err != nil {
+			return InferenceSample{}, err
+		}
 		sample, ok := parseInferenceSample(key, raw, time.Since(start))
-		if !ok { return InferenceSample{}, errors.New("backend did not report a completion token count") }
+		if !ok {
+			return InferenceSample{}, errors.New("backend did not report a completion token count")
+		}
 		if len(measurements) > 0 && sample.RateBasis != measurements[0].RateBasis {
 			return InferenceSample{}, errors.New("benchmark runtime timing basis changed between runs")
 		}
@@ -130,13 +136,17 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	sample.Runs = runs
 	sample.MeasuredAt = time.Now()
 	sample.Fingerprint = m.benchmarkSignature(settings, model)
-	if sample.Fingerprint == "" { return InferenceSample{}, errors.New("model changed during benchmark") }
+	if sample.Fingerprint == "" {
+		return InferenceSample{}, errors.New("model changed during benchmark")
+	}
 	m.mu.Lock()
 	if sample.Fingerprint != m.benchmarkSignature(m.settings, model) {
 		m.mu.Unlock()
 		return InferenceSample{}, errors.New("runtime settings changed during benchmark")
 	}
-	if _, exists := m.samples[key]; !exists { m.pruneSamplesLocked(time.Now()) }
+	if _, exists := m.samples[key]; !exists {
+		m.pruneSamplesLocked(time.Now())
+	}
 	m.samples[key] = sample
 	err = m.persistBenchmarksLocked()
 	m.mu.Unlock()

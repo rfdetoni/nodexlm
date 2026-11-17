@@ -17,17 +17,23 @@ import (
 // bundled runtime revision. Missing or changed files invalidate the sample.
 func (m *Manager) benchmarkSignature(s Settings, model string) string {
 	path, err := modelPath(m.modelDir, model)
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() { return "" }
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
 	s.Model, s.Distributed, s.PlacementStrategy = "", false, ""
 	value, err := json.Marshal(struct {
-		Options Settings `json:"options"`
-		Bytes int64 `json:"bytes"`
-		Modified int64 `json:"modified"`
-		Runtime string `json:"runtime"`
+		Options  Settings `json:"options"`
+		Bytes    int64    `json:"bytes"`
+		Modified int64    `json:"modified"`
+		Runtime  string   `json:"runtime"`
 	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version})
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	sha := sha256.Sum256(value)
 	return fmt.Sprintf("%x", sha[:])
 }
@@ -41,7 +47,9 @@ func benchmarkModel(key string) string {
 
 func (m *Manager) loadBenchmarks() {
 	body, err := os.ReadFile(filepath.Join(m.dir, "benchmarks.json"))
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	var records []InferenceSample
 	if err := json.Unmarshal(body, &records); err != nil {
 		slog.Warn("Ignoring invalid benchmark cache", "error", err)
@@ -49,7 +57,9 @@ func (m *Manager) loadBenchmarks() {
 	}
 	now := time.Now()
 	for _, sample := range records {
-		if len(m.samples) >= 32 { break }
+		if len(m.samples) >= 32 {
+			break
+		}
 		if sample.Kind != "benchmark" || sample.TokensPerSecond <= 0 ||
 			sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour ||
 			sample.Fingerprint == "" ||
@@ -72,6 +82,8 @@ func (m *Manager) persistBenchmarksLocked() error {
 		}
 	}
 	body, err := json.Marshal(records)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return writePrivate(filepath.Join(m.dir, "benchmarks.json"), body)
 }

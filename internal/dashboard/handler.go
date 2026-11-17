@@ -31,13 +31,13 @@ import (
 var static embed.FS
 
 type Dashboard struct {
-	Manager    *Manager
-	Cluster    *coordinator.Server
-	admin      [32]byte
-	apiKey     [32]byte
-	apiEnabled bool
-	hardwareMu sync.Mutex
-	hardwareAt time.Time
+	Manager        *Manager
+	Cluster        *coordinator.Server
+	admin          [32]byte
+	apiKey         [32]byte
+	apiEnabled     bool
+	hardwareMu     sync.Mutex
+	hardwareAt     time.Time
 	hardwareReport protocol.Device
 }
 
