@@ -339,19 +339,6 @@ function renderNodeResources(devices) {
   area.append(card);
  }
 }
-let resourcePollBusy=false;
-async function refreshNodeResources() {
- if(resourcePollBusy || !token || $('app').hidden || document.hidden || $('view-cluster').hidden)return;
- resourcePollBusy=true;
- try {
-  const cluster=await api('/api/cluster');
-  renderNodeResources(cluster.devices);
-  $('resourceRefresh').textContent='Atualizado agora · heartbeats dos Guests a cada 15 s';
- } catch(error) {
-  $('resourceRefresh').textContent='Não foi possível atualizar: '+error.message;
- } finally {resourcePollBusy=false;}
-}
-
 async function refresh(){
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
  renderResidentModels(resident);
@@ -631,8 +618,6 @@ $('clearChat').addEventListener('click',()=>guard(async()=>{
 
 
 setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)},10000);
-// Only the Devices workspace polls resource telemetry. No background polling of hidden panels.
-setInterval(refreshNodeResources,5000);
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
  if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;

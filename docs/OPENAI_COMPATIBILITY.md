@@ -118,10 +118,11 @@ vectors = client.embeddings.create(
 
 ## Persistência, limites e escopo
 
+- Benchmarks de Host e Guests usam aquecimento e três execuções medidas, escolhendo a mediana de tokens/s. As amostras persistem por no máximo 24 horas em arquivo privado e são invalidadas quando o modelo ou as opções nativas mudam. O tempo de prefill nativo é distinto do TTFT real, que não é inferido de respostas não streaming.
 - Responses com store padrão/true ficam em RAM por até uma hora, com teto global de 256 respostas/32 MiB contabilizados. Entradas antigas podem ser removidas ao atingir o teto. Reiniciar o Host limpa esse histórico.
 - `store:false` não retém input/output. O cliente pode manter seu histórico e reenviar os itens em cada chamada. Não há persistência de prompts em disco por essa API.
 - Acesso ao histórico exige a mesma credencial que criou a resposta. A chave de inferência não ganha acesso a configurações, pareamento, revogação ou métricas administrativas.
-- Requests têm teto de 8 MiB; resposta JSON, 16 MiB; evento SSE, 1 MiB; geração, quatro minutos. O contexto e as capacidades do GGUF/runtime continuam sendo limites reais.
+- Requests têm teto de 8 MiB; resposta JSON, 16 MiB; evento SSE, 1 MiB; geração local tem limite de quatro minutos, e modelos com RPC efetivamente ativo têm limite de vinte minutos. O contexto e as capacidades do GGUF/runtime continuam sendo limites reais.
 - `target_node` continua como extensão para workers independentes de texto. Ferramentas/Responses usam o modelo do Host, que pode distribuir a execução por RPC. O JNI Android independente mantém seu contrato textual anterior.
 - Imagem, áudio, vídeo, arquivos de entrada, Realtime, batch, fine tuning e ferramentas hospedadas OpenAI não são fornecidos. Web search, computer use e file search devem ser implementados como funções do cliente, se necessários. Background/Conversations hospedadas retornam erro explícito; use input reenviado ou previous_response_id.
 - Não existe uma alegação de paridade com todos os serviços/modelos hospedados pela OpenAI, nem de compatibilidade garantida com todo cliente futuro. O escopo verificado é chat textual, ferramentas, agentes, Responses e embeddings locais.

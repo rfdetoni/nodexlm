@@ -401,6 +401,15 @@ class RpcGuestService : Service() {
             ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val charging = batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
             batteryStatus == BatteryManager.BATTERY_STATUS_FULL
+        // Advertise the native device order, not requested mode: Auto can
+        // fall back from Vulkan to CPU after backend initialization.
+        val selected = NativeRpc.selectedBackends()
+        val rpcDevices = when (selected) {
+            "cpu-vulkan" -> JSONArray().put("gpu").put("cpu")
+            "vulkan" -> JSONArray().put("gpu")
+            "cpu" -> JSONArray().put("cpu")
+            else -> JSONArray()
+        }
         val device = JSONObject()
             .put("status", if (draining.get()) "draining" else "online")
             .put("unavailable_reason", if (draining.get()) drainReason else "")
@@ -422,7 +431,7 @@ class RpcGuestService : Service() {
             // A CPU-only Guest must not make the Host allocate layers to GPU.
             // Only announce devices that survived native backend init. In
             // auto mode a failed Vulkan probe must not report a GPU to Host.
-            .put("gpus", if (!NativeRpc.selectedBackends().contains("vulkan")) JSONArray() else try {
+            .put("gpus", if (!selected.contains("vulkan")) JSONArray() else try {
                 val gpus = JSONObject(NativeRpc.inspect()).optJSONArray("gpus") ?: JSONArray()
                 for (i in 0 until gpus.length()) {
                     val gpu = gpus.optJSONObject(i) ?: continue
@@ -441,7 +450,8 @@ class RpcGuestService : Service() {
                 JSONArray()
             })
             .put("runtime", JSONObject()
-                .put("engine", "ggml-rpc-" + NativeRpc.selectedBackends())
+                .put("engine", "ggml-rpc-" + selected)
+                .put("rpc_devices", rpcDevices)
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
                 .put("benchmark", true)

@@ -21,9 +21,15 @@ type InferenceSample struct {
 	// native_decode uses the llama.cpp predicted_ms timing. When absent,
 	// rate includes prefill and first-token latency (end_to_end).
 	RateBasis string `json:"rate_basis,omitempty"`
+	// PromptMilliseconds is the native prefill timing, not an invented TTFT.
+	PromptMilliseconds  float64 `json:"prompt_ms,omitempty"`
+	ElapsedMilliseconds float64 `json:"elapsed_ms,omitempty"`
+	Runs                int     `json:"runs,omitempty"`
+	Fingerprint         string  `json:"fingerprint,omitempty"`
 }
 
-func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duration) {
+// parseInferenceSample is shared by live metrics and controlled benchmarks.
+func parseInferenceSample(model string, raw []byte, elapsed time.Duration) (InferenceSample, bool) {
 	var out struct {
 		Usage struct {
 			Completion int `json:"completion_tokens"`
@@ -37,59 +43,101 @@ func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duratio
 		Timings struct {
 			Tokens       int     `json:"predicted_n"`
 			Milliseconds float64 `json:"predicted_ms"`
+			PromptMS     float64 `json:"prompt_ms"`
 		} `json:"timings"`
 	}
 	if json.Unmarshal(raw, &out) != nil {
-		return
+		return InferenceSample{}, false
 	}
 	tokens := out.Usage.Completion
 	if tokens == 0 {
 		tokens = out.Usage.Output
 	}
-	if out.Usage.Prompt == 0 {
-		out.Usage.Prompt = out.Usage.Input
-	}
 	if tokens == 0 {
 		tokens = out.Timings.Tokens
 	}
 	if tokens <= 0 || tokens > 1<<20 {
-		return
+		return InferenceSample{}, false
+	}
+	prompt := out.Usage.Prompt
+	if prompt == 0 {
+		prompt = out.Usage.Input
 	}
 	seconds := elapsed.Seconds()
-	if out.Timings.Milliseconds > 0 {
-		seconds = out.Timings.Milliseconds / 1000
-	}
-	if seconds <= 0 {
-		return
-	}
 	basis := "end_to_end"
 	if out.Timings.Milliseconds > 0 {
+		seconds = out.Timings.Milliseconds / 1000
 		basis = "native_decode"
 	}
+	if seconds <= 0 {
+		return InferenceSample{}, false
+	}
+	return InferenceSample{
+		Model: model, MeasuredAt: time.Now(), Tokens: tokens, PromptTokens: prompt,
+		CachedTokens: out.Usage.Details.Cached, Seconds: seconds,
+		TokensPerSecond: float64(tokens) / seconds,
+		Kind:            "live", RateBasis: basis, PromptMilliseconds: out.Timings.PromptMS,
+		ElapsedMilliseconds: elapsed.Seconds() * 1000,
+	}, true
+}
+
+// pruneSamplesLocked keeps a small, deterministic retention policy, preferring
+// live measurements for eviction before valid benchmark comparisons.
+func (m *Manager) pruneSamplesLocked(now time.Time) {
+	for key, sample := range m.samples {
+		if sample.MeasuredAt.IsZero() {
+			continue
+		}
+		age := now.Sub(sample.MeasuredAt)
+		ttl := time.Hour
+		if sample.Kind == "benchmark" {
+			ttl = 24 * time.Hour
+		}
+		if age < 0 || age >= ttl {
+			delete(m.samples, key)
+		}
+	}
+	if len(m.samples) < 32 {
+		return
+	}
+	var oldest string
+	for key, sample := range m.samples {
+		if oldest == "" {
+			oldest = key
+			continue
+		}
+		current := m.samples[oldest]
+		if (sample.Kind != "benchmark" && current.Kind == "benchmark") ||
+			(sample.Kind == current.Kind && (sample.MeasuredAt.Before(current.MeasuredAt) ||
+				(sample.MeasuredAt.Equal(current.MeasuredAt) && key < oldest))) {
+			oldest = key
+		}
+	}
+	delete(m.samples, oldest)
+}
+
+func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duration) {
+	sample, ok := parseInferenceSample(model, raw, elapsed)
+	if !ok {
+		return
+	}
 	m.mu.Lock()
-	// A live distributed result is not evidence of Host-only performance;
-	// keep it distinct from local and per-Guest benchmark samples.
+	// A live distributed result is not evidence of Host-only performance.
 	if m.engine != nil {
 		if len(m.engine.RPCServers) > 0 {
-			model += "@cluster"
+			sample.Model += "@cluster"
 		} else {
-			model += "@live-host"
+			sample.Model += "@live-host"
 		}
 	}
-	sample := InferenceSample{Model: model, MeasuredAt: time.Now(), Tokens: tokens,
-		PromptTokens: out.Usage.Prompt, CachedTokens: out.Usage.Details.Cached,
-		Seconds: seconds, TokensPerSecond: float64(tokens) / seconds,
-		Kind: "live", RateBasis: basis}
-	if len(m.samples) >= 32 {
-		for name := range m.samples {
-			delete(m.samples, name)
-			break
-		}
+	if _, exists := m.samples[sample.Model]; !exists {
+		m.pruneSamplesLocked(time.Now())
 	}
-	m.samples[model] = sample
-	m.generationTokens += uint64(tokens)
+	m.samples[sample.Model] = sample
+	m.generationTokens += uint64(sample.Tokens)
 	m.mu.Unlock()
 }
+
 func (m *Manager) InferenceSamples() []InferenceSample {
 	m.mu.Lock()
 	samples := []InferenceSample{}

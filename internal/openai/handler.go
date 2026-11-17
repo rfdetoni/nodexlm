@@ -21,7 +21,7 @@ type Handler struct {
 	Target  http.HandlerFunc
 	Models  func() []string
 	Observe func(string, []byte, time.Duration)
-	Timeout func() time.Duration
+	Timeout func(string) time.Duration
 	store   responseStore
 }
 
@@ -139,7 +139,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	started := false
 	limit := 4 * time.Minute
 	if h.Timeout != nil {
-		limit = h.Timeout()
+		limit = h.Timeout(model)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), limit)
 	defer cancel()

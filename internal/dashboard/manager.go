@@ -129,6 +129,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err = m.validate(m.settings); err != nil {
 		return nil, fmt.Errorf("runtime settings: %w", err)
 	}
+	m.loadBenchmarks()
 	m.httpClient = safedownload.Client()
 	return m, nil
 }
