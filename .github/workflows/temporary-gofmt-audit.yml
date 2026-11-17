@@ -1,0 +1,26 @@
+name: Temporary audit branch gofmt
+on:
+  push:
+    branches:
+      - fix/performance-stability-audit-20261117
+permissions:
+  contents: write
+jobs:
+  format:
+    if: github.repository == 'rfdetoni/nodexlm'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: true
+      - name: Run gofmt on the audit changes
+        run: |
+          gofmt -w internal/clusterplan/plan_test.go internal/dashboard/benchmark.go internal/dashboard/benchmarks_cache.go internal/dashboard/benchmarks_cache_test.go internal/dashboard/handler.go internal/dashboard/observability.go internal/dashboard/observability_test.go internal/dashboard/pool.go internal/openai/handler_test.go
+          git add -u
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'style: normalize audit Go formatting'
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi
