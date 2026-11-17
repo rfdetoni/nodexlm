@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
@@ -35,6 +36,25 @@ type Dashboard struct {
 	admin      [32]byte
 	apiKey     [32]byte
 	apiEnabled bool
+	hardwareMu sync.Mutex
+	hardwareAt time.Time
+	hardwareReport protocol.Device
+}
+
+// The UI uses one short-lived snapshot for duplicate cluster/catalog polls.
+// Memory admission for loading models continues collecting live hardware.
+func (d *Dashboard) hostSnapshot() protocol.Device {
+	d.hardwareMu.Lock()
+	defer d.hardwareMu.Unlock()
+	if d.hardwareAt.IsZero() || time.Since(d.hardwareAt) >= 8*time.Second {
+		name, _ := os.Hostname()
+		d.hardwareReport = hardware.Collect("Host: "+name, nil)
+		d.hardwareAt = time.Now()
+	}
+	host := d.hardwareReport
+	host.Status = "online"
+	host.LastSeen = time.Now()
+	return host
 }
 
 func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dashboard {
@@ -124,20 +144,14 @@ func (d *Dashboard) Handler() http.Handler {
 		reply(w, 200, map[string]any{"runtime": d.Manager.State(), "settings": d.Manager.Settings(), "download": d.Manager.DownloadState()})
 	}))
 	mux.HandleFunc("GET /api/cluster", d.api(func(w http.ResponseWriter, r *http.Request) {
-		name, _ := os.Hostname()
-		host := hardware.Collect("Host: "+name, nil)
-		host.Status = "online"
-		host.LastSeen = time.Now()
+		host := d.hostSnapshot()
 		nodes := d.Cluster.DevicesSnapshot()
 		devices := append([]protocol.Device{host}, nodes...)
 		summary := clusterplan.Aggregate(devices, time.Now())
 		reply(w, 200, map[string]any{"resources": summary, "rpc_guests": d.Cluster.RPCNodes(), "rpc_stats": d.Cluster.RPCStats(), "devices": devices})
 	}))
 	mux.HandleFunc("GET /api/catalog", d.api(func(w http.ResponseWriter, r *http.Request) {
-		name, _ := os.Hostname()
-		host := hardware.Collect("Host: "+name, nil)
-		host.Status = "online"
-		host.LastSeen = time.Now()
+		host := d.hostSnapshot()
 		summary := clusterplan.Aggregate(append([]protocol.Device{host}, d.Cluster.DevicesSnapshot()...), time.Now())
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()

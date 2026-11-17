@@ -142,12 +142,13 @@ func TestSharedGPUHybridNeverDoubleCountsRAM(t *testing.T) {
 		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu", "cpu"}},
 	}
 	memory := RPCMemory(d)
-	if memory.GPU != 0 || memory.RAM == 0 || Budget(d) != memory.RAM {
+	if memory.GPU == 0 || memory.RAM == 0 || Budget(d) != memory.RAM+memory.GPU ||
+		Budget(d) > (5*GiB-GiB)*80/100 {
 		t.Fatalf("shared VRAM was double-counted: %+v total %d", memory, Budget(d))
 	}
 	d.Platform = "linux"
 	d.GPUs[0].MemoryType = "" // Unknown memory class cannot be assumed discrete.
-	if RPCMemory(d).GPU != 0 || Budget(d) != memory.RAM {
+	if RPCMemory(d).GPU != 0 || Budget(d) != (5*GiB-GiB)*80/100 {
 		t.Fatal("unknown GPU memory was added as dedicated VRAM")
 	}
 }
@@ -162,5 +163,28 @@ func TestHybridBudgetDoesNotSumUnmappedMultipleGPUs(t *testing.T) {
 	}
 	if RPCMemory(d).GPU >= 6*GiB {
 		t.Fatal("unmapped GPU cards were pooled into one native device's VRAM")
+	}
+}
+
+// Android Auto exposes one Vulkan device, backed by the measured shared heap.
+// Unknown heap telemetry must not be promoted into imaginary VRAM.
+func TestAndroidGPUOnlyUsesOneSharedMemoryBudget(t *testing.T) {
+	d := protocol.Device{
+		Platform: "android", RAMBytes: 8 * GiB, AvailableRAMBytes: 5 * GiB,
+		GPUs: []protocol.GPUDevice{{MemoryType: "shared", VRAMBytes: 2 * GiB, FreeVRAMBytes: 2 * GiB}},
+		Runtime: protocol.RuntimeCapability{RPCDevices: []string{"gpu"}},
+	}
+	memory := RPCMemory(d)
+	want := (2*GiB - 256*MiB) * 80 / 100
+	if memory.RAM != 0 || memory.GPU != want || Budget(d) != want {
+		t.Fatalf("Android Vulkan budget must be bounded by shared GPU heap: %+v total=%d", memory, Budget(d))
+	}
+	d.GPUs = nil
+	if Budget(d) != 0 {
+		t.Fatal("GPU-only Android announced capacity without measured free Vulkan heap")
+	}
+	d.Runtime.RPCDevices = []string{"cpu"}
+	if Budget(d) != (5*GiB-GiB)*80/100 {
+		t.Fatal("Android CPU budget should continue using allocatable system RAM")
 	}
 }

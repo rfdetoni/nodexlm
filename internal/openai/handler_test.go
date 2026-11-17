@@ -154,7 +154,10 @@ func TestInvalidNativeResponseCannotPanicOrSucceed(t *testing.T) {
 func TestConfiguredInferenceTimeoutReachesNativeForward(t *testing.T) {
 	var remaining time.Duration
 	h := &Handler{
-		Timeout: func() time.Duration { return 20 * time.Minute },
+		Timeout: func(model string) time.Duration {
+			if model != "m" { t.Fatalf("wrong timeout model %q", model) }
+			return 20 * time.Minute
+		},
 		Forward: func(ctx context.Context, _, _ string, _ []byte, receive func(int, http.Header, io.Reader) error) error {
 			deadline, ok := ctx.Deadline()
 			if !ok {

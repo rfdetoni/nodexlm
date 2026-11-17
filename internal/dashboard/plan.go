@@ -130,9 +130,6 @@ func (m *Manager) Plan() (map[string]any, error) {
 			bottleneck = "network-advisory"
 		}
 	}
-	if !settings.Distributed && uint64(size) > host {
-		bottleneck = "host-memory"
-	}
 	kvType := settings.KVCacheType
 	if kvType == "" {
 		kvType = "f16"

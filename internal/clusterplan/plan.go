@@ -104,6 +104,42 @@ func RPCMemory(d protocol.Device) RPCDeviceMemory {
 			return RPCDeviceMemory{}
 		}
 	}
+	if d.Platform == "android" && hasGPU {
+		// Vulkan on Android uses the same physical RAM as the CPU. Use the
+		// smaller of measured free Vulkan heap and allocatable system RAM;
+		// never add the two pools as if VRAM were dedicated.
+		var heap uint64
+		for _, gpu := range d.GPUs {
+			if gpu.MemoryType != "shared" || gpu.FreeVRAMBytes == 0 {
+				continue
+			}
+			free := gpu.FreeVRAMBytes
+			if gpu.VRAMBytes != 0 && free > gpu.VRAMBytes {
+				free = gpu.VRAMBytes
+			}
+			if free > 256*MiB {
+				usable := (free - 256*MiB) * 80 / 100
+				if usable > heap {
+					heap = usable
+				}
+			}
+		}
+		if heap > budget.RAM {
+			heap = budget.RAM
+		}
+		if hasCPU {
+			// Explicit hybrid mode partitions one shared pool. Without a
+			// partition, the Host could oversubscribe the same Android RAM.
+			if heap > budget.RAM*3/4 {
+				heap = budget.RAM * 3 / 4
+			}
+			budget.RAM -= heap
+		} else {
+			budget.RAM = 0
+		}
+		budget.GPU = heap
+		return budget
+	}
 	if !hasCPU {
 		budget.RAM = 0
 	}

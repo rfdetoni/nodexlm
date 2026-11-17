@@ -54,25 +54,17 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	// OS-available memory already reflects loaded model allocations. Subtracting
+	// the resident GGUF sizes again penalizes them twice. Use a fresh hardware
+	// sample and the same context/batch admission guard as primary loads.
 	budget := clusterplan.Budget(hardware.Collect("Host", nil))
-	// Free reports can lag a prior distributed load. Subtract resident weights
-	// again as a conservative reservation rather than overcommitting stale RAM.
-	for _, model := range m.LoadedModels() {
-		p, e := modelPath(m.modelDir, model)
-		if e != nil {
-			return e
-		}
-		n, e := local.ModelSize(p)
-		if e != nil {
-			return e
-		}
-		if uint64(n) >= budget {
-			return errors.New("no free budget for another model")
-		}
-		budget -= uint64(n)
-	}
 	if modelExceedsBudget(uint64(size), budget) {
 		return errors.New("insufficient available memory for another resident model")
+	}
+	meta, err := local.InspectGGUF(path)
+	if err != nil { return err }
+	if err = validatePlacementMemory(meta, settings, uint64(size), budget, nil); err != nil {
+		return err
 	}
 	sum := sha256.Sum256([]byte(name))
 	child, err := NewManager(filepath.Join(m.dir, "resident", fmt.Sprintf("%x", sum[:12])), m.modelDir, m.binary)
