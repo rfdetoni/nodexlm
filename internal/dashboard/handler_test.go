@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
+	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
 func newTestUI(t *testing.T) (http.Handler, *Manager) {
@@ -176,15 +177,25 @@ func TestAsyncLoadDoesNotBlockStatusAndReportsError(t *testing.T) {
 
 func TestInferenceTimeoutFollowsDistributedSetting(t *testing.T) {
 	_, m := newTestUI(t)
-	if got := m.inferenceTimeout(); got != 4*time.Minute {
+	if got := m.inferenceTimeout(""); got != 4*time.Minute {
 		t.Fatalf("local inference timeout = %v", got)
 	}
 	s := Settings{Threads: 2, ContextTokens: 2048, GPULayers: "auto", Distributed: true}
 	if err := m.Update(s); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.inferenceTimeout(); got != 20*time.Minute {
-		t.Fatalf("distributed inference timeout = %v", got)
+	if got := m.inferenceTimeout(""); got != 4*time.Minute {
+		t.Fatalf("saved distribution preference must not extend local timeout: %v", got)
+	}
+	m.mu.Lock()
+	m.engine = &local.Managed{RPCServers: []string{"127.0.0.1:50052"}}
+	m.current = "remote.gguf"
+	m.mu.Unlock()
+	if got := m.inferenceTimeout("remote.gguf"); got != 20*time.Minute {
+		t.Fatalf("active distributed timeout = %v", got)
+	}
+	if got := m.inferenceTimeout("resident.gguf"); got != 4*time.Minute {
+		t.Fatalf("local resident timeout = %v", got)
 	}
 }
 

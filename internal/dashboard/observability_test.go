@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -63,5 +64,27 @@ func TestLiveLocalSamplePreservesControlledHostBenchmark(t *testing.T) {
 	}
 	if got := m.samples["small.gguf@live-host"]; got.TokensPerSecond != 0.5 || got.Kind != "live" {
 		t.Fatalf("missing live Host metric: %+v", got)
+	}
+}
+
+func TestSampleCacheEvictsOldestLiveBeforeBenchmark(t *testing.T) {
+	m := &Manager{samples: make(map[string]InferenceSample)}
+	now := time.Now()
+	m.samples["old-live"] = InferenceSample{Model: "old-live", Kind: "live", MeasuredAt: now.Add(-30*time.Minute)}
+	for i := 0; i < 31; i++ {
+		key := fmt.Sprintf("bench-%d", i)
+		m.samples[key] = InferenceSample{Model: key, Kind: "benchmark", MeasuredAt: now.Add(-time.Minute)}
+	}
+	m.recordInference("new-live", []byte(`{"usage":{"completion_tokens":8},"timings":{"predicted_ms":1000}}`), time.Second)
+	if _, ok := m.samples["old-live"]; ok { t.Fatal("old live measurement was retained over benchmarks") }
+	if _, ok := m.samples["new-live"]; !ok { t.Fatal("new live measurement was dropped") }
+	if len(m.samples) != 32 { t.Fatalf("expected 32 samples, got %d", len(m.samples)) }
+}
+
+func TestParseInferenceSampleKeepsPrefillSeparateFromDecode(t *testing.T) {
+	got, ok := parseInferenceSample("m.gguf", []byte(`{"usage":{"completion_tokens":16},"timings":{"prompt_ms":2000,"predicted_ms":8000}}`), 11*time.Second)
+	if !ok || got.RateBasis != "native_decode" || got.TokensPerSecond != 2 ||
+		got.PromptMilliseconds != 2000 || got.ElapsedMilliseconds != 11000 {
+		t.Fatalf("unreliable native timing breakdown: %+v valid=%v", got, ok)
 	}
 }

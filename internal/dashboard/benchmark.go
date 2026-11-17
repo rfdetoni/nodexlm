@@ -11,6 +11,15 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
 
+// medianInferenceSample chooses a real measured run, not an average that
+// could mask a first-token or scheduling outlier.
+func medianInferenceSample(samples []InferenceSample) InferenceSample {
+	sort.SliceStable(samples, func(i, j int) bool {
+		return samples[i].TokensPerSecond < samples[j].TokensPerSecond
+	})
+	return samples[len(samples)/2]
+}
+
 // BenchmarkInference runs the same bounded text workload locally or on one
 // authenticated RPC Guest with the configured context and runtime options.
 // Report decode measurements separately from live end-to-end timings.
@@ -116,10 +125,7 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 		measurements = append(measurements, sample)
 	}
 	// A median resists a single noisy network, thermal or scheduling outlier.
-	sort.Slice(measurements, func(i, j int) bool {
-		return measurements[i].TokensPerSecond < measurements[j].TokensPerSecond
-	})
-	sample := measurements[runs/2]
+	sample := medianInferenceSample(measurements)
 	sample.Kind = "benchmark"
 	sample.Runs = runs
 	sample.MeasuredAt = time.Now()
