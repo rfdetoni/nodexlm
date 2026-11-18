@@ -219,7 +219,7 @@
     <string name="updates_beta_verified">SHA-256 do APK beta validado.</string>
     <string name="updates_beta_failed">APK beta indisponível: %1$s</string>
     <string name="decision_worker_title">Worker de decisão (System One)</string>
-    <string name="decision_worker_help">Para executar decisões neste Android, inicie um runtime System One compatível localmente, como uma compilação Android do Ollaya. O Host só enviará tarefas se o modelo estiver disponível. Para compartilhar camadas GGUF, utilize o Guest RPC.</string>
+    <string name="decision_worker_help">Para executar Laya ONNX neste Android, importe o bundle de pesos e calibração: o runtime já está incluído no APK. Para outros modelos, é possível usar um serviço System One local separado. O Host só envia decisões a modelos disponíveis.</string>
     <string name="decision_worker_model">Modelo de decisão, ex.: ollaya/laya:multilingual</string>
     <string name="decision_worker_port">Porta do runtime local (padrão 11435)</string>
     <string name="decision_worker_save">Salvar configuração do worker de decisão</string>
