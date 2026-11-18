@@ -39,7 +39,7 @@ class LayaDecisionProtocolTest {
         }
         val state = "My parcel arrived late"
         for (q in questions) {
-            val encoded = LayaDecisionProtocol.encode(config, state, q, tokenizer)
+            val encoded = LayaDecisionProtocol.encode(config, state, q, tokenize = tokenizer)
             assertEquals(config.cls, encoded.ids.first())
             assertEquals(config.sep, encoded.ids.last())
             assertEquals(q.options.size, encoded.markers.size)
