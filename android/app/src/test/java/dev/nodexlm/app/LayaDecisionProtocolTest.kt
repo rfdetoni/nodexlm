@@ -49,6 +49,27 @@ class LayaDecisionProtocolTest {
         }
     }
 
+    @Test fun conversationStatesKeepNewestTokensWhenTruncated() {
+        val question = LayaDecisionProtocol.Question(
+            id = "route", type = "choice", instructions = "Route",
+            labels = listOf("a", "b"), options = listOf("a", "b"),
+            scoreValues = emptyList()
+        )
+        val shortConfig = config.copy(maxLen = 64, headMaxLen = 32)
+        val state = "older ".repeat(100) + "newest"
+        val tokenizer: (String) -> LongArray = { text ->
+            text.split(" ").filter { it.isNotBlank() }
+                .map { if (it == "newest") 9999L else 12L }.toLongArray()
+        }
+        val conversation = LayaDecisionProtocol.encode(
+            shortConfig, state, question, keepRecentState = true, tokenize = tokenizer)
+        val plainText = LayaDecisionProtocol.encode(
+            shortConfig, state, question, keepRecentState = false, tokenize = tokenizer)
+        assertEquals(9999L, conversation.ids[conversation.ids.size - 2])
+        assertFalse(plainText.ids.contains(9999L))
+        assertEquals(101, conversation.stateTokens)
+    }
+
     @Test fun calibrationClampsExtremeTemperatures() {
         val calibration = JSONObject("""
             {"temperature":[1.5,2.0,3.0],"temperature_by_options":
