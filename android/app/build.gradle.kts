@@ -52,4 +52,12 @@ android {
     packaging { jniLibs { useLegacyPackaging = false } }
 }
 
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    // ONNX inference executes inside ComputeService; no external Ollaya server.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
+    // Match Android JNI tokenizer and Java API versions. Both ABIs are packaged
+    // by the Android variant; HF tokenizer.json is not reimplemented approximately.
+    implementation("ai.djl.huggingface:tokenizers:0.33.0")
+    implementation("ai.djl.android:tokenizer-native:0.33.0")
+    testImplementation("junit:junit:4.13.2")
+}
