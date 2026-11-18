@@ -59,13 +59,15 @@ internal object DecisionModelStore {
     private fun directoryPath(dir: File) = dir.parentFile!!.canonicalFile
 
     /** Finds a locally imported model by its *exact* advertised alias. */
-    fun find(context: Context, alias: String): Bundle? = try {
-        val root = directory(context).canonicalFile
-        val dir = File(root, folder(alias)).canonicalFile
-        if (dir.parentFile != root) return null
-        val graph = graphNames.asSequence().map { File(dir, it) }.firstOrNull { it.isFile } ?: return null
-        Bundle(alias, dir, graph).takeIf(::valid)
-    } catch (_: Exception) { null }
+    fun find(context: Context, alias: String): Bundle? {
+        return try {
+            val root = directory(context).canonicalFile
+            val dir = File(root, folder(alias)).canonicalFile
+            if (dir.parentFile != root) return null
+            val graph = graphNames.asSequence().map { File(dir, it) }.firstOrNull { it.isFile } ?: return null
+            Bundle(alias, dir, graph).takeIf(::valid)
+        } catch (_: Exception) { null }
+    }
 
     fun selected(context: Context): Bundle? {
         val name = context.getSharedPreferences("nodexlm", Context.MODE_PRIVATE)
