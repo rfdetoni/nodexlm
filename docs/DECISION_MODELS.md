@@ -101,3 +101,8 @@ No APK, abra **Processamento → Worker de decisão**, informe o nome exato do m
 - Os resultados devem ser JSON tipado válido. Cancelamento, timeout, limites de entrada e autenticação de nós são preservados. O sistema não transforma scores em decisões de autorização.
 - Os modelos não são automaticamente copiados entre nós; o modelo precisa estar disponível no executor escolhido.
 - Os workers atuam somente na API de decisão, sem executar ferramentas ou ações externas. Não há suporte a inferência ONNX dividida por camadas.
+
+
+### Android — ONNX integrado
+
+O APK contém ONNX Runtime e tokenizador Hugging Face para bundles **Laya** (`laya-markers-v1`). Importe localmente o modelo, o tokenizador e a calibração em **Processamento → Worker de decisão → Importar arquivos do modelo ONNX**. Nenhum servidor Ollaya separado é necessário para executar Laya. O modo HTTP loopback continua opcional para outros executores. [Guia de ONNX no APK](ANDROID_EMBEDDED_DECISIONS.md).
