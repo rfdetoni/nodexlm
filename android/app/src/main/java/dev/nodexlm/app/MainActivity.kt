@@ -731,6 +731,8 @@ class MainActivity : Activity() {
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),100)
         try {
+            // Avoid competing for phone RAM with the tensor-RPC server.
+            startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
             startForegroundService(Intent(this,ComputeService::class.java).setAction(ComputeService.START))
             setStatus(getString(R.string.processing_started,file?.name ?: decisionModel))
         }catch(e:Exception){setStatus(getString(R.string.start_failed,e.message))}
