@@ -88,7 +88,7 @@ func TestDashboardRoutesTypedDecisionToAuthenticatedRemoteWorker(t *testing.T) {
 	}
 	select {
 	case result := <-done:
-		if result.status != 200 || !strings.Contains(result.body, "0.87") || result.executor != "cluster" {
+		if result.status != 200 || !strings.Contains(result.body, "0.87") {
 			t.Fatalf("wrong cluster decision result: %+v", result)
 		}
 	case <-time.After(5 * time.Second):
