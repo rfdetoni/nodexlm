@@ -42,19 +42,23 @@ func TestDecisionEngineProbesModelAndPreservesTypedJSON(t *testing.T) {
 			}
 			fmt.Fprint(w, `{"answers":{"urgent":{"noul":0.83}}}`)
 		default:
-			http.NotFound(w,r)
+			http.NotFound(w, r)
 		}
 	}))
 	defer upstream.Close()
 	engine, err := NewLocalDecisionEngine(upstream.URL)
-	if err != nil { t.Fatal(err) }
-	if err := engine.Check(context.Background(),"ollaya/laya:multilingual"); err != nil {
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.Check(context.Background(),"unknown"); err == nil { t.Fatal("unavailable model advertised") }
-	response, err := engine.Decide(context.Background(),"ollaya/laya:multilingual",
+	if err := engine.Check(context.Background(), "ollaya/laya:multilingual"); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Check(context.Background(), "unknown"); err == nil {
+		t.Fatal("unavailable model advertised")
+	}
+	response, err := engine.Decide(context.Background(), "ollaya/laya:multilingual",
 		json.RawMessage(`{"state":"Urgent","questions":{"urgent":{"type":"noul","instructions":"urgent?"}}}`))
 	if err != nil || string(response) != `{"answers":{"urgent":{"noul":0.83}}}` || called != 1 {
-		t.Fatalf("incorrect typed response %s, %v, calls=%d", response,err,called)
+		t.Fatalf("incorrect typed response %s, %v, calls=%d", response, err, called)
 	}
 }
