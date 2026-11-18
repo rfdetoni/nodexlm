@@ -114,7 +114,9 @@ internal object EmbeddedDecisionRuntime {
         var tokenCount = 0
         for (q in questions) {
             if (Thread.currentThread().isInterrupted) error("Decision interrupted")
-            val encoded = LayaDecisionProtocol.encode(loaded.config, state, q) { input ->
+            val encoded = LayaDecisionProtocol.encode(
+                loaded.config, state, q, rawState is org.json.JSONArray
+            ) { input ->
                 loaded.tokenizer.encode(input, false, false).ids
             }
             val slots = max(q.labels.size, loaded.config.minMarkers)
