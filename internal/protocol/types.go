@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package protocol
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const APIVersion = "v1"
 
@@ -74,6 +77,7 @@ type Device struct {
 	GPUs            []GPUDevice       `json:"gpus,omitempty"`
 	Runtime         RuntimeCapability `json:"runtime"`
 	Models          []string          `json:"models,omitempty"`
+	DecisionModels  []string          `json:"decision_models,omitempty"`
 	LastSeen        time.Time         `json:"last_seen"`
 	// Authenticated Guest may withdraw from new placements (draining).
 	Status            string `json:"status"`
@@ -94,6 +98,8 @@ type Job struct {
 	ID        string      `json:"id"`
 	NodeID    string      `json:"node_id,omitempty"`
 	Request   ChatRequest `json:"request"`
+	Kind      string          `json:"kind,omitempty"`
+	Decision  json.RawMessage `json:"decision,omitempty"`
 	Status    string      `json:"status"`
 	Created   time.Time   `json:"created_at"`
 	Started   *time.Time  `json:"started_at,omitempty"`
