@@ -228,4 +228,7 @@
     <string name="decision_worker_saved">Decision worker settings saved</string>
     <string name="decision_worker_ready">System One runtime and model available</string>
     <string name="decision_worker_offline">Local System One runtime or model not available</string>
+    <string name="decision_worker_key">Local runtime API key (optional, stored encrypted)</string>
+    <string name="decision_worker_clear_key">Clear local runtime API key</string>
+    <string name="decision_worker_key_cleared">Local runtime API key cleared</string>
 </resources>
