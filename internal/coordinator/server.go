@@ -177,7 +177,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 func validDevice(d protocol.Device) bool {
 	if len(d.Name) == 0 || len(d.Name) > 100 ||
 		len(d.Platform) == 0 || len(d.Platform) > 30 ||
-		len(d.Architecture) > 100 || len(d.Models) > 128 ||
+		len(d.Architecture) > 100 || len(d.Models) > 128 || len(d.DecisionModels) > 32 ||
 		len(d.GPUs) > 16 || d.CPUCount < 1 || d.CPUCount > 4096 ||
 		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
 		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
@@ -189,6 +189,11 @@ func validDevice(d protocol.Device) bool {
 	}
 	for _, m := range d.Models {
 		if len(m) < 1 || len(m) > 256 {
+			return false
+		}
+	}
+	for _, m := range d.DecisionModels {
+		if !ValidDecisionModel(m) || m == "*" {
 			return false
 		}
 	}
@@ -280,7 +285,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	if !parse(w, r, &req) {
 		return
 	}
-	if len(req.Models) > 128 || len(req.GPUs) > 16 ||
+	if len(req.Models) > 128 || len(req.DecisionModels) > 32 || len(req.GPUs) > 16 ||
 		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
 		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(req) || !validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
@@ -292,6 +297,12 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	for _, model := range req.Models {
 		if len(model) == 0 || len(model) > 256 {
 			fail(w, 400, "invalid model filename")
+			return
+		}
+	}
+	for _, model := range req.DecisionModels {
+		if !ValidDecisionModel(model) || model == "*" {
+			fail(w, 400, "invalid decision model")
 			return
 		}
 	}
@@ -316,6 +327,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		n.device.LastSeen = time.Now()
 		n.device.Status = "online"
 		n.device.Models = append([]string(nil), req.Models...)
+		n.device.DecisionModels = append([]string(nil), req.DecisionModels...)
 		// Lease updates are partial and may come from older Guest clients.
 		// Keep the most recent measured values when the lease omits them.
 		if req.CPUUsagePercent != nil {
@@ -372,9 +384,13 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 				if j.Request.TargetNode != "" && j.Request.TargetNode != id {
 					continue
 				}
-				if !modelAvailable(req.Models, j.Request.Model) {
+				if j.Kind == "decision" {
+				if !modelAvailable(req.DecisionModels, j.Request.Model) {
 					continue
 				}
+			} else if !modelAvailable(req.Models, j.Request.Model) {
+				continue
+			}
 				s.queue = append(s.queue[:i], s.queue[i+1:]...)
 				now := time.Now()
 				j.Status = "running"
@@ -437,6 +453,10 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		n.active = ""
 		n.device.Busy = false
 		respond(w, 200, map[string]string{"status": "cancelled"})
+		return
+	}
+	if j.Kind == "decision" && out.Error == "" && (!json.Valid([]byte(out.Result)) || out.Result == "") {
+		fail(w, 400, "invalid decision JSON result")
 		return
 	}
 	now := time.Now()
@@ -688,6 +708,7 @@ func (s *Server) DevicesSnapshot() []protocol.Device {
 		d := n.device
 		d.GPUs = append([]protocol.GPUDevice(nil), d.GPUs...)
 		d.Models = append([]string(nil), d.Models...)
+		d.DecisionModels = append([]string(nil), d.DecisionModels...)
 		d.Runtime.RPCDevices = append([]string(nil), d.Runtime.RPCDevices...)
 		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
