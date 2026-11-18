@@ -44,16 +44,21 @@ internal object NodeSecrets {
         return Base64.encodeToString(packed, Base64.NO_WRAP)
     }
 
+    /** Decrypts an application-scoped secret encrypted by encrypt(). */
+    fun decrypt(encoded: String): String {
+        val packed = Base64.decode(encoded, Base64.DEFAULT)
+        require(packed.size > 12 + 16) { "Truncated encrypted secret" }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, packed.copyOfRange(0, 12)))
+        return String(cipher.doFinal(packed.copyOfRange(12, packed.size)), Charsets.UTF_8)
+    }
+
     fun read(context: Context): String {
         val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         val encoded = prefs.getString(ENCRYPTED, null)
         if (!encoded.isNullOrEmpty()) {
             try {
-                val packed = Base64.decode(encoded, Base64.DEFAULT)
-                require(packed.size > 12 + 16) { "Truncated node credentials" }
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, packed.copyOfRange(0, 12)))
-                return String(cipher.doFinal(packed.copyOfRange(12, packed.size)), Charsets.UTF_8)
+                return decrypt(encoded)
             } catch (e: Exception) {
                 throw IllegalStateException("Node credentials cannot be decrypted; pair with the Host again", e)
             }
