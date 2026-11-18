@@ -71,6 +71,8 @@ class MainActivity : Activity() {
     private lateinit var updatesProgress: ProgressBar
     private lateinit var updatesDownload: Button
     private lateinit var updatesInstall: Button
+    private lateinit var updatesBetaDownload: Button
+    private lateinit var updatesBetaStatus: TextView
     private lateinit var logsOutput: TextView
     private lateinit var logsCounter: TextView
     private val tabRefresh = object : Runnable {
@@ -332,6 +334,20 @@ class MainActivity : Activity() {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateFeed.RELEASES_URL)))
         })
         content.addView(card)
+        val betaCard = card()
+        betaCard.addView(label(getString(R.string.updates_beta_title), 18, true))
+        betaCard.addView(label(getString(R.string.updates_beta_warning), 13, false))
+        updatesBetaStatus = label(getString(R.string.updates_beta_not_downloaded), 13, false)
+        betaCard.addView(updatesBetaStatus)
+        updatesBetaDownload = action(getString(R.string.updates_beta_download)) {
+            updateManager.downloadBeta()
+            refreshUpdatesStatus()
+        }
+        betaCard.addView(updatesBetaDownload)
+        betaCard.addView(action(getString(R.string.updates_beta_open_downloads)) {
+            startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
+        })
+        content.addView(betaCard)
         refreshUpdatesStatus()
     }
 
@@ -393,6 +409,24 @@ class MainActivity : Activity() {
             !snapshot.installRequested
         updatesInstall.isEnabled = snapshot.downloadStatus == DownloadManager.STATUS_SUCCESSFUL &&
             !snapshot.verifying && !snapshot.installRequested
+        updatesBetaDownload.isEnabled = !snapshot.betaChecking && !snapshot.betaVerifying &&
+            snapshot.betaStatus != DownloadManager.STATUS_RUNNING &&
+            snapshot.betaStatus != DownloadManager.STATUS_PENDING
+        updatesBetaStatus.text = when {
+            snapshot.betaChecking -> getString(R.string.updates_beta_checking)
+            snapshot.betaVerifying -> getString(R.string.updates_beta_verifying)
+            snapshot.betaVerified -> getString(R.string.updates_beta_ready)
+            !snapshot.betaError.isNullOrBlank() -> getString(R.string.updates_beta_failed, snapshot.betaError)
+            snapshot.betaStatus == DownloadManager.STATUS_RUNNING && snapshot.betaTotal > 0L -> {
+                val percent = ((snapshot.betaReceived.toDouble() / snapshot.betaTotal) * 100).toInt().coerceIn(0, 100)
+                getString(R.string.updates_beta_progress, percent)
+            }
+            snapshot.betaStatus == DownloadManager.STATUS_PENDING ||
+                snapshot.betaStatus == DownloadManager.STATUS_RUNNING ||
+                snapshot.betaStatus == DownloadManager.STATUS_PAUSED -> getString(R.string.updates_beta_pending)
+            snapshot.betaStatus == DownloadManager.STATUS_FAILED -> getString(R.string.updates_beta_failed, "DownloadManager")
+            else -> getString(R.string.updates_beta_not_downloaded)
+        }
     }
 
     private fun logsScreen() {
