@@ -734,29 +734,29 @@ func node(args []string) error {
 	var engine worker.Generator
 	var managed *local.Managed
 	if *model != "" {
-	if *backend != "" {
-		engine, err = local.New(*backend)
-		if err != nil {
-			return err
-		}
-	} else {
-		if *path == "" {
-			return errors.New("provide --model-path for lazy loading or --backend for an already running server")
-		}
-		cpu := *threads
-		if cpu <= 0 {
-			cpu = runtime.NumCPU() - 1
-			if cpu < 1 {
-				cpu = 1
+		if *backend != "" {
+			engine, err = local.New(*backend)
+			if err != nil {
+				return err
 			}
+		} else {
+			if *path == "" {
+				return errors.New("provide --model-path for lazy loading or --backend for an already running server")
+			}
+			cpu := *threads
+			if cpu <= 0 {
+				cpu = runtime.NumCPU() - 1
+				if cpu < 1 {
+					cpu = 1
+				}
+			}
+			resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			managed = &local.Managed{Binary: resolved, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+			engine = managed
 		}
-		resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		managed = &local.Managed{Binary: resolved, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
-		engine = managed
-	}
 	}
 	if managed != nil {
 		defer managed.Close()
