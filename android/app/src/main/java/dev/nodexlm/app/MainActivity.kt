@@ -293,8 +293,22 @@ class MainActivity : Activity() {
             setSingleLine(true)
             setText(prefs.getInt("decision_port", MobileDecisionClient.DEFAULT_PORT).toString())
         }
+        val decisionKey = EditText(this).apply {
+            hint = getString(R.string.decision_worker_key)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
         worker.addView(decisionName)
         worker.addView(decisionPort)
+        worker.addView(decisionKey)
+        worker.addView(action(getString(R.string.decision_worker_clear_key)) {
+            try {
+                DecisionSecrets.save(this, "")
+                decisionKey.setText("")
+                setStatus(getString(R.string.decision_worker_key_cleared))
+            } catch (e: Exception) { setStatus(getString(R.string.decision_worker_invalid)) }
+        })
         worker.addView(action(getString(R.string.decision_worker_save)) {
             val name = decisionName.text.toString().trim()
             val port = decisionPort.text.toString().toIntOrNull()
@@ -302,14 +316,20 @@ class MainActivity : Activity() {
                 setStatus(getString(R.string.decision_worker_invalid))
             } else {
                 prefs.edit().putString("decision_model", name).putInt("decision_port", port).apply()
-                setStatus(getString(R.string.decision_worker_saved))
+                try {
+                    val secret = decisionKey.text.toString()
+                    if (secret.isNotBlank()) DecisionSecrets.save(this, secret)
+                    decisionKey.setText("")
+                    setStatus(getString(R.string.decision_worker_saved))
+                } catch (e: Exception) { setStatus(getString(R.string.decision_worker_invalid)) }
             }
         })
         worker.addView(action(getString(R.string.decision_worker_test)) {
             val name = decisionName.text.toString().trim()
             val port = decisionPort.text.toString().toIntOrNull()
             thread(name = "nodexlm-android-decision-probe") {
-                val found = port != null && MobileDecisionClient.available(port, name)
+                val key = runCatching { DecisionSecrets.read(this) }.getOrDefault("")
+                val found = port != null && MobileDecisionClient.available(port, name, key)
                 runOnUiThread { setStatus(getString(if (found) R.string.decision_worker_ready else R.string.decision_worker_offline)) }
             }
         })
