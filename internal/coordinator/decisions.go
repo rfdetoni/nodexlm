@@ -24,14 +24,14 @@ const decisionLeaseTimeout = 35 * time.Second
 // DecisionWorker describes a *whole-model* System One executor. It is never a
 // GGML-RPC tensor server. A worker advertises only models it can actually run.
 type DecisionWorker struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Platform     string `json:"platform"`
-	Model        string `json:"model"`
-	Busy         bool   `json:"busy"`
-	P50MS        int64  `json:"p50_ms,omitempty"`
-	P95MS        int64  `json:"p95_ms,omitempty"`
-	Score        int    `json:"score"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Model    string `json:"model"`
+	Busy     bool   `json:"busy"`
+	P50MS    int64  `json:"p50_ms,omitempty"`
+	P95MS    int64  `json:"p95_ms,omitempty"`
+	Score    int    `json:"score"`
 }
 
 type decisionChoice struct {
