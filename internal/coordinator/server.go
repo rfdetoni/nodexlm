@@ -36,6 +36,7 @@ type nodeState struct {
 	credential [32]byte
 	signal     chan struct{}
 	active     string
+	decisionSeen time.Time
 }
 
 type Server struct {
@@ -252,6 +253,9 @@ func (s *Server) register(w http.ResponseWriter, d protocol.Device) {
 	d.Busy = false
 	s.mu.Lock()
 	s.nodes[id] = &nodeState{device: d, credential: sha256.Sum256([]byte(secret)), signal: make(chan struct{}, 1)}
+	if len(d.DecisionModels) > 0 {
+		s.nodes[id].decisionSeen = time.Now()
+	}
 	if err := s.saveLocked(); err != nil {
 		delete(s.nodes, id)
 		s.mu.Unlock()
@@ -328,6 +332,11 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		n.device.Status = "online"
 		n.device.Models = append([]string(nil), req.Models...)
 		n.device.DecisionModels = append([]string(nil), req.DecisionModels...)
+		if len(req.DecisionModels) > 0 {
+			n.decisionSeen = time.Now()
+		} else {
+			n.decisionSeen = time.Time{}
+		}
 		// Lease updates are partial and may come from older Guest clients.
 		// Keep the most recent measured values when the lease omits them.
 		if req.CPUUsagePercent != nil {
@@ -690,6 +699,11 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		profile.UnavailableReason = ""
 	}
 	profile.Busy = n.device.Busy
+	// An RPC-only heartbeat must not erase a concurrently running decision
+	// worker; its capability still expires when its own lease stops.
+	if profile.DecisionModels == nil {
+		profile.DecisionModels = append([]string(nil), n.device.DecisionModels...)
+	}
 	// RPCReady is asserted only when a tunnel is authenticated, not by a guest.
 	profile.Runtime.RPCReady = false
 	n.device = profile
