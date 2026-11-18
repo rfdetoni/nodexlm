@@ -45,10 +45,11 @@ internal object MobileDecisionClient {
         return JSONObject(output.toString(Charsets.UTF_8.name()))
     }
 
-    fun available(port: Int, model: String): Boolean {
+    fun available(port: Int, model: String, apiKey: String = ""): Boolean {
         if (model.isBlank() || model.length > 256) return false
         return try {
             val connection = connect(port, "/v1/models", "GET")
+            if (apiKey.isNotEmpty()) connection.setRequestProperty("Authorization", "Bearer $apiKey")
             try {
                 val body = bounded(connection)
                 val name = model.removePrefix("ollaya/")
@@ -65,13 +66,14 @@ internal object MobileDecisionClient {
         }
     }
 
-    fun decide(port: Int, model: String, request: JSONObject): JSONObject {
+    fun decide(port: Int, model: String, request: JSONObject, apiKey: String = ""): JSONObject {
         require(model.isNotBlank() && model.length <= 256)
         val input = JSONObject(request.toString()).put("model", model.removePrefix("ollaya/"))
         val payload = input.toString().toByteArray(Charsets.UTF_8)
         require(payload.size in 1..MAX_BODY) { "Decision request too large" }
         val connection = connect(port, "/v1/systemone", "POST")
         connection.setRequestProperty("Content-Type", "application/json")
+        if (apiKey.isNotEmpty()) connection.setRequestProperty("Authorization", "Bearer $apiKey")
         connection.doOutput = true
         return try {
             connection.outputStream.use { it.write(payload) }
