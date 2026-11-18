@@ -20,6 +20,7 @@ A interface preserva os campos JSON e o streaming do runtime `llama.cpp b12255`,
 | `POST /v1/responses` | Input textual/itens, instruções, ferramentas, formato de saída, uso e eventos SSE nomeados |
 | Continuação | `previous_response_id` recupera input/output anteriores, isolados pela credencial; instruções anteriores não são reinseridas |
 | Histórico Responses | GET/DELETE por ID e GET `/input_items`, com ordem, limite e cursores |
+| `POST /v1/systemone` e `POST /v1/decisions` | Decisões tipadas (choice, score, noul) em GGUF nativo ou Ollaya local opt-in; veja [modelos de decisão](DECISION_MODELS.md) |
 | `POST /v1/embeddings` | Vetores em lote, float/base64 e uso de tokens; exige um modelo dedicado de embeddings carregado |
 | Contagem | POST `/v1/responses/input_tokens` e extensão `/v1/chat/completions/input_tokens` do runtime |
 | Erros | Objeto error com message/type/param/code; erros após início do SSE são eventos, sem conclusão fictícia |

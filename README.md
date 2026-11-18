@@ -87,3 +87,8 @@ gh attestation verify nodexlm_linux_amd64.tar.gz --repo rfdetoni/nodexlm
 As releases experimentais Android não são equivalentes a uma assinatura
 persistente de produção; um APK debug novo pode exigir reinstalação.
 
+
+
+## Modelos de decisão (System One)
+
+O Host aceita decisões tipadas em `POST /v1/systemone` e `POST /v1/decisions`, usando GGUFs especializados no llama.cpp ou modelos Ollaya/ONNX via bridge local. Consulte [configuração, segurança e exemplos](docs/DECISION_MODELS.md).

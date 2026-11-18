@@ -17,16 +17,17 @@ import (
 
 type Forward func(context.Context, string, string, []byte, func(int, http.Header, io.Reader) error) error
 type Handler struct {
-	Forward Forward
-	Target  http.HandlerFunc
-	Models  func() []string
-	Observe func(string, []byte, time.Duration)
-	Timeout func(string) time.Duration
-	store   responseStore
+	Forward  Forward
+	Decision Forward
+	Target   http.HandlerFunc
+	Models   func() []string
+	Observe  func(string, []byte, time.Duration)
+	Timeout  func(string) time.Duration
+	store    responseStore
 }
 
 func IsPath(path string) bool {
-	for _, p := range []string{"/v1/chat/completions", "/v1/completions", "/v1/responses", "/v1/embeddings", "/v1/models"} {
+	for _, p := range []string{"/v1/chat/completions", "/v1/completions", "/v1/responses", "/v1/embeddings", "/v1/models", "/v1/systemone", "/v1/decisions"} {
 		if path == p || strings.HasPrefix(path, p+"/") {
 			return true
 		}
@@ -40,6 +41,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ownerHash := sha256.Sum256([]byte(r.Header.Get("Authorization")))
 	owner := hex.EncodeToString(ownerHash[:])
 	path := r.URL.Path
+	if path == "/v1/systemone" || path == "/v1/decisions" {
+		h.decisions(w, r)
+		return
+	}
 	if path == "/v1/models" || strings.HasPrefix(path, "/v1/models/") {
 		h.models(w, r)
 		return

@@ -29,6 +29,7 @@ const consoleViews=[
  {id:'inference',name:'Inferência',description:'Configuração, camadas e carregamento.'},
  {id:'cluster',name:'Dispositivos',description:'Guests, recursos e pareamento seguro.'},
  {id:'observability',name:'Diagnóstico',description:'Medições reais de rede e inferência.'},
+ {id:'decisions',name:'Decisões',description:'Perguntas tipadas e probabilidades via System One.'},
  {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'}
 ];
 function activateConsoleView(view){
@@ -482,6 +483,24 @@ async function sendChat(){
  }
 }
 $('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').value.trim();guard(async()=>{await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')})});
+$('decisionForm').addEventListener('submit',event=>{
+ event.preventDefault();
+ guard(async()=>{
+  let questions;
+  try{questions=JSON.parse($('decisionQuestions').value)}catch{throw Error('Perguntas devem ser um objeto JSON válido.')}
+  if(!questions || typeof questions!=='object' || Array.isArray(questions))throw Error('Perguntas devem ser um objeto JSON.');
+  const button=$('runDecision');
+  button.disabled=true;
+  $('decisionOutput').textContent='Avaliando…';
+  try{
+   const result=await api('/v1/systemone','POST',{model:$('decisionModel').value.trim(),state:$('decisionState').value,questions});
+   $('decisionOutput').textContent=JSON.stringify(result,null,2);
+  }catch(error){
+   $('decisionOutput').textContent=error.message;
+   throw error;
+  }finally{button.disabled=false}
+ });
+});
 $('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
