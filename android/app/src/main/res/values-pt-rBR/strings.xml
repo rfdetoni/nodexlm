@@ -219,7 +219,7 @@
     <string name="updates_beta_verified">SHA-256 do APK beta validado.</string>
     <string name="updates_beta_failed">APK beta indisponível: %1$s</string>
     <string name="decision_worker_title">Worker de decisão (System One)</string>
-    <string name="decision_worker_help">Para executar decisões neste Android, inicie um runtime System One compatível localmente, como uma compilação Android do Ollaya. O Host só enviará tarefas se o modelo estiver disponível. Para compartilhar camadas GGUF, utilize o Guest RPC.</string>
+    <string name="decision_worker_help">Para executar Laya ONNX neste Android, importe o bundle de pesos e calibração: o runtime já está incluído no APK. Para outros modelos, é possível usar um serviço System One local separado. O Host só envia decisões a modelos disponíveis.</string>
     <string name="decision_worker_model">Modelo de decisão, ex.: ollaya/laya:multilingual</string>
     <string name="decision_worker_port">Porta do runtime local (padrão 11435)</string>
     <string name="decision_worker_save">Salvar configuração do worker de decisão</string>
@@ -231,4 +231,12 @@
     <string name="decision_worker_key">Chave de API do runtime local (opcional, criptografada)</string>
     <string name="decision_worker_clear_key">Limpar chave de API do runtime local</string>
     <string name="decision_worker_key_cleared">Chave de API do runtime local apagada</string>
+    <string name="decision_embedded_description">O APK inclui execução ONNX nativa. Importe um pacote Laya completo: model.onnx (+ model.onnx.data opcional), tokenizer.json, decision.json e calibration.json; ou laya-q8.onnx + tokenizer.json + rl_agent_config.json. Não é necessário servidor externo.</string>
+    <string name="decision_embedded_import">Importar arquivos do modelo ONNX de decisão</string>
+    <string name="decision_embedded_installed">Instalado: %1$s (%2$s GiB ONNX)</string>
+    <string name="decision_embedded_remove">Excluir modelo ONNX instalado</string>
+    <string name="decision_embedded_remove_confirm">Excluir este modelo ONNX do armazenamento local? Você poderá importá-lo novamente depois.</string>
+    <string name="decision_embedded_deleted">Modelo ONNX excluído</string>
+    <string name="decision_embedded_importing">Copiando pesos ONNX e configuração localmente…</string>
+    <string name="decision_embedded_imported">Modelo ONNX de decisão pronto: %1$s</string>
 </resources>

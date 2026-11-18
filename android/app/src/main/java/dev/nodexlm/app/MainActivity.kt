@@ -88,6 +88,7 @@ class MainActivity : Activity() {
     }
     private val pickModel = 900
     private val pickCertificate = 901
+    private val pickDecision = 902
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -300,6 +301,46 @@ class MainActivity : Activity() {
             setSingleLine(true)
         }
         worker.addView(decisionName)
+        worker.addView(label(getString(R.string.decision_embedded_description), 12, false))
+        worker.addView(action(getString(R.string.decision_embedded_import)) {
+            val alias = decisionName.text.toString().trim().ifBlank { DecisionModelStore.DEFAULT_ALIAS }
+            prefs.edit().putString("decision_model", alias).apply()
+            val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "*/*"
+                addCategory(Intent.CATEGORY_OPENABLE)
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
+            startActivityForResult(picker, pickDecision)
+        })
+        DecisionModelStore.selected(this)?.let { bundle ->
+            worker.addView(label(getString(R.string.decision_embedded_installed,
+                bundle.alias, "%.2f".format(Locale.US, bundle.graph.length().toDouble()/(1024.0*1024*1024))), 12, false))
+            worker.addView(action(getString(R.string.decision_embedded_remove)) {
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.decision_embedded_remove)
+                    .setMessage(R.string.decision_embedded_remove_confirm)
+                    .setPositiveButton(android.R.string.ok) { _, _ ->
+                        thread(name="nodexlm-delete-decision") {
+                            try {
+                                EmbeddedDecisionRuntime.close()
+                                val root = DecisionModelStore.directory(this).canonicalFile
+                                val target = bundle.directory.canonicalFile
+                                require(target.parentFile == root)
+                                require(target.deleteRecursively())
+                                prefs.edit().remove("decision_model").apply()
+                                runOnUiThread {
+                                    setStatus(getString(R.string.decision_embedded_deleted))
+                                    showTab(2)
+                                }
+                            } catch (e: Exception) {
+                                runOnUiThread { setStatus(getString(R.string.import_failed, e.message)) }
+                            }
+                        }
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            })
+        }
         worker.addView(decisionPort)
         worker.addView(decisionKey)
         worker.addView(action(getString(R.string.decision_worker_clear_key)) {
@@ -329,7 +370,9 @@ class MainActivity : Activity() {
             val port = decisionPort.text.toString().toIntOrNull()
             thread(name = "nodexlm-android-decision-probe") {
                 val key = runCatching { DecisionSecrets.read(this) }.getOrDefault("")
-                val found = port != null && MobileDecisionClient.available(port, name, key)
+                val embedded = DecisionModelStore.find(this, name) != null
+                val found = if (embedded) EmbeddedDecisionRuntime.available(this, name)
+                    else port != null && MobileDecisionClient.available(port, name, key)
                 runOnUiThread { setStatus(getString(if (found) R.string.decision_worker_ready else R.string.decision_worker_offline)) }
             }
         })
@@ -746,6 +789,22 @@ class MainActivity : Activity() {
         val uri=uris.firstOrNull()?:return
         when(requestCode) {
             pickModel -> {showTab(3);library.importFromUris(uris)}
+            pickDecision -> {
+                val alias = prefs.getString("decision_model", DecisionModelStore.DEFAULT_ALIAS)
+                    .orEmpty().ifBlank { DecisionModelStore.DEFAULT_ALIAS }
+                setStatus(getString(R.string.decision_embedded_importing))
+                thread(name="nodexlm-import-decision") {
+                    try {
+                        val bundle = DecisionModelStore.importBundle(this, alias, uris)
+                        runOnUiThread {
+                            setStatus(getString(R.string.decision_embedded_imported, bundle.alias))
+                            showTab(2)
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { setStatus(getString(R.string.import_failed, e.message)) }
+                    }
+                }
+            }
             pickCertificate -> thread(name="nodexlm-cert-import") {
                 try {
                     val bytes=contentResolver.openInputStream(uri)?.use { boundedPairingBytes(it, 65536) } ?: error("Certificate unreadable")

@@ -136,3 +136,8 @@ Na aba **Atualizações**, escolha **Baixar APK de teste (beta)**. Essa ação m
 **Atenção:** o artefato de teste pode ter assinatura debug diferente em cada compilação. O Android pode impedir que ele seja instalado sobre o aplicativo existente; desinstalar pode apagar dados locais. O botão **Abrir Downloads** permite acessar o arquivo depois da verificação. O fluxo estável de atualização e sua verificação de certificado continuam independentes.
 
 Na aba **Modelos**, é possível filtrar candidatos a modelos de decisão GGUF por nome; a compatibilidade com System One só é conhecida após a validação pelo runtime.
+
+
+## Modelos de decisão ONNX diretamente no APK
+
+Para executar modelos System One **Laya** no próprio Android, sem instalar um servidor Ollaya, consulte o [guia ONNX integrado](ANDROID_EMBEDDED_DECISIONS.md). Importe pesos ONNX, `tokenizer.json` e os arquivos de configuração; o APK inclui o runtime, mas os pesos não são distribuídos no instalador.
