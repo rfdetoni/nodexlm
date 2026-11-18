@@ -29,7 +29,8 @@ type DecisionWorker struct {
 	Platform     string `json:"platform"`
 	Model        string `json:"model"`
 	Busy         bool   `json:"busy"`
-	LatencyMS    int64  `json:"latency_ms,omitempty"`
+	P50MS        int64  `json:"p50_ms,omitempty"`
+	P95MS        int64  `json:"p95_ms,omitempty"`
 	Score        int    `json:"score"`
 }
 
@@ -50,10 +51,12 @@ func (s *Server) DecisionWorkers() []DecisionWorker {
 			n.decisionSeen.IsZero() || now.Sub(n.decisionSeen) >= heartbeatGrace {
 			continue
 		}
+		p50, p95 := decisionPercentiles(s.decisionTimings[id])
 		for _, model := range n.device.DecisionModels {
 			workers = append(workers, DecisionWorker{
 				ID: id, Name: n.device.Name, Platform: n.device.Platform,
-				Model: model, Busy: n.active != "", Score: decisionScore(n.device, n.active != ""),
+				Model: model, Busy: n.active != "", P50MS: p50, P95MS: p95,
+				Score: decisionScore(n.device, n.active != "") - min(int(p50/100), 30),
 			})
 		}
 	}
@@ -64,6 +67,17 @@ func (s *Server) DecisionWorkers() []DecisionWorker {
 		return workers[i].Score > workers[j].Score
 	})
 	return workers
+}
+
+func decisionPercentiles(samples []time.Duration) (int64, int64) {
+	if len(samples) == 0 {
+		return 0, 0
+	}
+	order := append([]time.Duration(nil), samples...)
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	p50 := order[(len(order)-1)/2]
+	p95 := order[(len(order)*95+99)/100-1]
+	return p50.Milliseconds(), p95.Milliseconds()
 }
 
 func decisionScore(device protocol.Device, busy bool) int {
@@ -104,7 +118,9 @@ func (s *Server) decisionCandidates(model string) []decisionChoice {
 		if !modelAvailable(n.device.DecisionModels, model) {
 			continue
 		}
-		result = append(result, decisionChoice{id: id, name: n.device.Name, score: decisionScore(n.device, n.active != "")})
+		p50, _ := decisionPercentiles(s.decisionTimings[id])
+		result = append(result, decisionChoice{id: id, name: n.device.Name,
+			score: decisionScore(n.device, n.active != "") - min(int(p50/100), 30)})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].score == result[j].score {
