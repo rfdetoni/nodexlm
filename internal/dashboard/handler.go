@@ -62,7 +62,7 @@ func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dash
 }
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
-	openAI := &compat.Handler{Forward: d.Manager.openAI, Decision: d.Manager.decide, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout}
+	openAI := &compat.Handler{Forward: d.Manager.openAI, Decision: d.decide, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout}
 	inferenceAPI := d.inference(openAI.ServeHTTP)
 	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
 	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +85,7 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("GET /api/observability", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"inference": d.Manager.InferenceSamples(), "nodes": d.Cluster.Observations()})
 	}))
+	mux.HandleFunc("GET /api/decision-workers", d.api(func(w http.ResponseWriter, r *http.Request) { reply(w, 200, d.Cluster.DecisionWorkers()) }))
 	mux.HandleFunc("GET /api/resident-models", d.api(func(w http.ResponseWriter, r *http.Request) { reply(w, 200, d.Manager.LoadedModels()) }))
 	mux.HandleFunc("POST /api/resident-models", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {

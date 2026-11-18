@@ -218,4 +218,17 @@
     <string name="updates_beta_started">Download beta iniciado. Consulte Downloads.</string>
     <string name="updates_beta_verified">SHA-256 do APK beta validado.</string>
     <string name="updates_beta_failed">APK beta indisponível: %1$s</string>
+    <string name="decision_worker_title">Worker de decisão (System One)</string>
+    <string name="decision_worker_help">Para executar decisões neste Android, inicie um runtime System One compatível localmente, como uma compilação Android do Ollaya. O Host só enviará tarefas se o modelo estiver disponível. Para compartilhar camadas GGUF, utilize o Guest RPC.</string>
+    <string name="decision_worker_model">Modelo de decisão, ex.: ollaya/laya:multilingual</string>
+    <string name="decision_worker_port">Porta do runtime local (padrão 11435)</string>
+    <string name="decision_worker_save">Salvar configuração do worker de decisão</string>
+    <string name="decision_worker_test">Testar runtime de decisão local</string>
+    <string name="decision_worker_invalid">Modelo de decisão ou porta inválidos</string>
+    <string name="decision_worker_saved">Configuração do worker de decisão salva</string>
+    <string name="decision_worker_ready">Runtime System One e modelo disponíveis</string>
+    <string name="decision_worker_offline">Runtime System One ou modelo local indisponível</string>
+    <string name="decision_worker_key">Chave de API do runtime local (opcional, criptografada)</string>
+    <string name="decision_worker_clear_key">Limpar chave de API do runtime local</string>
+    <string name="decision_worker_key_cleared">Chave de API do runtime local apagada</string>
 </resources>

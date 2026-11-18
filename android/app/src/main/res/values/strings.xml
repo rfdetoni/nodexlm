@@ -218,4 +218,17 @@
     <string name="updates_beta_started">Beta APK download started. Check Downloads.</string>
     <string name="updates_beta_verified">Beta APK SHA-256 verified.</string>
     <string name="updates_beta_failed">Beta APK unavailable: %1$s</string>
+    <string name="decision_worker_title">Decision worker (System One)</string>
+    <string name="decision_worker_help">To run decisions on this phone, start a compatible System One runtime locally, such as an Android build of Ollaya. The Host only sends jobs if the runtime lists this model. For GGUF layer sharing, use RPC Guest instead.</string>
+    <string name="decision_worker_model">Decision model, e.g. ollaya/laya:multilingual</string>
+    <string name="decision_worker_port">Local runtime port (default 11435)</string>
+    <string name="decision_worker_save">Save decision worker configuration</string>
+    <string name="decision_worker_test">Check local decision runtime</string>
+    <string name="decision_worker_invalid">Invalid decision model or port</string>
+    <string name="decision_worker_saved">Decision worker settings saved</string>
+    <string name="decision_worker_ready">System One runtime and model available</string>
+    <string name="decision_worker_offline">Local System One runtime or model not available</string>
+    <string name="decision_worker_key">Local runtime API key (optional, stored encrypted)</string>
+    <string name="decision_worker_clear_key">Clear local runtime API key</string>
+    <string name="decision_worker_key_cleared">Local runtime API key cleared</string>
 </resources>

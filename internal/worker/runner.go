@@ -25,10 +25,12 @@ type Generator interface {
 }
 
 type Runner struct {
-	Client *netclient.Client
-	Engine Generator
-	Model  string
-	Logger *slog.Logger
+	Client        *netclient.Client
+	Engine        Generator
+	Model         string
+	DecisionModel string
+	Decider       DecisionEngine
+	Logger        *slog.Logger
 }
 
 func Enroll(ctx context.Context, coordinator, joinToken, name, model string) (config.Agent, error) {
@@ -54,8 +56,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.Logger == nil {
 		r.Logger = slog.Default()
 	}
-	if r.Model == "" || r.Engine == nil {
-		return errors.New("worker requires a model and local llama-server backend")
+	if (r.Model == "" || r.Engine == nil) && (r.DecisionModel == "" || r.Decider == nil) {
+		return errors.New("worker requires a chat or decision model and local inference engine")
 	}
 	delay := time.Second
 	deviceName, _ := os.Hostname()
@@ -63,8 +65,22 @@ func (r *Runner) Run(ctx context.Context) error {
 	var sampledAt time.Time
 	for ctx.Err() == nil {
 		if time.Since(sampledAt) >= 15*time.Second {
-			profile = hardware.Collect(deviceName, []string{r.Model})
+			models := []string(nil)
+			if r.Model != "" && r.Engine != nil {
+				models = []string{r.Model}
+			}
+			profile = hardware.Collect(deviceName, models)
 			profile.Runtime.Installed = true
+			if r.Decider != nil && r.DecisionModel != "" {
+				probeCtx, done := context.WithTimeout(ctx, 4*time.Second)
+				check, ok := r.Decider.(interface {
+					Check(context.Context, string) error
+				})
+				if !ok || check.Check(probeCtx, r.DecisionModel) == nil {
+					profile.DecisionModels = []string{r.DecisionModel}
+				}
+				done()
+			}
 			sampledAt = time.Now()
 		}
 		var work protocol.Job
@@ -115,7 +131,19 @@ func (r *Runner) Run(ctx context.Context) error {
 		}()
 		var answer string
 		var generateErr error
-		if work.Request.Stream {
+		if work.Kind == "decision" {
+			if r.Decider == nil || work.Request.Model != r.DecisionModel {
+				generateErr = errors.New("decision worker cannot run requested model")
+			} else {
+				var raw json.RawMessage
+				raw, generateErr = r.Decider.Decide(jobCtx, work.Request.Model, work.Decision)
+				if generateErr == nil {
+					answer = string(raw)
+				}
+			}
+		} else if work.Kind != "" && work.Kind != "chat" {
+			generateErr = errors.New("unsupported worker job kind")
+		} else if work.Request.Stream {
 			if engine, ok := r.Engine.(interface {
 				GenerateStream(context.Context, protocol.ChatRequest, func([]byte) error) error
 			}); ok {

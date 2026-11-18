@@ -280,6 +280,59 @@ class MainActivity : Activity() {
             setStatus(getString(R.string.ui_f54a84193c11))
         })
         worker.addView(label(getString(R.string.ui_4c9eb65e0bab),12,false))
+        worker.addView(label(getString(R.string.decision_worker_title),18,true))
+        worker.addView(label(getString(R.string.decision_worker_help),12,false))
+        val decisionName = EditText(this).apply {
+            hint = getString(R.string.decision_worker_model)
+            setSingleLine(true)
+            setText(prefs.getString("decision_model", ""))
+        }
+        val decisionPort = EditText(this).apply {
+            hint = getString(R.string.decision_worker_port)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setSingleLine(true)
+            setText(prefs.getInt("decision_port", MobileDecisionClient.DEFAULT_PORT).toString())
+        }
+        val decisionKey = EditText(this).apply {
+            hint = getString(R.string.decision_worker_key)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        worker.addView(decisionName)
+        worker.addView(decisionPort)
+        worker.addView(decisionKey)
+        worker.addView(action(getString(R.string.decision_worker_clear_key)) {
+            try {
+                DecisionSecrets.save(this, "")
+                decisionKey.setText("")
+                setStatus(getString(R.string.decision_worker_key_cleared))
+            } catch (e: Exception) { setStatus(getString(R.string.decision_worker_invalid)) }
+        })
+        worker.addView(action(getString(R.string.decision_worker_save)) {
+            val name = decisionName.text.toString().trim()
+            val port = decisionPort.text.toString().toIntOrNull()
+            if (name.length > 256 || port == null || port !in 1024..65535) {
+                setStatus(getString(R.string.decision_worker_invalid))
+            } else {
+                prefs.edit().putString("decision_model", name).putInt("decision_port", port).apply()
+                try {
+                    val secret = decisionKey.text.toString()
+                    if (secret.isNotBlank()) DecisionSecrets.save(this, secret)
+                    decisionKey.setText("")
+                    setStatus(getString(R.string.decision_worker_saved))
+                } catch (e: Exception) { setStatus(getString(R.string.decision_worker_invalid)) }
+            }
+        })
+        worker.addView(action(getString(R.string.decision_worker_test)) {
+            val name = decisionName.text.toString().trim()
+            val port = decisionPort.text.toString().toIntOrNull()
+            thread(name = "nodexlm-android-decision-probe") {
+                val key = runCatching { DecisionSecrets.read(this) }.getOrDefault("")
+                val found = port != null && MobileDecisionClient.available(port, name, key)
+                runOnUiThread { setStatus(getString(if (found) R.string.decision_worker_ready else R.string.decision_worker_offline)) }
+            }
+        })
         worker.addView(action(getString(R.string.ui_5949a199212d)) {startWorker()})
         worker.addView(action(getString(R.string.ui_942f9c4afc38)) {
             startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))
@@ -668,7 +721,8 @@ class MainActivity : Activity() {
     private fun startWorker() {
         val file=ModelFiles.selected(this)
         val token=runCatching { NodeSecrets.read(this) }.getOrDefault("")
-        if(file==null || token.isNullOrBlank()) {
+        val decisionModel = prefs.getString("decision_model", "").orEmpty()
+        if((file == null && decisionModel.isBlank()) || token.isBlank()) {
             setStatus(getString(R.string.ui_ce1d54cb7b7a))
             return
         }
@@ -677,8 +731,10 @@ class MainActivity : Activity() {
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),100)
         try {
+            // Avoid competing for phone RAM with the tensor-RPC server.
+            startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
             startForegroundService(Intent(this,ComputeService::class.java).setAction(ComputeService.START))
-            setStatus(getString(R.string.processing_started,file.name))
+            setStatus(getString(R.string.processing_started,file?.name ?: decisionModel))
         }catch(e:Exception){setStatus(getString(R.string.start_failed,e.message))}
     }
 

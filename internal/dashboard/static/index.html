@@ -92,7 +92,7 @@
 <section class="card wide"><div class="sectionhead"><h2>Observabilidade</h2><button id="refreshObservations" class="secondary" type="button">Atualizar medições</button></div><div id="observations" role="status" class="model-list">Meça a rede nos controles de cada Guest e a inferência na configuração.</div></section>
 </div></section>
 <section class="console-view" id="view-decisions" aria-labelledby="nav-decisions" hidden><div class="grid single-workspace">
-<section class="card wide"><h2>Modelos de decisão · System One</h2><p class="muted">Avalie estados com perguntas tipadas. GGUFs de decisão devem estar carregados; para ONNX utilize um modelo Ollaya local com prefixo ollaya/.</p>
+<section class="card wide"><h2>Modelos de decisão · System One</h2><h3>Executores conectados</h3><div id="decisionWorkers" class="model-list" aria-live="polite">Consultando workers de decisão...</div><p class="muted">Avalie estados com perguntas tipadas. GGUFs de decisão devem estar carregados; para ONNX utilize um modelo Ollaya local com prefixo ollaya/.</p>
 <form id="decisionForm"><label>Modelo de decisão<input id="decisionModel" required placeholder="decider.gguf ou ollaya/laya:multilingual"></label>
 <label>Estado a avaliar<textarea id="decisionState" rows="3" required placeholder="Mensagem ou contexto da decisão"></textarea></label>
 <label>Perguntas (JSON)<textarea id="decisionQuestions" rows="8" spellcheck="false" required>{"urgent":{"type":"noul","instructions":"A solicitação é urgente?"},"team":{"type":"choice","instructions":"Qual equipe deve atender?","criteria":{"financeiro":"Pagamentos e reembolsos","suporte":"Problemas técnicos"}}}</textarea></label>

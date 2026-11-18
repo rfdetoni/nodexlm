@@ -93,8 +93,18 @@ class ComputeService : Service() {
     private fun workerLoop() {
         var backoff=1000L
         val model=ModelFiles.selected(this)
+        val decisionModel = (prefs.getString("decision_model", "") ?: "").trim()
+        val decisionPort = prefs.getInt("decision_port", MobileDecisionClient.DEFAULT_PORT)
+        val decisionKey = try {
+            if (decisionModel.isNotEmpty()) DecisionSecrets.read(this) else ""
+        } catch (e: Exception) {
+            Log.e(logTag, "Cannot decrypt local decision runtime credential", e)
+            stopWorker()
+            return
+        }
         val coordinator=(prefs.getString("coordinator","")?:"").trimEnd('/')
-        if (!coordinator.startsWith("https://")||model == null || !model.isFile){
+        if (!coordinator.startsWith("https://") ||
+            ((model == null || !model.isFile) && decisionModel.isEmpty())) {
             RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.ERROR, RuntimeEvent.WORKER_FAILED)
             Log.e(logTag,"Invalid worker configuration");stopWorker();return
         }
@@ -109,10 +119,25 @@ class ComputeService : Service() {
                 try {
                     val memory = ActivityManager.MemoryInfo()
                     (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
-                    val payload=JSONObject().put("models",JSONArray().put(prefs.getString("model","model.gguf")))
+                    val decisionReady = decisionModel.isNotEmpty() &&
+                        MobileDecisionClient.available(decisionPort, decisionModel, decisionKey)
+                    val models = JSONArray()
+                    if (model?.isFile == true) models.put(model.name)
+                    val payload=JSONObject().put("models", models)
+                        .put("decision_models", if (decisionReady) JSONArray().put(decisionModel) else JSONArray())
                         .put("ram_bytes",memory.totalMem).put("available_ram_bytes",memory.availMem)
                         .put("ram_used_bytes",(memory.totalMem-memory.availMem).coerceAtLeast(0L))
                     cpuSampler.sample()?.let { payload.put("cpu_usage_percent", it) }
+                    val battery = (getSystemService(BATTERY_SERVICE) as android.os.BatteryManager)
+                        .getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                    if (battery in 0..100) payload.put("battery_percent", battery)
+                    val batteryState = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                    val powerStatus = batteryState?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                    if (powerStatus >= 0) payload.put("charging", powerStatus ==
+                        android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                        powerStatus == android.os.BatteryManager.BATTERY_STATUS_FULL)
+                    val thermal = (getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus
+                    if (thermal in 0..6) payload.put("thermal_status", thermal)
                     val job=request(coordinator+"/v1/nodes/lease",token,id,payload)
                     if(job.length()==0) {
                         if(loaded && android.os.SystemClock.elapsedRealtime()-lastInference>120_000L) {
@@ -129,6 +154,14 @@ class ComputeService : Service() {
                     // Token generation is time-bounded; never hold the lock while idle/polling.
                     wake.acquire(180_000L)
                     try {
+                        if (job.optString("kind") == "decision") {
+                            require(decisionReady && job.getJSONObject("request").getString("model") == decisionModel) {
+                                "Decision model not available on Android"
+                            }
+                            answer = MobileDecisionClient.decide(decisionPort, decisionModel,
+                                job.getJSONObject("decision"), decisionKey).toString()
+                        } else {
+                        require(model?.isFile == true) { "GGUF chat model not selected" }
                         if (!loaded) {
                             val init=NativeEntry.load(model!!.absolutePath,2048,maxOf(1,Runtime.getRuntime().availableProcessors()-2))
                             if(init.isNotEmpty())throw IllegalStateException(init)
@@ -179,6 +212,7 @@ class ComputeService : Service() {
                             if(streaming){flushChunk(true);require(undecoded.isEmpty()){ "Incomplete UTF-8 output" }}
                         }finally{monitorDone.set(true);monitor.interrupt();monitor.join(1000)}
                         if(answer.startsWith("NODEXLM_ERROR:")){failure=answer;answer=""}
+                        }
                     }catch(e:Exception){failure=e.message?:"inference error"}
                     finally {if(wake.isHeld)wake.release()}
                     lastInference=android.os.SystemClock.elapsedRealtime()

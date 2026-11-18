@@ -44,6 +44,7 @@ function activateConsoleView(view){
  $('consoleMain').scrollTop=0;
  try{sessionStorage.setItem('nodexlm-console-view',chosen.id)}catch{}
  if(chosen.id==='observability' && token)guard(refreshObservations);
+ if(chosen.id==='decisions' && token)guard(refreshDecisionWorkers);
 }
 function setupConsoleNavigation(){
  for(let i=0;i<consoleViews.length;i++){
@@ -73,6 +74,25 @@ function setupConsoleNavigation(){
  let stored='overview';
  try{stored=sessionStorage.getItem('nodexlm-console-view')||'overview'}catch{}
  activateConsoleView(stored);
+}
+async function refreshDecisionWorkers() {
+ const area=$('decisionWorkers');
+ if(!area)return;
+ const workers=await api('/api/decision-workers');
+ area.replaceChildren();
+ if(!workers.length) {
+  area.append(el('div','empty-state','Nenhum worker de decisão online. Os modelos locais permanecem disponíveis.'));
+  return;
+ }
+ for(const w of workers) {
+  const node=el('article','catalog-item');
+  const info=el('div','model-info');
+  info.append(el('strong','model-title',w.model));
+  const latency=w.p50_ms?' · p50 '+w.p50_ms+' ms · p95 '+w.p95_ms+' ms':' · ainda sem medições';
+  info.append(el('div','model-meta',w.name+' · '+w.platform+' · '+(w.busy?'ocupado':'livre')+latency));
+  node.append(info);
+  area.append(node);
+ }
 }
 function setupAuth(){$('auth').hidden=!!token;$('app').hidden=!token;}
 function setSelect(items,chosen){let list=$('modelSelect');list.replaceChildren();let empty=document.createElement('option');empty.value='';empty.textContent='Selecione um modelo';list.append(empty);for(const m of items){let el=document.createElement('option');el.value=m.name;el.textContent=m.name+' ('+fmt(m.size_bytes)+')'+(m.moe?' · MoE':'');list.append(el);}list.value=chosen||'';}
@@ -496,6 +516,7 @@ $('decisionForm').addEventListener('submit',event=>{
   try{
    const result=await api('/v1/systemone','POST',{model:$('decisionModel').value.trim(),state:$('decisionState').value,questions});
    $('decisionOutput').textContent=JSON.stringify(result,null,2);
+   guard(refreshDecisionWorkers);
   }catch(error){
    $('decisionOutput').textContent=error.message;
    throw error;

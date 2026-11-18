@@ -695,6 +695,8 @@ func node(args []string) error {
 	moeCPULayers := f.Int("moe-cpu-layers", 0, "keep MoE experts of first N layers in CPU RAM")
 	moeCacheMiB := f.Int("moe-cache-mib", 0, "GPU cache MiB for CPU-resident MoE experts")
 	model := f.String("model", "", "model name advertised by local llama-server")
+	decisionModel := f.String("decision-model", "", "typed System One model available on this node (example: ollaya/laya:multilingual)")
+	decisionBackend := f.String("decision-backend", "", "local HTTP loopback System One runtime (example: http://127.0.0.1:11435)")
 	ca := f.String("ca", "", "trusted coordinator certificate")
 	dir := f.String("dir", config.DefaultDir(), "configuration directory")
 	if err := f.Parse(args); err != nil {
@@ -713,40 +715,55 @@ func node(args []string) error {
 			return err
 		}
 	}
-	if *model == "" {
-		return errors.New("--model required")
+	if *model == "" && *decisionModel == "" {
+		return errors.New("--model or --decision-model required")
 	}
-	var engine worker.Generator
-	var managed *local.Managed
-	if *backend != "" {
-		engine, err = local.New(*backend)
+	if (*decisionModel == "") != (*decisionBackend == "") {
+		return errors.New("--decision-model and --decision-backend must be configured together")
+	}
+	var decider worker.DecisionEngine
+	if *decisionModel != "" {
+		if !coordinator.ValidDecisionModel(*decisionModel) || *decisionModel == "*" {
+			return errors.New("invalid --decision-model")
+		}
+		decider, err = worker.NewLocalDecisionEngine(*decisionBackend)
 		if err != nil {
 			return err
 		}
-	} else {
-		if *path == "" {
-			return errors.New("provide --model-path for lazy loading or --backend for an already running server")
-		}
-		cpu := *threads
-		if cpu <= 0 {
-			cpu = runtime.NumCPU() - 1
-			if cpu < 1 {
-				cpu = 1
+	}
+	var engine worker.Generator
+	var managed *local.Managed
+	if *model != "" {
+		if *backend != "" {
+			engine, err = local.New(*backend)
+			if err != nil {
+				return err
 			}
+		} else {
+			if *path == "" {
+				return errors.New("provide --model-path for lazy loading or --backend for an already running server")
+			}
+			cpu := *threads
+			if cpu <= 0 {
+				cpu = runtime.NumCPU() - 1
+				if cpu < 1 {
+					cpu = 1
+				}
+			}
+			resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			managed = &local.Managed{Binary: resolved, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+			engine = managed
 		}
-		resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		managed = &local.Managed{Binary: resolved, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
-		engine = managed
 	}
 	if managed != nil {
 		defer managed.Close()
 	}
 	c, cancel := ctx()
 	defer cancel()
-	return (&worker.Runner{Client: cli, Engine: engine, Model: *model}).Run(c)
+	return (&worker.Runner{Client: cli, Engine: engine, Model: *model, DecisionModel: *decisionModel, Decider: decider}).Run(c)
 }
 func nodes(args []string) error {
 	f := fs("nodes")
