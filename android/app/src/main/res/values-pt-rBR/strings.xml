@@ -228,4 +228,7 @@
     <string name="decision_worker_saved">Configuração do worker de decisão salva</string>
     <string name="decision_worker_ready">Runtime System One e modelo disponíveis</string>
     <string name="decision_worker_offline">Runtime System One ou modelo local indisponível</string>
+    <string name="decision_worker_key">Chave de API do runtime local (opcional, criptografada)</string>
+    <string name="decision_worker_clear_key">Limpar chave de API do runtime local</string>
+    <string name="decision_worker_key_cleared">Chave de API do runtime local apagada</string>
 </resources>
