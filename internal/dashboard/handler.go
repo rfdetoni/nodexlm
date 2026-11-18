@@ -62,7 +62,7 @@ func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dash
 }
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
-	openAI := &compat.Handler{Forward: d.Manager.openAI, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout}
+	openAI := &compat.Handler{Forward: d.Manager.openAI, Decision: d.Manager.decide, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout}
 	inferenceAPI := d.inference(openAI.ServeHTTP)
 	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
 	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
