@@ -64,7 +64,7 @@ class LayaDecisionProtocolTest {
             {"choose":{"type":"choice","criteria":["a","b"],"instructions":"Pick"},
              "score":{"type":"score","criteria":["bad","okay","good"],"instructions":"Rate"},
              "yes":{"type":"noul","instructions":"Confirm"}}
-        """.trimIndent())
+        """.trimIndent()))
         val byType = questions.associateBy { it.type }
         val choice = LayaDecisionProtocol.answer(byType.getValue("choice"), doubleArrayOf(0.2, 0.8))
         assertEquals("b", choice.getString("choice"))
