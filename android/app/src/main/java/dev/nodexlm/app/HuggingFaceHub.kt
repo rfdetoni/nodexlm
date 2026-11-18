@@ -28,7 +28,8 @@ internal class HuggingFaceHub(private val context: Context) {
         val sizeBytes: Long,
         val url: String,
         val placement: String,
-        val reason: String
+        val reason: String,
+        val decisionModel: Boolean = false
     )
 
     private fun getJson(url: String, auth: Boolean = false): String {
@@ -75,7 +76,8 @@ internal class HuggingFaceHub(private val context: Context) {
                     val size = row.optLong("size_bytes", 0)
                     if (size <= 0) return@mapNotNull null
                     Model(row.optString("repository"), row.optString("filename"), size,
-                        row.optString("url"), row.optString("placement"), row.optString("reason"))
+                        row.optString("url"), row.optString("placement"), row.optString("reason"),
+                        row.optBoolean("decision_model", DecisionModelNames.likely(row.optString("repository"), row.optString("filename"))))
                 }
             } catch (_: Exception) { /* Host unavailable; fall back to local estimates. */ }
         }
@@ -115,7 +117,8 @@ internal class HuggingFaceHub(private val context: Context) {
                     val fit = size <= budget && size <= Long.MAX_VALUE / 115 && size * 115 / 100 <= budget
                     results.add(Model(repository,filename,size,url,
                         if (fit) "single-node-candidate" else "unknown",
-                        if (fit) "Estimated fit on this phone" else "Not confirmed for this phone; pair with the Host to check cluster capacity"))
+                        if (fit) "Estimated fit on this phone" else "Not confirmed for this phone; pair with the Host to check cluster capacity",
+                        DecisionModelNames.likely(repository, filename)))
                     found++
                 }
             } catch (_: Exception) { /* Inaccessible repo is not an application error. */ }

@@ -35,6 +35,8 @@ class UpdateManager(private val activity: Activity) {
     private val downloads = activity.getSystemService(DownloadManager::class.java)
     private val verifying = AtomicBoolean(false)
     private val checking = AtomicBoolean(false)
+    private val betaChecking = AtomicBoolean(false)
+    private val betaVerifying = AtomicBoolean(false)
     private var receiverRegistered = false
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -47,6 +49,11 @@ class UpdateManager(private val activity: Activity) {
                         if (status == DownloadManager.STATUS_SUCCESSFUL) RuntimeEvent.UPDATE_DOWNLOADED
                         else RuntimeEvent.UPDATE_DOWNLOAD_FAILED)
                 }
+                notifyChanged()
+            }
+            if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ==
+                BetaApkDownload.state(activity).id) {
+                verifyBetaDownload()
                 notifyChanged()
             }
         }
@@ -80,6 +87,7 @@ class UpdateManager(private val activity: Activity) {
         if (last <= 0L || now < last || now - last >= 24L * 60 * 60 * 1000) {
             check(manual = false)
         }
+        verifyBetaDownload()
     }
 
     fun stop() {
@@ -90,7 +98,7 @@ class UpdateManager(private val activity: Activity) {
         onStateChanged = null
     }
 
-    fun onResume() { notifyChanged() }
+    fun onResume() { verifyBetaDownload(); notifyChanged() }
 
     fun check(manual: Boolean) {
         if (!checking.compareAndSet(false, true)) return
@@ -138,6 +146,44 @@ class UpdateManager(private val activity: Activity) {
         }
     }
 
+    /** Explicit beta download; never handled by the stable install path. */
+    fun downloadBeta() {
+        if (!betaChecking.compareAndSet(false, true)) return
+        notifyChanged()
+        thread(name = "nodexlm-beta-download") {
+            try {
+                val artifact = BetaApkDownload.fetchArtifact()
+                BetaApkDownload.enqueue(activity, artifact)
+                toast(activity.getString(R.string.updates_beta_started))
+            } catch (e: Exception) {
+                Log.w("NodexLMBeta", "Cannot fetch public Android prerelease", e)
+                toast(activity.getString(R.string.updates_beta_failed, e.message))
+            } finally {
+                betaChecking.set(false)
+                notifyChanged()
+            }
+        }
+    }
+
+    private fun verifyBetaDownload() {
+        if (!betaVerifying.compareAndSet(false, true)) return
+        val snapshot = BetaApkDownload.state(activity)
+        if (snapshot.status != DownloadManager.STATUS_SUCCESSFUL || snapshot.verified) {
+            betaVerifying.set(false)
+            return
+        }
+        thread(name = "nodexlm-beta-verify") {
+            try {
+                if (BetaApkDownload.verify(activity)) {
+                    toast(activity.getString(R.string.updates_beta_verified))
+                }
+            } finally {
+                betaVerifying.set(false)
+                notifyChanged()
+            }
+        }
+    }
+
     fun downloadAvailable() {
         thread(name = "nodexlm-update-download") {
             try {
@@ -168,7 +214,14 @@ class UpdateManager(private val activity: Activity) {
         val downloadStatus: Int,
         val downloaded: Long,
         val total: Long,
-        val installRequested: Boolean
+        val installRequested: Boolean,
+        val betaChecking: Boolean,
+        val betaVerifying: Boolean,
+        val betaStatus: Int,
+        val betaReceived: Long,
+        val betaTotal: Long,
+        val betaVerified: Boolean,
+        val betaError: String?
     )
 
     fun status(): Status {
@@ -186,6 +239,7 @@ class UpdateManager(private val activity: Activity) {
             }
         } catch (e: Exception) { Log.w("NodexLMUpdate", "Cannot query DownloadManager", e) }
         val current = activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "?"
+        val beta = BetaApkDownload.state(activity)
         return Status(
             prefs.getString("feed_status", "") ?: "",
             current,
@@ -195,7 +249,9 @@ class UpdateManager(private val activity: Activity) {
             verifying.get(),
             prefs.getString("check_error", null),
             status, downloaded, total,
-            id > 0 && id == prefs.getLong("prompted_id", -1L)
+            id > 0 && id == prefs.getLong("prompted_id", -1L),
+            betaChecking.get(), betaVerifying.get(), beta.status,
+            beta.received, beta.total, beta.verified, beta.error
         )
     }
 

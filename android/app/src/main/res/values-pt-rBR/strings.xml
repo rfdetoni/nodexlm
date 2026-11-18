@@ -202,4 +202,20 @@
     <string name="logs_mode_rpc">Último modo registrado: Guest RPC</string>
     <string name="logs_mode_worker">Último modo registrado: worker de inferência</string>
     <string name="logs_mode_inactive">Último modo registrado: parado/desconhecido</string>
+    <string name="model_filter_decisions">Somente modelos de decisão (System One)</string>
+    <string name="model_filter_decisions_note">Candidatos identificados pelo nome; o runtime confirma o suporte a System One ao carregar. Modelos ONNX do Ollaya não são downloads GGUF.</string>
+    <string name="model_decision_candidate">Candidato System One (ainda não validado)</string>
+    <string name="updates_beta_title">APK Android beta / testes</string>
+    <string name="updates_beta_warning">APK de teste opcional do GitHub. A assinatura debug pode ser diferente e impedir a instalação sobre a versão atual. Não há instalação automática; salve seus dados antes de desinstalar.</string>
+    <string name="updates_beta_download">Baixar APK de teste (beta)</string>
+    <string name="updates_beta_open_downloads">Abrir Downloads</string>
+    <string name="updates_beta_not_downloaded">Nenhum APK beta baixado.</string>
+    <string name="updates_beta_checking">Consultando versão de teste no GitHub…</string>
+    <string name="updates_beta_pending">Download beta pendente ou pausado.</string>
+    <string name="updates_beta_progress">Baixando APK beta: %1$d%%</string>
+    <string name="updates_beta_verifying">Verificando SHA-256 do APK beta…</string>
+    <string name="updates_beta_ready">APK beta verificado por SHA-256, disponível em Downloads. Instalação somente manual.</string>
+    <string name="updates_beta_started">Download beta iniciado. Consulte Downloads.</string>
+    <string name="updates_beta_verified">SHA-256 do APK beta validado.</string>
+    <string name="updates_beta_failed">APK beta indisponível: %1$s</string>
 </resources>

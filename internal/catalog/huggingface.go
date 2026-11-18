@@ -127,7 +127,7 @@ func (h Hub) Search(ctx context.Context, query string) ([]clusterplan.ModelCandi
 				continue
 			}
 			location := "https://huggingface.co/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1]) + "/resolve/main/" + strings.ReplaceAll(url.PathEscape(f.Path), "%2F", "/")
-			result = append(result, clusterplan.ModelCandidate{Repository: model.ID, Filename: f.Path, SizeBytes: combined, URL: location, ShardCount: len(shards)})
+			result = append(result, clusterplan.ModelCandidate{Repository: model.ID, Filename: f.Path, SizeBytes: combined, URL: location, ShardCount: len(shards), DecisionModel: IsDecisionModel(model.ID, f.Path)})
 			count++
 		}
 	}

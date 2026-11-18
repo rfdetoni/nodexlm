@@ -251,7 +251,7 @@ function renderCatalog() {
  const choice=$('catalogFilter').value;
  const filtered=catalogModels.filter(m=>{
   const installed=localModels.some(x=>x.name===modelFile(m));
-  return choice==='downloaded'?installed:choice==='available'?['single-node-candidate','distributed-candidate'].includes(m.placement):true;
+  return choice==='decision'?m.decision_model===true:choice==='downloaded'?installed:choice==='available'?['single-node-candidate','distributed-candidate'].includes(m.placement):true;
  });
  $('catalogCount').textContent=catalogModels.length?filtered.length+' de '+catalogModels.length+' arquivos GGUF encontrados':(catalogSearched?'Nenhum arquivo GGUF encontrado':'Pesquise para encontrar modelos GGUF.');
  if(!filtered.length){dest.append(el('div','empty-state',!catalogSearched?'Use a busca acima para explorar modelos GGUF.':catalogModels.length?'Nenhum resultado para este filtro.':'Nenhum resultado. Experimente outra pesquisa.'));return;}
@@ -262,6 +262,7 @@ function renderCatalog() {
   const info=el('div','model-info');
   info.append(el('strong','model-title',m.filename));
   info.append(el('div','model-meta',m.repository+' · '+fmt(m.size_bytes)));
+  if(m.decision_model)info.append(el('span','model-tag','Candidato System One'));
   const tier=placement(m);
   const tags=el('div','model-tags');tags.append(el('span','model-tag '+tier.kind,tier.name));
   if(installed)tags.append(el('span','model-tag active','Baixado'));
@@ -649,7 +650,10 @@ setInterval(async()=>{
  finally {downloadPollBusy=false;}
 },1000);
 
-$('catalogFilter').addEventListener('change',renderCatalog);
+$('catalogFilter').addEventListener('change',()=>{
+ if($('catalogFilter').value==='decision' && ($('catalogQuery').value.trim()===''||$('catalogQuery').value==='Qwen3'))$('catalogQuery').value='decision';
+ renderCatalog();
+});
 $('catalogForm').addEventListener('submit',e=>{e.preventDefault();if(catalogSearching)return;guard(async()=>{
  catalogSearching=true;
  const btn=$('catalogSearch');btn.disabled=true;

@@ -127,3 +127,12 @@ O Guest respeita o limiar `lowMemory` definido pela ROM e anuncia `draining` qua
 Em temperatura MODERATE, a drenagem pausa **novas** conexões RPC, preservando as já reivindicadas. Se a temperatura normalizar por 30 segundos consecutivos **e nenhuma sessão RPC permanecer ativa**, os túneis podem voltar a conectar sem reinstalar a aplicação. Caso contrário, o serviço termina após até 90 segundos de drenagem. Temperatura SEVERE continua causando parada imediata. Ao violar bateria, carga ou horário, o serviço não retorna automaticamente. Esse mecanismo **não** reduz dinamicamente a carga da GPU nem realoca o KV de modelos ativos.
 
 Ajustes em Host/Linux também impedem que um Guest com 0 bytes disponíveis bloqueie todos os demais e preservam o estado draining mesmo se um CONNECT antigo chegar atrasado. Sem medições de hardware, não há garantia de melhora de tokens/s ou estabilidade em Doze.
+
+
+## Baixar APK beta de teste
+
+Na aba **Atualizações**, escolha **Baixar APK de teste (beta)**. Essa ação manual consulta apenas a pré-release pública oficial `android-debug` do NodexLM no GitHub, baixa o `NodexLM-android10-plus-debug.apk` para **Downloads** e compara seu tamanho e SHA-256 com o resumo publicado no GitHub. O APK beta não entra no atualizador estável nem é instalado automaticamente.
+
+**Atenção:** o artefato de teste pode ter assinatura debug diferente em cada compilação. O Android pode impedir que ele seja instalado sobre o aplicativo existente; desinstalar pode apagar dados locais. O botão **Abrir Downloads** permite acessar o arquivo depois da verificação. O fluxo estável de atualização e sua verificação de certificado continuam independentes.
+
+Na aba **Modelos**, é possível filtrar candidatos a modelos de decisão GGUF por nome; a compatibilidade com System One só é conhecida após a validação pelo runtime.

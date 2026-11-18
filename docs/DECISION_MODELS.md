@@ -60,3 +60,8 @@ A resposta preserva o JSON retornado pelo backend (incluindo `answers` e probabi
 - As mesmas restrições de execução, autenticação e tamanho de corpo do gateway permanecem em vigor.
 
 Referências: [Ollaya API](https://github.com/ollaya-dev/ollaya/blob/main/docs/api.md) e [llama.cpp System One](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-v1systemone-typesafe-compatible-system-one-api).
+
+
+## Filtro no catálogo web e Android
+
+Na aba **Modelos**, use o filtro **Modelos de decisão (System One)** para exibir candidatos GGUF. No aplicativo Android, marque **Somente modelos de decisão** na biblioteca. A classificação usa palavras reconhecidas no nome do repositório/arquivo (por exemplo, Winnow, Decider ou JevK5), portanto é apenas um indício. Um download não garante que o runtime suporta System One. O catálogo GGUF não distribui os modelos ONNX gerenciados pelo Ollaya.

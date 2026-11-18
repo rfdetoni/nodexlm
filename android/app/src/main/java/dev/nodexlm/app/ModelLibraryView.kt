@@ -12,6 +12,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -30,6 +31,8 @@ internal class ModelLibraryView(
     private val prefs = activity.getSharedPreferences("nodexlm_hf_download",Context.MODE_PRIVATE)
     private val main = Handler(Looper.getMainLooper())
     private val query = EditText(activity)
+    private val onlyDecisions = CheckBox(activity)
+    private var catalogResults = emptyList<HuggingFaceHub.Model>()
     private val results = LinearLayout(activity)
     private val library = LinearLayout(activity)
     private val status = TextView(activity)
@@ -65,6 +68,13 @@ internal class ModelLibraryView(
         query.setHintTextColor(0xff969faa.toInt())
         query.hint = activity.getString(R.string.query_hint)
         searchCard.addView(query)
+        onlyDecisions.text = activity.getString(R.string.model_filter_decisions)
+        onlyDecisions.setOnCheckedChangeListener { _, enabled ->
+            if (enabled && query.text.toString().trim() == "Qwen") query.setText("decision")
+            renderSearchResults()
+        }
+        searchCard.addView(onlyDecisions)
+        searchCard.addView(text(activity.getString(R.string.model_filter_decisions_note), 12, false))
         searchCard.addView(action(activity.getString(R.string.ui_76a328da1ce2)) { search() })
         addView(searchCard)
         space(12)
@@ -125,9 +135,8 @@ internal class ModelLibraryView(
                 val models = hub.search(requested)
                 activity.runOnUiThread {
                     if (!isAttachedToWindow) { finding = false; return@runOnUiThread }
-                    results.removeAllViews()
-                    for (model in models) showCandidate(model)
-                    status.text = activity.getString(R.string.search_count,models.size)
+                    catalogResults = models
+                    renderSearchResults()
                     finding=false
                 }
             } catch (e:Exception) {
@@ -136,10 +145,18 @@ internal class ModelLibraryView(
         }
     }
 
+    private fun renderSearchResults() {
+        results.removeAllViews()
+        val shown = if (onlyDecisions.isChecked) catalogResults.filter { it.decisionModel } else catalogResults
+        shown.forEach(::showCandidate)
+        status.text = activity.getString(R.string.search_count, shown.size)
+    }
+
     private fun showCandidate(model: HuggingFaceHub.Model) {
         val row=card()
         row.addView(text(model.filename,16,true))
         row.addView(text("${model.repository}  ·  ${gib(model.sizeBytes)}",13,false))
+        if (model.decisionModel) row.addView(text(activity.getString(R.string.model_decision_candidate), 12, false))
         val suitable=model.placement=="single-node-candidate"
         row.addView(text(when(model.placement) {
             "single-node-candidate" -> activity.getString(R.string.placement_single)
