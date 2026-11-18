@@ -48,6 +48,7 @@ type Server struct {
 	queue        []string
 	events       map[string]*jobEvents
 	measurements map[string][]rpcmesh.Measurement
+	decisionTimings map[string][]time.Duration
 	logger       *slog.Logger
 	storePath    string
 	pair         *pairing.Session
@@ -59,7 +60,7 @@ func New(adminToken, enrollmentToken string) (*Server, error) {
 	if len(adminToken) < 32 || len(enrollmentToken) < 32 || adminToken == enrollmentToken {
 		return nil, errors.New("admin and enrollment tokens must be distinct, at least 32 characters each")
 	}
-	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
+	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, decisionTimings: map[string][]time.Duration{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.
@@ -476,6 +477,13 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		j.Status = "failed"
 	} else {
 		j.Status = "completed"
+	}
+	if j.Kind == "decision" && j.Status == "completed" && j.Started != nil {
+		series := append(s.decisionTimings[id], now.Sub(*j.Started))
+		if len(series) > 64 {
+			series = series[len(series)-64:]
+		}
+		s.decisionTimings[id] = series
 	}
 	n.active = ""
 	n.device.Busy = false
