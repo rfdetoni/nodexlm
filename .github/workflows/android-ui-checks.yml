@@ -73,17 +73,6 @@ jobs:
 
       - name: Validate launcher icon contract
         run: python3 scripts/check-android-launcher.py
-      - name: Probe upstream aligned DJL tokenizer JNI
-        shell: bash
-        run: |
-          set -euo pipefail
-          for abi in armeabi-v7a arm64-v8a; do
-            file="/tmp/nodexlm-tokenizer-${abi}.so"
-            curl -fLSs --retry 2 --connect-timeout 10 --max-time 100 \
-              "https://publish.djl.ai/tokenizers/0.21.0/jnilib/0.40.0/android/${abi}/libdjl_tokenizer.so" -o "$file"
-            echo "NODEXLM_DJL_SHA256 $abi $(sha256sum "$file" | awk '{print $1}')"
-            readelf -lW "$file" | awk '$1 == "LOAD" {print "NODEXLM_DJL_LOAD_ALIGNMENT", $NF}'
-          done
       - name: Compile Android resources and Kotlin UI
         working-directory: android
         run: gradle --no-daemon --max-workers=2 :app:processDebugResources :app:compileDebugKotlin
