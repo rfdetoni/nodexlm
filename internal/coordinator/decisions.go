@@ -46,7 +46,8 @@ func (s *Server) DecisionWorkers() []DecisionWorker {
 	now := time.Now()
 	workers := make([]DecisionWorker, 0)
 	for id, n := range s.nodes {
-		if n.device.Status != "online" || now.Sub(n.device.LastSeen) >= heartbeatGrace {
+		if n.device.Status != "online" || now.Sub(n.device.LastSeen) >= heartbeatGrace ||
+			n.decisionSeen.IsZero() || now.Sub(n.decisionSeen) >= heartbeatGrace {
 			continue
 		}
 		for _, model := range n.device.DecisionModels {
@@ -96,6 +97,7 @@ func (s *Server) decisionCandidates(model string) []decisionChoice {
 	var result []decisionChoice
 	for id, n := range s.nodes {
 		if n.device.Status != "online" || now.Sub(n.device.LastSeen) >= heartbeatGrace ||
+			n.decisionSeen.IsZero() || now.Sub(n.decisionSeen) >= heartbeatGrace ||
 			(n.device.ThermalStatus != nil && *n.device.ThermalStatus >= 5) {
 			continue
 		}
