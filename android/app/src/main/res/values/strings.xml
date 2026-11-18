@@ -219,7 +219,7 @@
     <string name="updates_beta_verified">Beta APK SHA-256 verified.</string>
     <string name="updates_beta_failed">Beta APK unavailable: %1$s</string>
     <string name="decision_worker_title">Decision worker (System One)</string>
-    <string name="decision_worker_help">To run decisions on this phone, start a compatible System One runtime locally, such as an Android build of Ollaya. The Host only sends jobs if the runtime lists this model. For GGUF layer sharing, use RPC Guest instead.</string>
+    <string name="decision_worker_help">To run Laya ONNX decisions on Android, import the model and calibration bundle: the runtime is already embedded in the APK. Other model families may use an optional local System One service. Only available decision models are advertised to the Host.</string>
     <string name="decision_worker_model">Decision model, e.g. ollaya/laya:multilingual</string>
     <string name="decision_worker_port">Local runtime port (default 11435)</string>
     <string name="decision_worker_save">Save decision worker configuration</string>
