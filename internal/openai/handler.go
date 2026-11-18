@@ -17,13 +17,13 @@ import (
 
 type Forward func(context.Context, string, string, []byte, func(int, http.Header, io.Reader) error) error
 type Handler struct {
-	Forward Forward
+	Forward  Forward
 	Decision Forward
-	Target  http.HandlerFunc
-	Models  func() []string
-	Observe func(string, []byte, time.Duration)
-	Timeout func(string) time.Duration
-	store   responseStore
+	Target   http.HandlerFunc
+	Models   func() []string
+	Observe  func(string, []byte, time.Duration)
+	Timeout  func(string) time.Duration
+	store    responseStore
 }
 
 func IsPath(path string) bool {
