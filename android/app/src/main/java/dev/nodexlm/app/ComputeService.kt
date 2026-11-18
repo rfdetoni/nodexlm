@@ -119,8 +119,13 @@ class ComputeService : Service() {
                 try {
                     val memory = ActivityManager.MemoryInfo()
                     (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
-                    val decisionReady = decisionModel.isNotEmpty() &&
+                    val embedded = decisionModel.isNotEmpty() &&
+                        DecisionModelStore.find(this, decisionModel) != null
+                    val decisionReady = decisionModel.isNotEmpty() && if (embedded) {
+                        EmbeddedDecisionRuntime.available(this, decisionModel)
+                    } else {
                         MobileDecisionClient.available(decisionPort, decisionModel, decisionKey)
+                    }
                     val models = JSONArray()
                     if (model?.isFile == true) models.put(model.name)
                     val payload=JSONObject().put("models", models)
@@ -158,8 +163,13 @@ class ComputeService : Service() {
                             require(decisionReady && job.getJSONObject("request").getString("model") == decisionModel) {
                                 "Decision model not available on Android"
                             }
-                            answer = MobileDecisionClient.decide(decisionPort, decisionModel,
-                                job.getJSONObject("decision"), decisionKey).toString()
+                            answer = if (embedded) {
+                                EmbeddedDecisionRuntime.decide(this, decisionModel,
+                                    job.getJSONObject("decision")).toString()
+                            } else {
+                                MobileDecisionClient.decide(decisionPort, decisionModel,
+                                    job.getJSONObject("decision"), decisionKey).toString()
+                            }
                         } else {
                         require(model?.isFile == true) { "GGUF chat model not selected" }
                         if (!loaded) {
@@ -237,6 +247,9 @@ class ComputeService : Service() {
         }
         finally {
             try { NativeEntry.unload() } catch (_: Throwable) {}
+            try { EmbeddedDecisionRuntime.close() } catch (e: Exception) {
+                Log.w(logTag, "Could not close local ONNX decision session", e)
+            }
             releaseWorkerWakeLock()
             stopSelf()
         }
