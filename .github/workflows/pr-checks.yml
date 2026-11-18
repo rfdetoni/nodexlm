@@ -42,12 +42,6 @@ jobs:
           unformatted="$(gofmt -l .)"
           if [[ -n "$unformatted" ]]; then
             printf 'Go files needing gofmt:\n%s\n' "$unformatted"
-            while IFS= read -r file; do
-              gofmt -w "$file"
-              echo "NODEXLM_GOFMT_START:$file"
-              base64 "$file" | fold -w 76
-              echo "NODEXLM_GOFMT_END:$file"
-            done <<< "$unformatted"
             exit 1
           fi
       - run: go test -race ./... -timeout 120s
