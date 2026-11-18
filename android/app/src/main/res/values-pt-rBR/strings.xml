@@ -231,4 +231,12 @@
     <string name="decision_worker_key">Chave de API do runtime local (opcional, criptografada)</string>
     <string name="decision_worker_clear_key">Limpar chave de API do runtime local</string>
     <string name="decision_worker_key_cleared">Chave de API do runtime local apagada</string>
+    <string name="decision_embedded_description">O APK inclui execução ONNX nativa. Importe um pacote Laya completo: model.onnx (+ model.onnx.data opcional), tokenizer.json, decision.json e calibration.json; ou laya-q8.onnx + tokenizer.json + rl_agent_config.json. Não é necessário servidor externo.</string>
+    <string name="decision_embedded_import">Importar arquivos do modelo ONNX de decisão</string>
+    <string name="decision_embedded_installed">Instalado: %1$s (%2$s GiB ONNX)</string>
+    <string name="decision_embedded_remove">Excluir modelo ONNX instalado</string>
+    <string name="decision_embedded_remove_confirm">Excluir este modelo ONNX do armazenamento local? Você poderá importá-lo novamente depois.</string>
+    <string name="decision_embedded_deleted">Modelo ONNX excluído</string>
+    <string name="decision_embedded_importing">Copiando pesos ONNX e configuração localmente…</string>
+    <string name="decision_embedded_imported">Modelo ONNX de decisão pronto: %1$s</string>
 </resources>
