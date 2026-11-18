@@ -83,13 +83,15 @@ nodexlm node \
   --decision-backend http://127.0.0.1:11435
 ```
 
+Se o runtime local exigir autenticação, configure no dispositivo o segredo opcional `NODEXLM_DECISION_API_KEY` (não use a chave do Host).
+
 Para um GGUF System One compatível servido localmente, informe o modelo GGUF e a porta de seu `llama-server`, sem o prefixo `ollaya/`. `--model` e `--decision-model` podem ser usados no mesmo processo `node` para disponibilizar chat e decisões (se ambos os runtimes estiverem disponíveis).
 
 O worker anuncia o modelo somente quando a API de modelos local o reconhece. Tanto `/v1/models` no formato Ollaya (`models[].name`) quanto o formato OpenAI (`data[].id`) são aceitos. A conexão worker-Host mantém a autenticação/certificado do NodexLM; a conexão do worker ao runtime local aceita apenas IP numérico loopback HTTP, sem proxy, redirecionamento ou URL arbitrária recebida do Host.
 
 ### Android
 
-No APK, abra **Processamento → Worker de decisão**, informe o nome exato do modelo, como `ollaya/laya:multilingual`, e a porta local do runtime (padrão 11435). Salve, use **Testar runtime** e inicie o worker de inferência do telefone. Nenhum modelo é anunciado quando o runtime estiver ausente.
+No APK, abra **Processamento → Worker de decisão**, informe o nome exato do modelo, como `ollaya/laya:multilingual`, e a porta local do runtime (padrão 11435). Salve, use **Testar runtime** e inicie o worker de inferência do telefone. Se o runtime exigir uma chave de API, digite-a no campo correspondente; ela é armazenada criptografada no Android Keystore e nunca é enviada ao Host. Para liberar o segredo há um botão próprio. Nenhum modelo é anunciado quando o runtime estiver ausente.
 
 **Pré-requisito importante:** a versão atual do APK **não inclui um motor ONNX ou Ollaya embutido**. É preciso executar separadamente um runtime System One compatível com Android **no próprio celular**; o Host não pode enviar requisições para URLs arbitrárias em outros dispositivos. O Android continua podendo participar do RPC GGUF existente, mas o aplicativo alterna esses modos de processamento para evitar disputar a memória do aparelho. A funcionalidade de task dispatch está pronta; empacotar e distribuir um runtime ONNX Android continua uma etapa separada.
 
