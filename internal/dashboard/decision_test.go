@@ -77,7 +77,7 @@ func TestOllayaDecisionFailsClosed(t *testing.T) {
 	h, _ := newTestUI(t)
 	token := strings.Repeat("a", 64)
 	payload := map[string]any{
-		"model":     "ollaya/laya:en", "state": "hi",
+		"model": "ollaya/laya:en", "state": "hi",
 		"questions": map[string]any{"a": map[string]any{"type": "noul", "instructions": "Is it a greeting?"}},
 	}
 	t.Setenv("NODEXLM_OLLAYA_URL", "")
