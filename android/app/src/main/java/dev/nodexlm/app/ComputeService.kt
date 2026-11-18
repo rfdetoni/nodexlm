@@ -95,6 +95,7 @@ class ComputeService : Service() {
         val model=ModelFiles.selected(this)
         val decisionModel = (prefs.getString("decision_model", "") ?: "").trim()
         val decisionPort = prefs.getInt("decision_port", MobileDecisionClient.DEFAULT_PORT)
+        val decisionKey = if (decisionModel.isNotEmpty()) DecisionSecrets.read(this) else ""
         val coordinator=(prefs.getString("coordinator","")?:"").trimEnd('/')
         if (!coordinator.startsWith("https://") ||
             ((model == null || !model.isFile) && decisionModel.isEmpty())) {
@@ -113,7 +114,7 @@ class ComputeService : Service() {
                     val memory = ActivityManager.MemoryInfo()
                     (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
                     val decisionReady = decisionModel.isNotEmpty() &&
-                        MobileDecisionClient.available(decisionPort, decisionModel)
+                        MobileDecisionClient.available(decisionPort, decisionModel, decisionKey)
                     val models = JSONArray()
                     if (model?.isFile == true) models.put(model.name)
                     val payload=JSONObject().put("models", models)
@@ -152,7 +153,7 @@ class ComputeService : Service() {
                                 "Decision model not available on Android"
                             }
                             answer = MobileDecisionClient.decide(decisionPort, decisionModel,
-                                job.getJSONObject("decision")).toString()
+                                job.getJSONObject("decision"), decisionKey).toString()
                         } else {
                         require(model?.isFile == true) { "GGUF chat model not selected" }
                         if (!loaded) {
