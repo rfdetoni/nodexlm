@@ -25,8 +25,8 @@ type Generator interface {
 }
 
 type Runner struct {
-	Client *netclient.Client
-	Engine Generator
+	Client        *netclient.Client
+	Engine        Generator
 	Model         string
 	DecisionModel string
 	Decider       DecisionEngine
@@ -73,7 +73,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			profile.Runtime.Installed = true
 			if r.Decider != nil && r.DecisionModel != "" {
 				probeCtx, done := context.WithTimeout(ctx, 4*time.Second)
-				check, ok := r.Decider.(interface { Check(context.Context, string) error })
+				check, ok := r.Decider.(interface {
+					Check(context.Context, string) error
+				})
 				if !ok || check.Check(probeCtx, r.DecisionModel) == nil {
 					profile.DecisionModels = []string{r.DecisionModel}
 				}
