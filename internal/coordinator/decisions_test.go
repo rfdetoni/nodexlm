@@ -31,7 +31,9 @@ func decisionTestNode(t *testing.T, server *Server, name string) protocol.Creden
 
 func TestDecisionWorkersRequireFreshAuthenticatedCapability(t *testing.T) {
 	s, err := New(adminSecret, joinSecret)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.CloseRPC()
 	if _, err := s.Decide(context.Background(), "ollaya/laya:multilingual", []byte("{}")); !errors.Is(err, ErrNoDecisionWorkers) {
 		t.Fatalf("expected unavailable worker: %v", err)
@@ -53,16 +55,23 @@ func TestDecisionWorkersRequireFreshAuthenticatedCapability(t *testing.T) {
 
 func TestTypedDecisionsFailOverAndIgnoreLateStaleResults(t *testing.T) {
 	s, err := New(adminSecret, joinSecret)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.CloseRPC()
 	a := decisionTestNode(t, s, "node-a")
 	b := decisionTestNode(t, s, "node-b")
-	nodes := map[string]protocol.Credential{a.NodeID:a, b.NodeID:b}
+	nodes := map[string]protocol.Credential{a.NodeID: a, b.NodeID: b}
 	candidates := s.decisionCandidates("ollaya/laya:multilingual")
-	if len(candidates) != 2 { t.Fatalf("wrong candidates: %+v", candidates) }
+	if len(candidates) != 2 {
+		t.Fatalf("wrong candidates: %+v", candidates)
+	}
 	first, second := nodes[candidates[0].id], nodes[candidates[1].id]
 	body := []byte(`{"model":"ollaya/laya:multilingual","state":"Hi","questions":{"q":{"type":"noul","instructions":"Hi?"}}}`)
-	type outcome struct { raw []byte; err error }
+	type outcome struct {
+		raw []byte
+		err error
+	}
 	done := make(chan outcome, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -74,16 +83,24 @@ func TestTypedDecisionsFailOverAndIgnoreLateStaleResults(t *testing.T) {
 	}
 	// Deliberate failure on first worker triggers retry on the next best node.
 	r := call(t, s.Handler(), "POST", "/v1/nodes/result/"+firstLease.ID, first.Token, first.NodeID,
-		protocol.JobResult{Error:"runtime unhealthy"})
-	if r.Code != 200 { t.Fatalf("failure ack %d %s", r.Code, r.Body) }
+		protocol.JobResult{Error: "runtime unhealthy"})
+	if r.Code != 200 {
+		t.Fatalf("failure ack %d %s", r.Code, r.Body)
+	}
 	secondLease := leaseDecisionForTest(t, s, second)
-	if secondLease.NodeID != second.NodeID { t.Fatal("fallback did not use the second node") }
+	if secondLease.NodeID != second.NodeID {
+		t.Fatal("fallback did not use the second node")
+	}
 	invalid := call(t, s.Handler(), "POST", "/v1/nodes/result/"+secondLease.ID, first.Token, first.NodeID,
-		protocol.JobResult{Result:`{"answers":{}}`})
-	if invalid.Code != 409 { t.Fatalf("unrelated worker submitted result: %d", invalid.Code) }
+		protocol.JobResult{Result: `{"answers":{}}`})
+	if invalid.Code != 409 {
+		t.Fatalf("unrelated worker submitted result: %d", invalid.Code)
+	}
 	success := call(t, s.Handler(), "POST", "/v1/nodes/result/"+secondLease.ID, second.Token, second.NodeID,
-		protocol.JobResult{Result:`{"answers":{"q":{"noul":0.93}}}`})
-	if success.Code != 200 { t.Fatalf("decision result %d %s", success.Code, success.Body) }
+		protocol.JobResult{Result: `{"answers":{"q":{"noul":0.93}}}`})
+	if success.Code != 200 {
+		t.Fatalf("decision result %d %s", success.Code, success.Body)
+	}
 	select {
 	case outcome := <-done:
 		if outcome.err != nil || !strings.Contains(string(outcome.raw), "0.93") {
@@ -99,26 +116,36 @@ func TestTypedDecisionsFailOverAndIgnoreLateStaleResults(t *testing.T) {
 			found = true
 		}
 	}
-	if !found { t.Fatal("decision latency missing from worker inventory") }
+	if !found {
+		t.Fatal("decision latency missing from worker inventory")
+	}
 }
 
 func leaseDecisionForTest(t *testing.T, s *Server, c protocol.Credential) protocol.Job {
 	t.Helper()
 	reply := call(t, s.Handler(), http.MethodPost, "/v1/nodes/lease", c.Token, c.NodeID,
 		protocol.Device{DecisionModels: []string{"ollaya/laya:multilingual"}})
-	if reply.Code != 200 { t.Fatalf("decision lease %d %s", reply.Code, reply.Body.String()) }
+	if reply.Code != 200 {
+		t.Fatalf("decision lease %d %s", reply.Code, reply.Body.String())
+	}
 	var job protocol.Job
-	if err := json.Unmarshal(reply.Body.Bytes(), &job); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(reply.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
 	return job
 }
 
 func TestDecisionCapabilityRejectsWildcardAndMalformedPayloads(t *testing.T) {
 	s, err := New(adminSecret, joinSecret)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.CloseRPC()
-	for _, model := range []string{"*", "bad\nheader", strings.Repeat("x",257)} {
+	for _, model := range []string{"*", "bad\nheader", strings.Repeat("x", 257)} {
 		join := call(t, s.Handler(), "POST", "/v1/nodes/enroll", joinSecret, "",
-			protocol.Enrollment{Device: protocol.Device{Name:"n",Platform:"linux",CPUCount:2,DecisionModels: []string{model}}})
-		if join.Code != 400 { t.Fatalf("accepted unsafe capability %q: %d", model,join.Code) }
+			protocol.Enrollment{Device: protocol.Device{Name: "n", Platform: "linux", CPUCount: 2, DecisionModels: []string{model}}})
+		if join.Code != 400 {
+			t.Fatalf("accepted unsafe capability %q: %d", model, join.Code)
+		}
 	}
 }
