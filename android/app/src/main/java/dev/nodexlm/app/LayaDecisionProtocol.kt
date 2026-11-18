@@ -154,7 +154,8 @@ internal object LayaDecisionProtocol {
         if (value is String) JSONObject.quote(value) else stringify(value)
 
     fun encode(
-        config: Config, state: String, question: Question, tokenize: (String) -> LongArray
+        config: Config, state: String, question: Question, keepRecentState: Boolean = false,
+        tokenize: (String) -> LongArray
     ): Encoded {
         val safeState = state.replace(config.maskText, " ")
         val stateIDs = tokenize(safeState)
@@ -192,7 +193,9 @@ internal object LayaDecisionProtocol {
             "Question exceeded the Laya sequence budget"
         }
         val stateRoom = (config.maxLen - ids.size - 1).coerceAtLeast(0)
-        ids.addAll(stateIDs.take(stateRoom))
+        // Laya treats array states as conversations (latest messages last).
+        // Non-array states retain the oldest prefix, exactly as the reference.
+        ids.addAll(if (keepRecentState) stateIDs.takeLast(stateRoom) else stateIDs.take(stateRoom))
         ids.add(config.sep)
         return Encoded(ids.toLongArray(), markers.toLongArray(), stateIDs.size)
     }
