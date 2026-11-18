@@ -46,12 +46,15 @@ func TestDashboardRoutesTypedDecisionToAuthenticatedRemoteWorker(t *testing.T) {
 		t.Fatalf("admin inventory failed %d", got)
 	}
 
-	type outcome struct { status int; body, executor string }
+	type outcome struct {
+		status         int
+		body, executor string
+	}
 	done := make(chan outcome, 1)
 	go func() {
 		rec := req(host, "POST", "/v1/systemone", admin, "", map[string]any{
 			"model": "ollaya/laya:en", "state": "Refund requested",
-			"questions": map[string]any{"urgent": map[string]any{"type":"noul","instructions":"urgent?"}},
+			"questions": map[string]any{"urgent": map[string]any{"type": "noul", "instructions": "urgent?"}},
 		})
 		done <- outcome{rec.Code, rec.Body.String(), rec.Header().Get("X-Nodexlm-Decision-Executor")}
 	}()
@@ -88,7 +91,7 @@ func TestDashboardRoutesTypedDecisionToAuthenticatedRemoteWorker(t *testing.T) {
 		if result.status != 200 || !strings.Contains(result.body, "0.87") || result.executor != "cluster" {
 			t.Fatalf("wrong cluster decision result: %+v", result)
 		}
-	case <-time.After(5*time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("decision request did not complete")
 	}
 }
