@@ -95,17 +95,17 @@ type Credential struct {
 }
 
 type Job struct {
-	ID        string      `json:"id"`
-	NodeID    string      `json:"node_id,omitempty"`
-	Request   ChatRequest `json:"request"`
+	ID        string          `json:"id"`
+	NodeID    string          `json:"node_id,omitempty"`
+	Request   ChatRequest     `json:"request"`
 	Kind      string          `json:"kind,omitempty"`
 	Decision  json.RawMessage `json:"decision,omitempty"`
-	Status    string      `json:"status"`
-	Created   time.Time   `json:"created_at"`
-	Started   *time.Time  `json:"started_at,omitempty"`
-	Completed *time.Time  `json:"completed_at,omitempty"`
-	Result    string      `json:"result,omitempty"`
-	Error     string      `json:"error,omitempty"`
+	Status    string          `json:"status"`
+	Created   time.Time       `json:"created_at"`
+	Started   *time.Time      `json:"started_at,omitempty"`
+	Completed *time.Time      `json:"completed_at,omitempty"`
+	Result    string          `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 type JobResult struct {
