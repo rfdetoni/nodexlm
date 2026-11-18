@@ -57,9 +57,22 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
     // Match Android JNI tokenizer and Java API versions. Both ABIs are packaged
     // by the Android variant; HF tokenizer.json is not reimplemented approximately.
-    implementation("ai.djl.huggingface:tokenizers:0.33.0")
-    implementation("ai.djl.android:tokenizer-native:0.33.0")
+    implementation("ai.djl.huggingface:tokenizers:0.40.0")
     testImplementation("junit:junit:4.13.2")
     // Real JSONObject behavior for pure Laya protocol tests on the JVM.
     testImplementation("org.json:json:20250517")
+}
+
+// DJL has not published a 16-KiB-page-aligned Android Maven AAR yet.
+// Fetch the official published 0.40.0 JNI with pinned hashes. The checksum
+// script caches correct bytes and does not download mutable snapshot artifacts.
+val prepareDecisionTokenizerNative by tasks.registering(Exec::class) {
+    commandLine(
+        "python3",
+        file("../../scripts/fetch-android-tokenizer.py").absolutePath,
+        file("src/main/jniLibs").absolutePath
+    )
+}
+tasks.named("preBuild") {
+    dependsOn(prepareDecisionTokenizerNative)
 }
