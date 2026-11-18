@@ -40,6 +40,16 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     file(MAKE_DIRECTORY "${NODEXLM_VULKAN_STAGING}")
     file(COPY "${NODEXLM_HOST_VULKAN_INCLUDE}/vulkan"
         DESTINATION "${NODEXLM_VULKAN_STAGING}")
+    # vulkan_core.h includes vk_video/* as a sibling of vulkan/*.
+    # Staging only vulkan/ previously broke the ARM64 NDK build.
+    find_path(NODEXLM_HOST_VK_VIDEO_INCLUDE
+        NAMES vk_video/vulkan_video_codec_av1std.h
+        NO_CMAKE_FIND_ROOT_PATH)
+    if(NOT NODEXLM_HOST_VK_VIDEO_INCLUDE)
+        message(FATAL_ERROR "Vulkan video codec headers missing; install Vulkan-Headers")
+    endif()
+    file(COPY "${NODEXLM_HOST_VK_VIDEO_INCLUDE}/vk_video"
+        DESTINATION "${NODEXLM_VULKAN_STAGING}")
     set(NODEXLM_SPIRV_STAGING "${CMAKE_BINARY_DIR}/nodexlm-spirv")
     file(MAKE_DIRECTORY "${NODEXLM_SPIRV_STAGING}")
     file(COPY "${NODEXLM_HOST_SPIRV_INCLUDE}/spirv"
