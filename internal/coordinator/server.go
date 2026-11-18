@@ -32,28 +32,28 @@ const (
 )
 
 type nodeState struct {
-	device     protocol.Device
-	credential [32]byte
-	signal     chan struct{}
-	active     string
+	device       protocol.Device
+	credential   [32]byte
+	signal       chan struct{}
+	active       string
 	decisionSeen time.Time
 }
 
 type Server struct {
-	mu           sync.Mutex
-	admin        [32]byte
-	enrollment   [32]byte
-	nodes        map[string]*nodeState
-	jobs         map[string]*protocol.Job
-	queue        []string
-	events       map[string]*jobEvents
-	measurements map[string][]rpcmesh.Measurement
+	mu              sync.Mutex
+	admin           [32]byte
+	enrollment      [32]byte
+	nodes           map[string]*nodeState
+	jobs            map[string]*protocol.Job
+	queue           []string
+	events          map[string]*jobEvents
+	measurements    map[string][]rpcmesh.Measurement
 	decisionTimings map[string][]time.Duration
-	logger       *slog.Logger
-	storePath    string
-	pair         *pairing.Session
-	certDER      []byte
-	rpcHub       *rpcmesh.Hub
+	logger          *slog.Logger
+	storePath       string
+	pair            *pairing.Session
+	certDER         []byte
+	rpcHub          *rpcmesh.Hub
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
@@ -395,12 +395,12 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				if j.Kind == "decision" {
-				if !modelAvailable(req.DecisionModels, j.Request.Model) {
+					if !modelAvailable(req.DecisionModels, j.Request.Model) {
+						continue
+					}
+				} else if !modelAvailable(req.Models, j.Request.Model) {
 					continue
 				}
-			} else if !modelAvailable(req.Models, j.Request.Model) {
-				continue
-			}
 				s.queue = append(s.queue[:i], s.queue[i+1:]...)
 				now := time.Now()
 				j.Status = "running"
