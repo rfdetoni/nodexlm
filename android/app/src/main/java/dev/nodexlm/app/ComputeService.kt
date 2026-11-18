@@ -121,6 +121,16 @@ class ComputeService : Service() {
                         .put("ram_bytes",memory.totalMem).put("available_ram_bytes",memory.availMem)
                         .put("ram_used_bytes",(memory.totalMem-memory.availMem).coerceAtLeast(0L))
                     cpuSampler.sample()?.let { payload.put("cpu_usage_percent", it) }
+                    val battery = (getSystemService(BATTERY_SERVICE) as android.os.BatteryManager)
+                        .getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                    if (battery in 0..100) payload.put("battery_percent", battery)
+                    val batteryState = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                    val powerStatus = batteryState?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                    if (powerStatus >= 0) payload.put("charging", powerStatus ==
+                        android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                        powerStatus == android.os.BatteryManager.BATTERY_STATUS_FULL)
+                    val thermal = (getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus
+                    if (thermal in 0..6) payload.put("thermal_status", thermal)
                     val job=request(coordinator+"/v1/nodes/lease",token,id,payload)
                     if(job.length()==0) {
                         if(loaded && android.os.SystemClock.elapsedRealtime()-lastInference>120_000L) {
