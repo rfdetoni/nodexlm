@@ -109,6 +109,12 @@ func (s *Server) decisionCandidates(model string) []decisionChoice {
 	defer s.mu.Unlock()
 	now := time.Now()
 	var result []decisionChoice
+	pending := make(map[string]int)
+	for _, id := range s.queue {
+		if j := s.jobs[id]; j != nil && j.Kind == "decision" && j.Status == "queued" {
+			pending[j.Request.TargetNode]++
+		}
+	}
 	for id, n := range s.nodes {
 		if n.device.Status != "online" || now.Sub(n.device.LastSeen) >= heartbeatGrace ||
 			n.decisionSeen.IsZero() || now.Sub(n.decisionSeen) >= heartbeatGrace ||
@@ -120,7 +126,7 @@ func (s *Server) decisionCandidates(model string) []decisionChoice {
 		}
 		p50, _ := decisionPercentiles(s.decisionTimings[id])
 		result = append(result, decisionChoice{id: id, name: n.device.Name,
-			score: decisionScore(n.device, n.active != "") - min(int(p50/100), 30)})
+			score: decisionScore(n.device, n.active != "") - min(int(p50/100), 30) - min(pending[id]*60, 90)})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].score == result[j].score {
