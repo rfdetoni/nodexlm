@@ -95,7 +95,13 @@ class ComputeService : Service() {
         val model=ModelFiles.selected(this)
         val decisionModel = (prefs.getString("decision_model", "") ?: "").trim()
         val decisionPort = prefs.getInt("decision_port", MobileDecisionClient.DEFAULT_PORT)
-        val decisionKey = if (decisionModel.isNotEmpty()) DecisionSecrets.read(this) else ""
+        val decisionKey = try {
+            if (decisionModel.isNotEmpty()) DecisionSecrets.read(this) else ""
+        } catch (e: Exception) {
+            Log.e(logTag, "Cannot decrypt local decision runtime credential", e)
+            stopWorker()
+            return
+        }
         val coordinator=(prefs.getString("coordinator","")?:"").trimEnd('/')
         if (!coordinator.startsWith("https://") ||
             ((model == null || !model.isFile) && decisionModel.isEmpty())) {
