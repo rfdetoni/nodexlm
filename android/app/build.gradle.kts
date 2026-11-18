@@ -60,4 +60,6 @@ dependencies {
     implementation("ai.djl.huggingface:tokenizers:0.33.0")
     implementation("ai.djl.android:tokenizer-native:0.33.0")
     testImplementation("junit:junit:4.13.2")
+    // Real JSONObject behavior for pure Laya protocol tests on the JVM.
+    testImplementation("org.json:json:20250517")
 }
