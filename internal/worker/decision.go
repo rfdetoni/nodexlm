@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"net/url"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ type DecisionEngine interface {
 // System One runtime (Ollaya or native llama-server).
 type LocalDecisionEngine struct {
 	origin string
+	apiKey string
 	http   *http.Client
 }
 
@@ -37,7 +39,7 @@ func NewLocalDecisionEngine(raw string) (*LocalDecisionEngine, error) {
 		net.ParseIP(u.Hostname()) == nil || !net.ParseIP(u.Hostname()).IsLoopback() {
 		return nil, errors.New("decision backend must be a numeric HTTP loopback origin")
 	}
-	return &LocalDecisionEngine{origin: strings.TrimSuffix(raw, "/"), http: &http.Client{
+	return &LocalDecisionEngine{origin: strings.TrimSuffix(raw, "/"), apiKey: os.Getenv("NODEXLM_DECISION_API_KEY"), http: &http.Client{
 		Timeout: 90 * time.Second,
 		Transport: &http.Transport{
 			Proxy:               nil,
@@ -56,6 +58,7 @@ func (e *LocalDecisionEngine) Check(ctx context.Context, model string) error {
 	if err != nil {
 		return err
 	}
+	if e.apiKey != "" { req.Header.Set("Authorization", "Bearer "+e.apiKey) }
 	response, err := e.http.Do(req)
 	if err != nil {
 		return err
@@ -107,6 +110,7 @@ func (e *LocalDecisionEngine) Decide(ctx context.Context, model string, raw json
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if e.apiKey != "" { req.Header.Set("Authorization", "Bearer "+e.apiKey) }
 	response, err := e.http.Do(req)
 	if err != nil {
 		return nil, err
