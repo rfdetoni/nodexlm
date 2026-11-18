@@ -11,8 +11,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -58,7 +58,9 @@ func (e *LocalDecisionEngine) Check(ctx context.Context, model string) error {
 	if err != nil {
 		return err
 	}
-	if e.apiKey != "" { req.Header.Set("Authorization", "Bearer "+e.apiKey) }
+	if e.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	}
 	response, err := e.http.Do(req)
 	if err != nil {
 		return err
@@ -110,7 +112,9 @@ func (e *LocalDecisionEngine) Decide(ctx context.Context, model string, raw json
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if e.apiKey != "" { req.Header.Set("Authorization", "Bearer "+e.apiKey) }
+	if e.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	}
 	response, err := e.http.Do(req)
 	if err != nil {
 		return nil, err
