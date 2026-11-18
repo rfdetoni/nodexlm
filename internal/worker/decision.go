@@ -40,8 +40,8 @@ func NewLocalDecisionEngine(raw string) (*LocalDecisionEngine, error) {
 	return &LocalDecisionEngine{origin: strings.TrimSuffix(raw, "/"), http: &http.Client{
 		Timeout: 90 * time.Second,
 		Transport: &http.Transport{
-			Proxy: nil,
-			DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
+			Proxy:               nil,
+			DialContext:         (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
 			MaxIdleConnsPerHost: 2,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("upstream redirects not allowed") },
@@ -65,8 +65,12 @@ func (e *LocalDecisionEngine) Check(ctx context.Context, model string) error {
 		return fmt.Errorf("decision runtime models HTTP %d", response.StatusCode)
 	}
 	var models struct {
-		Models []struct { Name string `json:"name"` } `json:"models"`
-		Data []struct { ID string `json:"id"` } `json:"data"`
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&models) != nil {
 		return errors.New("malformed decision runtime model inventory")
