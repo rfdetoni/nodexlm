@@ -61,10 +61,10 @@ func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string)
 		Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
 		MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB,
 		MoECacheCPUShare: s.MoECacheCPUShare,
-		FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType,
+		FlashAttention:   s.FlashAttention, KVCacheType: s.KVCacheType,
 		BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, CacheReuseTokens: s.CacheReuseTokens,
 		SpeculativeTokens: s.SpeculativeTokens,
-		SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
+		SpeculativeMode:   s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
 	}
 }
 
