@@ -36,6 +36,13 @@ do llama-server:
 | Batch lógico | 0 (nativo), 1–8192 | Aumenta demanda de memória |
 | Microbatch | 0 (nativo), 1–4096 | Quando ambos definidos, microbatch não pode exceder batch |
 | Especulação | off, ngram, draft | `ngram` usa lookup de tokens; `draft` carrega um GGUF diferente na CPU do Host, com `--spec-type draft-simple` |
+| Tokens por draft | 0 (nativo), 1–32 | `--spec-draft-n-max`, somente com draft; janelas grandes podem aumentar latência e consumo |
+| Reuso parcial de KV/prompt | 0 (desligado), 1–4096 | `--cache-reuse`, tenta reutilizar trechos em prompts similares; requer prompt caching |
+| Cache MoE calculado na CPU | 0–1 | `--moe-cache-cpu-share` define fração dos misses executada na CPU em vez de carregar expert por PCIe; exige `--moe-cache-mib` e MoE em RAM |
+
+As três novas opções são **opt-in** e foram verificadas contra a CLI da revisão `940a30ee3b5593e1a66fe0aadc3b731989022552` fixada no repositório. Não são kernels do Basalt e não implementam a migração adaptativa de especialistas; aproveitam controles nativos do llama.cpp. No modo mistral.rs, permanecem incompatíveis.
+
+Para uma RTX 2060 de 6 GiB, comece com cache MoE 0 e CPU share 0, reserve VRAM para pesos e KV, e aumente o cache em pequenos passos somente com telemetria livre. Em nós RPC heterogêneos, o cache MoE pode ser dividido entre GPUs e a melhoria não está garantida. O retorno do `/api/plan` é estimativa, não um teste físico.
 
 Confirme a comparação com `/api/bench/inference` antes/depois, usando
 mesmo modelo, contexto, quantidade de tokens e condições de rede. O ganho

@@ -38,9 +38,11 @@ type Managed struct {
 	MoECPU                                       bool
 	MoECPULayers                                 int
 	MoECacheMiB                                  int
+	MoECacheCPUShare                             float64
 	FlashAttention, KVCacheType, SpeculativeMode string
 	DraftModelPath                               string
 	BatchSize, UBatchSize                        int
+	SpeculativeTokens, CacheReuseTokens          int
 	Idle                                         time.Duration
 	KeepLoaded                                   bool
 	RPCServers                                   []string
@@ -316,7 +318,7 @@ func (m *Managed) Close() {
 }
 
 func (m *Managed) validateMoE(meta GGUFInfo) error {
-	if m.MoECPULayers < 0 || m.MoECacheMiB < 0 {
+	if m.MoECPULayers < 0 || m.MoECacheMiB < 0 || !(m.MoECacheCPUShare >= 0 && m.MoECacheCPUShare <= 1) {
 		return errors.New("MoE layer count and cache must be nonnegative")
 	}
 	if m.MoECPU && m.MoECPULayers > 0 {
@@ -325,7 +327,10 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 	if m.MoECacheMiB > 0 && !m.MoECPU && m.MoECPULayers == 0 {
 		return errors.New("MoE GPU cache requires --moe-cpu or --moe-cpu-layers")
 	}
-	if (m.MoECPU || m.MoECPULayers > 0 || m.MoECacheMiB > 0) && !meta.IsMoE {
+	if m.MoECacheCPUShare > 0 && m.MoECacheMiB == 0 {
+		return errors.New("MoE CPU miss share requires a GPU expert cache")
+	}
+	if (m.MoECPU || m.MoECPULayers > 0 || m.MoECacheMiB > 0 || m.MoECacheCPUShare > 0) && !meta.IsMoE {
 		return errors.New("MoE options require a GGUF model with expert_count metadata")
 	}
 	return nil
@@ -345,6 +350,9 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 	if m.UBatchSize > 0 {
 		args = append(args, "--ubatch-size", strconv.Itoa(m.UBatchSize))
 	}
+	if m.CacheReuseTokens > 0 {
+		args = append(args, "--cache-reuse", strconv.Itoa(m.CacheReuseTokens))
+	}
 
 	if m.SpeculativeMode == "ngram" {
 		args = append(args, "--spec-type", "ngram-simple")
@@ -352,6 +360,9 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 		// Draft stays on Host CPU to avoid allocating another model on the
 		// active RPC Guest backends. GGML validates vocabulary compatibility.
 		args = append(args, "--spec-type", "draft-simple", "--spec-draft-model", m.DraftModelPath, "--spec-draft-ngl", "0")
+		if m.SpeculativeTokens > 0 {
+			args = append(args, "--spec-draft-n-max", strconv.Itoa(m.SpeculativeTokens))
+		}
 	}
 	switch {
 	case m.MoECPU:
@@ -361,6 +372,9 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 	}
 	if m.MoECacheMiB > 0 {
 		args = append(args, "--moe-cache-mib", strconv.Itoa(m.MoECacheMiB))
+		if m.MoECacheCPUShare > 0 {
+			args = append(args, "--moe-cache-cpu-share", strconv.FormatFloat(m.MoECacheCPUShare, 'f', -1, 64))
+		}
 	}
 	if len(m.RPCServers) > 0 && blocks > 0 {
 		// Only use authenticated loopback relay endpoints in the native process.

@@ -32,22 +32,25 @@ import (
 // Settings are persisted independently of the UI. The model weights live only
 // in the llama-server child process and can be unloaded without stopping NodexLM.
 type Settings struct {
-	Backend           string `json:"backend,omitempty"`
-	Model             string `json:"model"`
-	Threads           int    `json:"threads"`
-	ContextTokens     int    `json:"context_tokens"`
-	GPULayers         string `json:"gpu_layers"`
-	MoECPU            bool   `json:"moe_cpu"`
-	MoECPULayers      int    `json:"moe_cpu_layers"`
-	MoECacheMiB       int    `json:"moe_cache_mib"`
-	Distributed       bool   `json:"distributed"`
-	PlacementStrategy string `json:"placement_strategy,omitempty"`
-	FlashAttention    string `json:"flash_attention,omitempty"`
-	KVCacheType       string `json:"kv_cache_type,omitempty"`
-	BatchSize         int    `json:"batch_size,omitempty"`
-	UBatchSize        int    `json:"ubatch_size,omitempty"`
-	SpeculativeMode   string `json:"speculative_mode,omitempty"`
-	DraftModel        string `json:"draft_model,omitempty"`
+	Backend           string  `json:"backend,omitempty"`
+	Model             string  `json:"model"`
+	Threads           int     `json:"threads"`
+	ContextTokens     int     `json:"context_tokens"`
+	GPULayers         string  `json:"gpu_layers"`
+	MoECPU            bool    `json:"moe_cpu"`
+	MoECPULayers      int     `json:"moe_cpu_layers"`
+	MoECacheMiB       int     `json:"moe_cache_mib"`
+	MoECacheCPUShare  float64 `json:"moe_cache_cpu_share,omitempty"`
+	Distributed       bool    `json:"distributed"`
+	PlacementStrategy string  `json:"placement_strategy,omitempty"`
+	FlashAttention    string  `json:"flash_attention,omitempty"`
+	KVCacheType       string  `json:"kv_cache_type,omitempty"`
+	BatchSize         int     `json:"batch_size,omitempty"`
+	UBatchSize        int     `json:"ubatch_size,omitempty"`
+	CacheReuseTokens  int     `json:"cache_reuse_tokens,omitempty"`
+	SpeculativeTokens int     `json:"speculative_tokens,omitempty"`
+	SpeculativeMode   string  `json:"speculative_mode,omitempty"`
+	DraftModel        string  `json:"draft_model,omitempty"`
 }
 
 // managedFromSettings keeps native options identical for loads and benchmarks.
@@ -57,9 +60,11 @@ func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string)
 		Backend: s.Backend, Binary: binary, ModelPath: modelPath, Alias: alias,
 		Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
 		MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB,
-		FlashAttention: s.FlashAttention, KVCacheType: s.KVCacheType,
-		BatchSize: s.BatchSize, UBatchSize: s.UBatchSize,
-		SpeculativeMode: s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
+		MoECacheCPUShare: s.MoECacheCPUShare,
+		FlashAttention:   s.FlashAttention, KVCacheType: s.KVCacheType,
+		BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, CacheReuseTokens: s.CacheReuseTokens,
+		SpeculativeTokens: s.SpeculativeTokens,
+		SpeculativeMode:   s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
 	}
 }
 
@@ -221,6 +226,16 @@ func (m *Manager) validate(s Settings) error {
 	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 || (s.PlacementStrategy != "" && s.PlacementStrategy != "capacity" && s.PlacementStrategy != "speed") {
 		return errors.New("invalid runtime limits or conflicting MoE settings")
 	}
+	if !(s.MoECacheCPUShare >= 0 && s.MoECacheCPUShare <= 1) ||
+		(s.MoECacheCPUShare > 0 && (s.MoECacheMiB == 0 || !s.MoECPU && s.MoECPULayers == 0)) {
+		return errors.New("moe_cache_cpu_share must be 0..1 and requires an enabled MoE cache")
+	}
+	if s.CacheReuseTokens < 0 || s.CacheReuseTokens > 4096 {
+		return errors.New("cache_reuse_tokens must be 0..4096")
+	}
+	if s.SpeculativeTokens < 0 || s.SpeculativeTokens > 32 || (s.SpeculativeTokens > 0 && s.SpeculativeMode != "draft") {
+		return errors.New("speculative_tokens must be 0..32 and requires draft mode")
+	}
 	if s.FlashAttention != "" && s.FlashAttention != "auto" && s.FlashAttention != "on" && s.FlashAttention != "off" {
 		return errors.New("flash_attention must be auto, on or off")
 	}
@@ -279,9 +294,10 @@ func (m *Manager) Update(s Settings) error {
 	old := m.settings
 	if old.Backend != s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
 		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
-		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB ||
+		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB || old.MoECacheCPUShare != s.MoECacheCPUShare ||
 		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
 		old.BatchSize != s.BatchSize || old.UBatchSize != s.UBatchSize ||
+		old.CacheReuseTokens != s.CacheReuseTokens || old.SpeculativeTokens != s.SpeculativeTokens ||
 		old.SpeculativeMode != s.SpeculativeMode || old.DraftModel != s.DraftModel {
 		m.samples = make(map[string]InferenceSample)
 	}
