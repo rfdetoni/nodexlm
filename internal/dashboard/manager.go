@@ -32,25 +32,25 @@ import (
 // Settings are persisted independently of the UI. The model weights live only
 // in the llama-server child process and can be unloaded without stopping NodexLM.
 type Settings struct {
-	Backend           string `json:"backend,omitempty"`
-	Model             string `json:"model"`
-	Threads           int    `json:"threads"`
-	ContextTokens     int    `json:"context_tokens"`
-	GPULayers         string `json:"gpu_layers"`
-	MoECPU            bool   `json:"moe_cpu"`
-	MoECPULayers      int    `json:"moe_cpu_layers"`
-	MoECacheMiB       int    `json:"moe_cache_mib"`
+	Backend           string  `json:"backend,omitempty"`
+	Model             string  `json:"model"`
+	Threads           int     `json:"threads"`
+	ContextTokens     int     `json:"context_tokens"`
+	GPULayers         string  `json:"gpu_layers"`
+	MoECPU            bool    `json:"moe_cpu"`
+	MoECPULayers      int     `json:"moe_cpu_layers"`
+	MoECacheMiB       int     `json:"moe_cache_mib"`
 	MoECacheCPUShare  float64 `json:"moe_cache_cpu_share,omitempty"`
-	Distributed       bool   `json:"distributed"`
-	PlacementStrategy string `json:"placement_strategy,omitempty"`
-	FlashAttention    string `json:"flash_attention,omitempty"`
-	KVCacheType       string `json:"kv_cache_type,omitempty"`
-	BatchSize         int    `json:"batch_size,omitempty"`
-	UBatchSize        int    `json:"ubatch_size,omitempty"`
-	CacheReuseTokens  int    `json:"cache_reuse_tokens,omitempty"`
-	SpeculativeTokens int    `json:"speculative_tokens,omitempty"`
-	SpeculativeMode   string `json:"speculative_mode,omitempty"`
-	DraftModel        string `json:"draft_model,omitempty"`
+	Distributed       bool    `json:"distributed"`
+	PlacementStrategy string  `json:"placement_strategy,omitempty"`
+	FlashAttention    string  `json:"flash_attention,omitempty"`
+	KVCacheType       string  `json:"kv_cache_type,omitempty"`
+	BatchSize         int     `json:"batch_size,omitempty"`
+	UBatchSize        int     `json:"ubatch_size,omitempty"`
+	CacheReuseTokens  int     `json:"cache_reuse_tokens,omitempty"`
+	SpeculativeTokens int     `json:"speculative_tokens,omitempty"`
+	SpeculativeMode   string  `json:"speculative_mode,omitempty"`
+	DraftModel        string  `json:"draft_model,omitempty"`
 }
 
 // managedFromSettings keeps native options identical for loads and benchmarks.
@@ -226,7 +226,8 @@ func (m *Manager) validate(s Settings) error {
 	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 || (s.PlacementStrategy != "" && s.PlacementStrategy != "capacity" && s.PlacementStrategy != "speed") {
 		return errors.New("invalid runtime limits or conflicting MoE settings")
 	}
-	if !(s.MoECacheCPUShare >= 0 && s.MoECacheCPUShare <= 1) || (s.MoECacheCPUShare > 0 && s.MoECacheMiB == 0) {
+	if !(s.MoECacheCPUShare >= 0 && s.MoECacheCPUShare <= 1) ||
+		(s.MoECacheCPUShare > 0 && (s.MoECacheMiB == 0 || !s.MoECPU && s.MoECPULayers == 0)) {
 		return errors.New("moe_cache_cpu_share must be 0..1 and requires an enabled MoE cache")
 	}
 	if s.CacheReuseTokens < 0 || s.CacheReuseTokens > 4096 {
