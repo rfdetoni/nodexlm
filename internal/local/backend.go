@@ -66,10 +66,10 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 		if len(m.RPCServers) != 0 {
 			return backendLaunchSpec{}, errors.New("mistral.rs does not support NodexLM GGML RPC Guests; use llama.cpp for distributed inference")
 		}
-		if m.MoECPU || m.MoECPULayers != 0 || m.MoECacheMiB != 0 ||
+		if m.MoECPU || m.MoECPULayers != 0 || m.MoECacheMiB != 0 || m.MoECacheCPUShare != 0 ||
 			(m.FlashAttention != "" && m.FlashAttention != "auto") ||
 			(m.KVCacheType != "" && m.KVCacheType != "f16") ||
-			m.BatchSize != 0 || m.UBatchSize != 0 ||
+			m.BatchSize != 0 || m.UBatchSize != 0 || m.CacheReuseTokens != 0 || m.SpeculativeTokens != 0 ||
 			(m.SpeculativeMode != "" && m.SpeculativeMode != "off") || m.DraftModelPath != "" {
 			return backendLaunchSpec{}, errors.New("mistral.rs does not support the selected llama.cpp MoE, Flash Attention, KV-cache, batch or speculative options; reset them before switching")
 		}

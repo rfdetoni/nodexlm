@@ -4,6 +4,10 @@
 
 O NodexLM pode identificar metadados MoE em arquivos GGUF e encaminhar opções do `llama.cpp` para execução local, como `--cpu-moe`, `--n-cpu-moe` e `--moe-cache-mib`, quando o binário oferece suporte.
 
+## Controle de misses com a CPU
+
+Com `--cpu-moe` (ou `--n-cpu-moe`) e `--moe-cache-mib` definidos, o llama.cpp fixado aceita `--moe-cache-cpu-share` entre 0 e 1. O NodexLM agora encaminha o valor opcional `moe_cache_cpu_share`; 0 preserva a configuração anterior. A escolha divide misses entre processamento de experts na CPU e upload pelo barramento PCIe. Não substitui o perfil adaptativo/hot-expert do Basalt e pode piorar desempenho dependendo da CPU, GPU, memória e conexão. Compare com o mesmo GGUF e condições estáveis antes de habilitar.
+
 ## Limitações
 
 - O peso total do modelo precisa estar armazenado e os buffers/KV cache também consomem RAM/VRAM.

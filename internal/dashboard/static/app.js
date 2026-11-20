@@ -105,9 +105,10 @@ function settingsFromForm(model) {
  return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, context_tokens:+$('contextTokens').value,
   gpu_layers:$('gpuLayers').value, moe_cpu:$('moeCPU').checked,
   distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
-  moe_cache_mib:+$('moeCache').value, flash_attention:$('flashAttention').value,
+  moe_cache_mib:+$('moeCache').value, moe_cache_cpu_share:+$('moeCacheCPUShare').value, flash_attention:$('flashAttention').value,
    kv_cache_type:$('kvCacheType').value, batch_size:+$('batchSize').value,
-   ubatch_size:+$('ubatchSize').value, speculative_mode:$('speculativeMode').value, draft_model:$('draftModelSelect').value};
+   ubatch_size:+$('ubatchSize').value, cache_reuse_tokens:+$('cacheReuseTokens').value,
+  speculative_mode:$('speculativeMode').value, speculative_tokens:+$('speculativeTokens').value, draft_model:$('draftModelSelect').value};
 }
 function modelFile(candidate) {
  // Hub paths may contain directories; the Host only stores a safe GGUF basename.
@@ -384,7 +385,7 @@ async function refresh(){
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
-  for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib})) $(id).value=v;
+  for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
   $('runtimeBackend').value=s.backend||'llama.cpp';
   $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'speed'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
   configureBackendUI();
