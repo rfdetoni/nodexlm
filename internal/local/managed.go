@@ -42,7 +42,7 @@ type Managed struct {
 	FlashAttention, KVCacheType, SpeculativeMode string
 	DraftModelPath                               string
 	BatchSize, UBatchSize                        int
-	SpeculativeTokens, CacheReuseTokens           int
+	SpeculativeTokens, CacheReuseTokens          int
 	Idle                                         time.Duration
 	KeepLoaded                                   bool
 	RPCServers                                   []string
