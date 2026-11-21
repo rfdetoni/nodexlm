@@ -24,6 +24,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/process"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
+	"github.com/rfdetoni/nodexlm/internal/smolmax"
 )
 
 // Managed is a lazy local llama-server owner. It keeps GGUF tensors out of
@@ -183,9 +184,9 @@ func (m *Managed) ensure(ctx context.Context) error {
 	}
 	port := bind.Addr().(*net.TCPAddr).Port
 	_ = bind.Close()
-	threads := m.Threads
-	if threads <= 0 {
-		threads = 4
+	threads, err := smolmax.Threads(m.Threads, os.Getenv("NODEXLM_SMOLMAX_THREADS"))
+	if err != nil {
+		return err
 	}
 	nctx := m.ContextTokens
 	if nctx <= 0 {
@@ -203,7 +204,12 @@ func (m *Managed) ensure(ctx context.Context) error {
 	// Bundled llama.cpp binaries load libggml.so from their own directory.
 	// Without this, startup may fail even when the --help RPC probe passed.
 	if EffectiveBackend(m.Backend) == BackendLlama {
+		smolEnv, err := smolmax.NativeEnvironment(launch.Binary, os.Getenv("NODEXLM_SMOLMAX_MODE"), meta.IsMoE, meta.ExpertCount, gpu, len(m.RPCServers))
+		if err != nil {
+			return fmt.Errorf("smolmax native settings: %w", err)
+		}
 		cmd.Env = append(llamaruntime.NativeEnvironment(launch.Binary), launch.Env...)
+		cmd.Env = append(cmd.Env, smolEnv...)
 		// A candidate patch is not evidence that the pinned release uses it.
 		// Only verified bundles may automatically opt into parallel uploads.
 		if len(m.RPCServers) > 1 && llamaruntime.BundledParallelRPCUploadsSupported() &&
@@ -211,6 +217,9 @@ func (m *Managed) ensure(ctx context.Context) error {
 			cmd.Env = append(cmd.Env, "NODEXLM_PARALLEL_RPC_UPLOAD=1")
 		}
 	} else {
+		if mode := os.Getenv("NODEXLM_SMOLMAX_MODE"); mode != "" && mode != "off" {
+			return errors.New("smolmax requires the llama.cpp backend")
+		}
 		cmd.Env = append(os.Environ(), launch.Env...)
 	}
 	process.KillWithParent(cmd)
