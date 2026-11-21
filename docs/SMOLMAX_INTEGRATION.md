@@ -22,24 +22,34 @@ interface de configuração com implementação da inferência.
 
 ## Uso opt-in, quando existir um binário nativo realmente portado
 
-1. Fazer port dos patches para o llama.cpp usado e validar build/quantização
-   e testes em hardware. **Não aplicar** diretamente o patch de
-   `llama.cpp-v0.8.0-tvbox.patch` à revisão b12255 do NodexLM.
-2. Registrar o binário com:
+1. Opcionalmente compilar um runtime **separado** usando os commits fixados
+   do upstream (não substitui o motor distribuído b12255):
+
+```sh
+scripts/build-smolmax-native.sh /opt/smolmax
+```
+
+   Isso aplica a versão original do patch ao llama.cpp 8642541. Este caminho
+   precisa de compilador e validação com GGUF reais; não garante suporte a
+   todas as flags do launcher do NodexLM. Alternativamente, portar cada
+   patch para b12255, com testes específicos de GPU/RPC.
+
+2. Para um binário recompilado manualmente, registrar com:
 
 ```sh
 python3 scripts/register-smolmax-runtime.py \
   --binary /opt/smolmax/llama-server --features moe_pager weight_streaming
 ```
 
-3. Apontar o NodexLM para o binário registrado (não `auto`) e configurar
-   GPU layers **0** e distribuição RPC **desativada**.
+3. Apontar o NodexLM para o binário registrado com
+   `nodexlm host --llama-bin /opt/smolmax/llama-server` (não `auto`) e
+   configurar GPU layers **0** e distribuição RPC **desativada**.
 4. Para MoE (GGUF com `expert_count`):
 
 ```sh
 NODEXLM_SMOLMAX_MODE=moe NODEXLM_SMOLMAX_EXPERT_POOL=32 \
   NODEXLM_SMOLMAX_PREFETCH_K=0 NODEXLM_SMOLMAX_READERS=2 \
-  nodexlm host
+  nodexlm host --llama-bin /opt/smolmax/llama-server
 ```
 
 5. Para modelo denso maior que a RAM:
