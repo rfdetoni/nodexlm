@@ -1,0 +1,27 @@
+name: Temporary smolmax gofmt capture
+on:
+  pull_request:
+    paths:
+      - 'internal/smolmax/**'
+      - '.github/workflows/smolmax-gofmt-temporary.yml'
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Canonical Go formatting capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          gofmt -w internal/smolmax/*.go
+          for f in internal/smolmax/*.go; do
+            printf 'SMOLMAX_BEGIN:%s\n' "$f"
+            base64 -w0 "$f"
+            printf '\nSMOLMAX_END\n'
+          done
