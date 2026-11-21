@@ -22,7 +22,7 @@ func RecommendedThreads(root string, logical int) int {
 	if fallback > 4 {
 		fallback = 4
 	}
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
 		return fallback
 	}
 	entries, err := os.ReadDir(root)

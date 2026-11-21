@@ -92,7 +92,7 @@ func NativeEnvironment(binary, mode string, moe bool, experts uint32, gpu string
 	if mode != "moe" && mode != "stream" {
 		return nil, errors.New("NODEXLM_SMOLMAX_MODE must be off, moe or stream")
 	}
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
 		return nil, errors.New("smolmax experimental native paging requires Linux/Android")
 	}
 	if guests != 0 {

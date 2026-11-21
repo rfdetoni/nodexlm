@@ -42,7 +42,7 @@ func TestOptInAndRuntimeValidation(t *testing.T) {
 	if _, err := NativeEnvironment(binary, "invalid", true, 128, "0", 0); err == nil {
 		t.Fatal("accepted invalid mode")
 	}
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
 		return
 	}
 	env, err := NativeEnvironment(binary, "moe", true, 128, "0", 0)
@@ -74,7 +74,7 @@ func TestOptInAndRuntimeValidation(t *testing.T) {
 }
 
 func TestManifestAndBounds(t *testing.T) {
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
 		t.Skip("Linux-specific native paging")
 	}
 	binary := createRuntime(t, []string{"moe_pager"})
