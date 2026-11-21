@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -116,15 +117,35 @@ func NativeEnvironment(binary, mode string, moe bool, experts uint32, gpu string
 	if verify != "" && verify != "0" && verify != "1" {
 		return nil, errors.New("NODEXLM_SMOLMAX_VERIFY must be 0 or 1")
 	}
+	prof, err := intEnv("NODEXLM_SMOLMAX_OPPROF", 0, 0, 2)
+	if err != nil {
+		return nil, err
+	}
+	extra := make([]string, 0, 3)
+	if prof > 0 {
+		extra = append(extra, "GGML_OPPROF="+strconv.Itoa(prof))
+	}
+	if cache := os.Getenv("NODEXLM_SMOLMAX_REPACK_CACHE"); cache != "" {
+		if !filepath.IsAbs(cache) {
+			return nil, errors.New("NODEXLM_SMOLMAX_REPACK_CACHE must be an absolute file path")
+		}
+		if info, err := os.Lstat(cache); err == nil {
+			if !info.Mode().IsRegular() {
+				return nil, errors.New("smolmax repack cache must be a regular file, not a directory or symlink")
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if parent, err := os.Stat(filepath.Dir(cache)); err != nil || !parent.IsDir() {
+			return nil, errors.New("smolmax repack cache directory does not exist")
+		}
+		extra = append(extra, "GGML_REPACK_CACHE="+cache)
+	}
 	if mode == "moe" {
-		defaultPool := int(experts) / 3
-		if defaultPool < 1 {
-			defaultPool = 1
+		if os.Getenv("NODEXLM_SMOLMAX_EXPERT_POOL") == "" {
+			return nil, errors.New("NODEXLM_SMOLMAX_EXPERT_POOL is required: choose a value measured to fit the available RAM")
 		}
-		if defaultPool > 48 {
-			defaultPool = 48
-		}
-		pool, err := intEnv("NODEXLM_SMOLMAX_EXPERT_POOL", defaultPool, 1, int(experts))
+		pool, err := intEnv("NODEXLM_SMOLMAX_EXPERT_POOL", 0, 1, int(experts))
 		if err != nil {
 			return nil, err
 		}
@@ -144,9 +165,12 @@ func NativeEnvironment(binary, mode string, moe bool, experts uint32, gpu string
 		}
 		// Do NOT bias routing, prune vocabulary, skip experts or change
 		// the number of active experts: those change model output quality.
-		return env, nil
+		return append(env, extra...), nil
 	}
-	resident, err := intEnv("NODEXLM_SMOLMAX_RESIDENT_MB", 512, 64, 65536)
+	if os.Getenv("NODEXLM_SMOLMAX_RESIDENT_MB") == "" {
+		return nil, errors.New("NODEXLM_SMOLMAX_RESIDENT_MB is required: reserve enough RAM for buffers and KV cache")
+	}
+	resident, err := intEnv("NODEXLM_SMOLMAX_RESIDENT_MB", 0, 64, 65536)
 	if err != nil {
 		return nil, err
 	}
@@ -163,5 +187,5 @@ func NativeEnvironment(binary, mode string, moe bool, experts uint32, gpu string
 	if verify == "1" {
 		env = append(env, "GGML_STREAM_VERIFY=1")
 	}
-	return env, nil
+	return append(env, extra...), nil
 }

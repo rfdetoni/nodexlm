@@ -45,12 +45,14 @@ func TestOptInAndRuntimeValidation(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
 		return
 	}
+	t.Setenv("NODEXLM_SMOLMAX_EXPERT_POOL", "32")
+	t.Setenv("NODEXLM_SMOLMAX_RESIDENT_MB", "512")
 	env, err := NativeEnvironment(binary, "moe", true, 128, "0", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(env, " ")
-	for _, name := range []string{"GGML_MOE_PAGER=1", "GGML_MOE_POOL=42", "GGML_MOE_READERS=2"} {
+	for _, name := range []string{"GGML_MOE_PAGER=1", "GGML_MOE_POOL=32", "GGML_MOE_READERS=2"} {
 		if !strings.Contains(joined, name) {
 			t.Fatalf("missing %q in %s", name, joined)
 		}
@@ -86,9 +88,36 @@ func TestManifestAndBounds(t *testing.T) {
 		t.Fatal("accepted too many experts")
 	}
 	t.Setenv("NODEXLM_SMOLMAX_EXPERT_POOL", "")
+	if _, err := NativeEnvironment(binary, "moe", true, 16, "0", 0); err == nil {
+		t.Fatal("accepted implicit expert pool without a memory budget")
+	}
+	t.Setenv("NODEXLM_SMOLMAX_EXPERT_POOL", "4")
 	t.Setenv("NODEXLM_SMOLMAX_VERIFY", "1")
 	env, err := NativeEnvironment(binary, "moe", true, 16, "0", 0)
 	if err != nil || !strings.Contains(strings.Join(env, " "), "GGML_MOE_VERIFY=1") {
 		t.Fatalf("%v %v", env, err)
+	}
+}
+
+func TestProfilingAndRepackCacheAreExplicit(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
+		t.Skip("Linux/Android only")
+	}
+	binary := createRuntime(t, []string{"moe_pager"})
+	t.Setenv("NODEXLM_SMOLMAX_EXPERT_POOL", "8")
+	t.Setenv("NODEXLM_SMOLMAX_OPPROF", "2")
+	t.Setenv("NODEXLM_SMOLMAX_REPACK_CACHE", "relative.cache")
+	if _, err := NativeEnvironment(binary, "moe", true, 32, "0", 0); err == nil {
+		t.Fatal("accepted relative repack cache path")
+	}
+	cache := filepath.Join(t.TempDir(), "weights.cache")
+	t.Setenv("NODEXLM_SMOLMAX_REPACK_CACHE", cache)
+	env, err := NativeEnvironment(binary, "moe", true, 32, "0", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(env, " ")
+	if !strings.Contains(joined, "GGML_OPPROF=2") || !strings.Contains(joined, "GGML_REPACK_CACHE="+cache) {
+		t.Fatalf("missing explicit profiler/cache settings: %s", joined)
 	}
 }

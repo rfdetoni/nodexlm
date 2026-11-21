@@ -44,7 +44,8 @@ python3 scripts/register-smolmax-runtime.py \
 3. Apontar o NodexLM para o binário registrado com
    `nodexlm host --llama-bin /opt/smolmax/llama-server` (não `auto`) e
    configurar GPU layers **0** e distribuição RPC **desativada**.
-4. Para MoE (GGUF com `expert_count`):
+4. Para MoE (GGUF com `expert_count`), o tamanho do pool deve ser
+   configurado explicitamente após avaliar o consumo de RAM:
 
 ```sh
 NODEXLM_SMOLMAX_MODE=moe NODEXLM_SMOLMAX_EXPERT_POOL=32 \
@@ -52,7 +53,8 @@ NODEXLM_SMOLMAX_MODE=moe NODEXLM_SMOLMAX_EXPERT_POOL=32 \
   nodexlm host --llama-bin /opt/smolmax/llama-server
 ```
 
-5. Para modelo denso maior que a RAM:
+5. Para modelo denso maior que a RAM, definir o orçamento residente
+   explicitamente (não existe valor seguro universal):
 
 ```sh
 NODEXLM_SMOLMAX_MODE=stream NODEXLM_SMOLMAX_RESIDENT_MB=512 \
@@ -93,3 +95,17 @@ insuficiente, preserva-se o default de 4 threads.
 Não existe ganho de desempenho comprovado por este PR sem um runtime
 portado e testes físicos. O registro local de um executável é uma
 declaração do operador, não uma assinatura de segurança do fornecedor.
+
+## Perfil diagnóstico e cache de repacking
+
+Em um runtime com os kernels da mesma revisão do patch, pode-se optar por
+`NODEXLM_SMOLMAX_OPPROF=1` ou `2` e por
+`NODEXLM_SMOLMAX_REPACK_CACHE=/caminho/absoluto/cache.bin`.
+O diretório deve existir; não usar caminho relativo nem symlink no destino.
+O profiler aumenta o overhead e pode gerar muitos logs. O cache de repacking
+consome espaço adicional e somente deve ser reutilizado para o modelo,
+quantização e binário exatos que o criaram; limpar ao mudar qualquer um.
+**Não habilite estas opções no runtime b12255 sem o port nativo**.
+
+Os valores de pool e memória residente são agora obrigatórios para impedir
+que defaults adivinhados provoquem OOM em aparelhos de pouca RAM.
