@@ -18,8 +18,8 @@ import urllib.request
 
 UPSTREAM = "https://publish.djl.ai/tokenizers/0.21.0/jnilib/0.40.0/android"
 HASHES = {
-    "armeabi-v7a": "0499514c145bd266783260087968b7c5422f1c7f2258226c8a5ac454868728ec",
-    "arm64-v8a": "b7f08219d3369d0d3b78625938af591d91f475d7a17e01fe99497138432999c4",
+    "armeabi-v7a": "e7513baa8cbb77ea3c2bde284a28167d1a72643cbf705329ac863ea8f09e34b1",
+    "arm64-v8a": "45f386891cee7544ab4e3b27c640878018c4441cf43ef165451b41d280ea4502",
 }
 MAX_BYTES = 64 * 1024 * 1024
 
@@ -60,8 +60,15 @@ def install(root: pathlib.Path, arch: str, expected: str) -> None:
         found = digest(staged)
         if found != expected:
             raise ValueError(f"Upstream DJL tokenizer checksum mismatch for {arch}: {found}")
-        if staged.read_bytes()[:4] != b"\x7fELF":
-            raise ValueError(f"DJL tokenizer {arch} is not a native ELF")
+        # Refuse a tampered/mislabeled artifact even when a digest was repinned.
+        # ELF e_machine: ARM (40) for armeabi-v7a, AArch64 (183) for arm64.
+        with staged.open("rb") as binary:
+            header = binary.read(20)
+        if (len(header) != 20 or header[:4] != b"\x7fELF"
+                or header[4] != (1 if arch == "armeabi-v7a" else 2)
+                or header[5] != 1
+                or int.from_bytes(header[18:20], "little") != (40 if arch == "armeabi-v7a" else 183)):
+            raise ValueError(f"DJL tokenizer {arch} has an invalid ELF architecture")
         os.replace(staged, target)
         print(f"Verified DJL tokenizer {arch}: {found}")
     finally:

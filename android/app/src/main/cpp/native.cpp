@@ -247,6 +247,23 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         }
         if (probe) {
             ggml_backend_free(probe);
+            // Some Android Vulkan drivers initialize successfully but report
+            // no usable heap (or less than a single practical RPC allocation).
+            // In Auto, GPU-only would then advertise zero usable capacity to
+            // the Host, so no model tensors would ever be scheduled to this
+            // Guest. Prefer the already available CPU in this case. Explicit
+            // GPU/hybrid choices still retain their requested backend.
+            if (mode == "auto" && cpu) {
+                size_t freeBytes = 0;
+                size_t totalBytes = 0;
+                ggml_backend_dev_memory(gpu, &freeBytes, &totalBytes);
+                constexpr size_t minVulkanFree = 512ULL * 1024 * 1024;
+                if (totalBytes == 0 || freeBytes < minVulkanFree) {
+                    __android_log_print(ANDROID_LOG_WARN, "NodexLM-RPC",
+                        "Auto switching from Vulkan to CPU: usable Vulkan heap is not reported or below 512 MiB");
+                    gpu = nullptr;
+                }
+            }
         } else {
             // Auto can use CPU; GPU-only and hybrid fail explicitly below.
             gpu = nullptr;
