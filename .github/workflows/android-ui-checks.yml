@@ -56,6 +56,7 @@ jobs:
             ".github/workflows/android-apk.yml",
             ":app:assembleDebug",
             ":app:assembleRelease",
+            "name: nodexlm-android-debug",
             "name: nodexlm-android-updatable",
             "signing-certificate.sha256",
             "ANDROID_KEYSTORE_BASE64",
@@ -65,13 +66,12 @@ jobs:
           ):
             if marker not in workflow:
               raise SystemExit(f'APK workflow missing required trigger/build contract: {marker}')
-          if "name: nodexlm-android-debug" in workflow:
-            raise SystemExit("CI debug APK must not be published as an updater")
           for marker in (
             'dist/BUILD_INFO.txt',
             'source_commit=',
             'android_workflow_run=',
-            'build_variant=release',
+            'build_variant=',
+            'nodexlm-android-debug',
             'nodexlm-android-updatable',
             "run_branch",
             "run_id <= previous",

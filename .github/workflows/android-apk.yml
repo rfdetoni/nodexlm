@@ -138,7 +138,7 @@ jobs:
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare permanent Android signing for installable builds
+      - name: Prepare Android signing (required on tags)
         id: signing
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         shell: bash
@@ -149,23 +149,26 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          # A new debug key on every runner prevents Android in-place updates.
-          # Never publish an installable artifact when the permanent key is absent.
+          count=0
           for secret in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
-            if [[ -z "$secret" ]]; then
-              echo '::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD for a compatible Android update.'
-              exit 1
-            fi
+            [[ -n "$secret" ]] && count=$((count + 1))
           done
-          path="$RUNNER_TEMP/nodexlm-release.jks"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
-          chmod 600 "$path"
-          test -s "$path"
-          echo "configured=true" >> "$GITHUB_OUTPUT"
-          echo "path=$path" >> "$GITHUB_OUTPUT"
+          if [[ "$count" -eq 4 ]]; then
+            path="$RUNNER_TEMP/nodexlm-release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
+            chmod 600 "$path"
+            test -s "$path"
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "path=$path" >> "$GITHUB_OUTPUT"
+          elif [[ "$count" -ne 0 || "$GITHUB_REF" == refs/tags/* ]]; then
+            echo '::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD for tag releases.'
+            exit 1
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Build internal debug APK (PR only)
-        if: github.event_name == 'pull_request'
+      - name: Build debug APK (PR or unsigned main)
+        if: github.event_name == 'pull_request' || steps.signing.outputs.configured != 'true'
         working-directory: android
         shell: bash
         run: |
@@ -176,7 +179,7 @@ jobs:
             :app:assembleDebug
 
       - name: Verify debug APK and native library
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || steps.signing.outputs.configured != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -188,7 +191,19 @@ jobs:
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify "$apk"
           bash scripts/verify-android-pages.sh "$apk"
-          echo "Internal debug APK compiled and verified from $GITHUB_SHA (not published as an updater)." >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p dist
+          cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-android10-plus-debug.apk"
+          sha256sum dist/*-debug.apk > dist/SHA256SUMS-debug.txt
+          echo "Debug APK compiled and verified from \`$GITHUB_SHA\` (ARMv7 + ARM64, minSdk 29)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload debug APK for public beta
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.signing.outputs.configured != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodexlm-android-debug
+          path: dist/*-debug.apk
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Build signed release APK
         if: steps.signing.outputs.configured == 'true'
