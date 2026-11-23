@@ -103,7 +103,7 @@ function setDraftModels(items, chosen){
 }
 function settingsFromForm(model) {
  return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, context_tokens:+$('contextTokens').value,
-  gpu_layers:$('gpuLayers').value, moe_cpu:$('moeCPU').checked,
+  gpu_layers:$('gpuLayers').value, host_gpu:$('hostGpu').value, moe_cpu:$('moeCPU').checked,
   distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
   moe_cache_mib:+$('moeCache').value, moe_cache_cpu_share:+$('moeCacheCPUShare').value, flash_attention:$('flashAttention').value,
    kv_cache_type:$('kvCacheType').value, batch_size:+$('batchSize').value,
@@ -387,6 +387,7 @@ async function refresh(){
  if (!settingsInitialized) {
   for(const [id,v] of Object.entries({threads:s.threads,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
   $('runtimeBackend').value=s.backend||'llama.cpp';
+  $('hostGpu').value=s.host_gpu||'auto';
   $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'speed'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
   configureBackendUI();
  }
@@ -530,6 +531,7 @@ $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()
 function configureBackendUI(){
  const other=$('runtimeBackend').value==='mistralrs';
  $('distributed').disabled=other;
+ $('hostGpu').disabled=other;
  if(other && $('distributed').checked){
   $('distributed').checked=false;
   notice('mistral.rs experimental usa apenas o Host; Guests RPC permanecem no llama.cpp.');

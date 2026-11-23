@@ -40,6 +40,14 @@ func TestEngineAndGGUFScanner(t *testing.T) {
 	if err != nil || out != "world" {
 		t.Fatalf("out %q err %v", out, err)
 	}
+	raw, err := encodeChatPayload(protocol.ChatRequest{Model: "m", ReasoningEffort: "none", Messages: []protocol.Message{{Role: "user", Content: "hi"}}})
+	if err != nil || !strings.Contains(string(raw), `"enable_thinking":false`) {
+		t.Fatalf("expected chat_template_kwargs.enable_thinking=false, got %s err=%v", raw, err)
+	}
+	rawDefault, err := encodeChatPayload(protocol.ChatRequest{Model: "m", Messages: []protocol.Message{{Role: "user", Content: "hi"}}})
+	if err != nil || strings.Contains(string(rawDefault), "chat_template_kwargs") {
+		t.Fatalf("unexpected chat_template_kwargs on default request: %s err=%v", rawDefault, err)
+	}
 	if _, err := New("http://192.168.0.5:8080"); err == nil {
 		t.Fatal("remote backend allowed")
 	}

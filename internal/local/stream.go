@@ -19,7 +19,7 @@ import (
 // finish reasons. A broken backend stream is an error, never a false [DONE].
 func (e *Engine) GenerateStream(ctx context.Context, request protocol.ChatRequest, emit func([]byte) error) error {
 	request.Stream = true
-	raw, err := json.Marshal(request)
+	raw, err := encodeChatPayload(request)
 	if err != nil {
 		return err
 	}

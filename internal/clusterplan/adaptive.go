@@ -4,6 +4,7 @@ package clusterplan
 
 import (
 	"errors"
+	"math"
 	"sort"
 )
 
@@ -32,6 +33,13 @@ type Selection struct {
 // Speed mode minimizes participating links after choosing measured-priority
 // Guests with enough aggregate RAM; real performance requires benchmarking.
 func Select(blocks uint32, modelBytes, hostBudget uint64, candidates []Candidate, mode string) (Selection, error) {
+	return SelectWithHostSpeed(blocks, modelBytes, hostBudget, 0, candidates, mode)
+}
+
+// SelectWithHostSpeed chooses the RPC subset and adjusts local vs remote layer
+// counts proportionally to measured tokens/s when both Host and all selected
+// Guests have valid throughput benchmarks, bounded by memory admission.
+func SelectWithHostSpeed(blocks uint32, modelBytes, hostBudget uint64, hostSpeed float64, candidates []Candidate, mode string) (Selection, error) {
 	if mode != "" && mode != "capacity" && mode != "speed" {
 		return Selection{}, errors.New("invalid placement strategy")
 	}
@@ -100,8 +108,48 @@ func Select(blocks uint32, modelBytes, hostBudget uint64, candidates []Candidate
 	if err != nil {
 		return Selection{}, err
 	}
+	speedWeighted := false
+	if hostSpeed > 0 && len(selected) > 0 && modelBytes <= ^uint64(0)/115 {
+		guestSpeedSum := 0.0
+		allMeasured := true
+		var remoteBudget uint64
+		for _, g := range selected {
+			if g.Performance.TokensPerSecond <= 0 {
+				allMeasured = false
+				break
+			}
+			guestSpeedSum += g.Performance.TokensPerSecond
+			remoteBudget += g.CapacityBytes
+		}
+		if allMeasured {
+			totalSpeed := hostSpeed + guestSpeedSum
+			target := int(math.Round(float64(blocks) * hostSpeed / totalSpeed))
+			required := modelBytes * 115 / 100
+			// Find memory-safe [minLocal, maxLocal] bounds within [0, blocks-1].
+			maxLocal := int(blocks) - 1
+			for maxLocal > 0 && required*uint64(maxLocal)/uint64(blocks) > hostBudget {
+				maxLocal--
+			}
+			minLocal := 0
+			for minLocal < int(blocks)-1 && required*uint64(int(blocks)-minLocal)/uint64(blocks) > remoteBudget {
+				minLocal++
+			}
+			if minLocal <= maxLocal {
+				if target < minLocal {
+					target = minLocal
+				}
+				if target > maxLocal {
+					target = maxLocal
+				}
+				layers = target
+				speedWeighted = true
+			}
+		}
+	}
 	result := Selection{Guests: selected, LocalLayers: layers}
-	if mode == "speed" {
+	if speedWeighted {
+		result.Reason = "Speed-weighted placement from measured Host and Guest tokens/s within memory bounds"
+	} else if mode == "speed" {
 		result.Reason = "Measured-priority RPC subset with enough estimated memory; compare real cluster tokens/s before claiming acceleration"
 	} else {
 		result.Reason = "All connected RPC Guests; placement proportional to available memory"

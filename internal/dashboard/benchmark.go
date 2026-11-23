@@ -60,10 +60,14 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 		binary = ""
 	} else if nodeID != "" {
 		if binary == "" || binary == "llama-server" {
-			binary, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, "auto")
+			binary, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, effectiveHostRuntimeBackend(settings.HostGPU))
 		}
 	} else {
-		binary, err = llamaruntime.AutoExecutable(ctx, m.dir, binary)
+		if (binary == "" || binary == "llama-server") && effectiveHostRuntimeBackend(settings.HostGPU) == "vulkan" {
+			binary, _, err = llamaruntime.Ensure(ctx, m.dir, "vulkan")
+		} else {
+			binary, err = llamaruntime.AutoExecutable(ctx, m.dir, binary)
+		}
 	}
 	if err != nil {
 		return InferenceSample{}, err

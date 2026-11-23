@@ -13,7 +13,6 @@ import (
 	"os"
 	urlpath "path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +36,7 @@ type Settings struct {
 	Threads           int     `json:"threads"`
 	ContextTokens     int     `json:"context_tokens"`
 	GPULayers         string  `json:"gpu_layers"`
+	HostGPU           string  `json:"host_gpu,omitempty"`
 	MoECPU            bool    `json:"moe_cpu"`
 	MoECPULayers      int     `json:"moe_cpu_layers"`
 	MoECacheMiB       int     `json:"moe_cache_mib"`
@@ -121,7 +121,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err := os.MkdirAll(modelDir, 0700); err != nil {
 		return nil, err
 	}
-	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, runtime.NumCPU()-1)), ContextTokens: 2048, GPULayers: "auto", PlacementStrategy: "speed"}}
+	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, hardware.PhysicalCPUCount())), ContextTokens: 2048, GPULayers: "auto", PlacementStrategy: "speed"}}
 	b, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
 	if err == nil {
 		if err = json.Unmarshal(b, &m.settings); err != nil {
@@ -245,6 +245,9 @@ func (m *Manager) validate(s Settings) error {
 	if s.BatchSize < 0 || s.BatchSize > 8192 || s.UBatchSize < 0 || s.UBatchSize > 4096 ||
 		(s.BatchSize > 0 && s.UBatchSize > s.BatchSize) {
 		return errors.New("invalid batch_size or ubatch_size")
+	}
+	if s.HostGPU != "" && s.HostGPU != "auto" && s.HostGPU != "cpu" && s.HostGPU != "vulkan" {
+		return errors.New("host_gpu must be auto, cpu or vulkan")
 	}
 	if s.SpeculativeMode != "" && s.SpeculativeMode != "off" && s.SpeculativeMode != "ngram" && s.SpeculativeMode != "draft" {
 		return errors.New("speculative_mode must be off, ngram or draft")
@@ -488,6 +491,7 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		localLayers = selection.LocalLayers
 		devicePlacement = planRPCDevices(selection, guests, model, s, uint64(size))
+		devicePlacement, localLayers = withHostVulkan(devicePlacement, localLayers, model.BlockCount, s.HostGPU, s.GPULayers)
 		selectedIDs := make([]string, 0, len(selection.Guests))
 		for _, candidate := range selection.Guests {
 			selectedIDs = append(selectedIDs, candidate.ID)
@@ -549,7 +553,9 @@ func (m *Manager) load(ctx context.Context) error {
 		// This opt-in backend is separately resolved by local.Managed.
 		resolved = ""
 	} else if usingRPC && (m.binary == "" || m.binary == "llama-server") {
-		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, "auto")
+		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, effectiveHostRuntimeBackend(s.HostGPU))
+	} else if (m.binary == "" || m.binary == "llama-server") && effectiveHostRuntimeBackend(s.HostGPU) == "vulkan" {
+		resolved, _, err = llamaruntime.Ensure(ctx, m.dir, "vulkan")
 	} else {
 		resolved, err = llamaruntime.AutoExecutable(ctx, m.dir, m.binary)
 	}

@@ -166,3 +166,38 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 	}
 	return result
 }
+
+func effectiveHostRuntimeBackend(hostGPU string) string {
+	switch hostGPU {
+	case "vulkan", "cpu":
+		return hostGPU
+	default:
+		return "auto"
+	}
+}
+
+// withHostVulkan prepends the Host's Vulkan0 device to an RPC placement when
+// explicitly requested, proportional to local vs remote layer counts.
+func withHostVulkan(plan RPCDevicePlacement, localLayers int, blocks uint32, hostGPU, gpuLayers string) (RPCDevicePlacement, int) {
+	if hostGPU != "vulkan" || gpuLayers == "0" || localLayers <= 0 || int(blocks) <= localLayers || len(plan.Devices) == 0 {
+		return plan, localLayers
+	}
+	remoteLayers := uint64(int(blocks) - localLayers)
+	var hostSplit uint64
+	if len(plan.Split) == len(plan.Devices) && len(plan.Split) > 0 {
+		var remoteSum uint64
+		for _, v := range plan.Split {
+			remoteSum += v
+		}
+		hostSplit = max(uint64(1), (remoteSum*uint64(localLayers)+remoteLayers/2)/remoteLayers)
+		plan.Split = append([]uint64{hostSplit}, plan.Split...)
+	} else {
+		plan.Split = []uint64{uint64(localLayers), remoteLayers}
+	}
+	plan.Devices = append([]string{"Vulkan0"}, plan.Devices...)
+	if plan.Modes == nil {
+		plan.Modes = make(map[string]string)
+	}
+	plan.Modes["host"] = "vulkan"
+	return plan, 0
+}
