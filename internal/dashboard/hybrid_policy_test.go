@@ -85,3 +85,30 @@ func TestRPCPlacementSupportsCPUGuestWithMeasuredMemory(t *testing.T) {
 		t.Fatalf("CPU-only worker was rejected: %+v", plan)
 	}
 }
+
+func TestWithHostVulkanPrependsHostDeviceAndClearsLocalLayers(t *testing.T) {
+	base := RPCDevicePlacement{
+		Devices: []string{"RPC0"},
+		Split:   []uint64{4096},
+		Modes:   map[string]string{"guest": "gpu"},
+	}
+	got, local := withHostVulkan(base, 50, 65, "vulkan", "auto")
+	if local != 0 {
+		t.Fatalf("expected localLayers=0 when Host uses Vulkan0, got %d", local)
+	}
+	if got.DeviceArg() != "Vulkan0,RPC0" || got.Modes["host"] != "vulkan" {
+		t.Fatalf("unexpected Vulkan+RPC placement: %+v", got)
+	}
+	if len(got.Split) != 2 || got.Split[0] <= got.Split[1] {
+		t.Fatalf("expected Host split > remote split for 50/15 layers, got %+v", got.Split)
+	}
+	// Disabled when host_gpu != vulkan or gpu_layers == 0.
+	unchanged, loc2 := withHostVulkan(base, 50, 65, "auto", "auto")
+	if loc2 != 50 || unchanged.DeviceArg() != "RPC0" {
+		t.Fatalf("auto host_gpu unexpectedly enabled Vulkan0: %+v %d", unchanged, loc2)
+	}
+	zeroGPU, loc3 := withHostVulkan(base, 50, 65, "vulkan", "0")
+	if loc3 != 50 || zeroGPU.DeviceArg() != "RPC0" {
+		t.Fatalf("gpu_layers=0 unexpectedly enabled Vulkan0: %+v %d", zeroGPU, loc3)
+	}
+}

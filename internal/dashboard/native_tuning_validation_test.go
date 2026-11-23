@@ -23,6 +23,7 @@ func TestNativeTuningSettingsValidation(t *testing.T) {
 		{"KV reuse negative", func(s *Settings) { s.CacheReuseTokens = -1 }},
 		{"speculation without draft", func(s *Settings) { s.SpeculativeTokens = 3 }},
 		{"speculation oversized", func(s *Settings) { s.SpeculativeMode = "draft"; s.DraftModel = "draft.gguf"; s.SpeculativeTokens = 33 }},
+		{"invalid host gpu", func(s *Settings) { s.HostGPU = "cuda" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

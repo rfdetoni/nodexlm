@@ -146,7 +146,15 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		}
 		candidates = append(candidates, candidate)
 	}
-	selection, err := clusterplan.Select(meta.BlockCount, size, hostBudget, candidates, strategy)
+	var hostSpeed float64
+	for _, sample := range samples {
+		if sample.Kind == "benchmark" && sample.Model == s.Model &&
+			sample.TokensPerSecond > 0 && !sample.MeasuredAt.After(now) && now.Sub(sample.MeasuredAt) < 24*time.Hour {
+			hostSpeed = sample.TokensPerSecond
+			break
+		}
+	}
+	selection, err := clusterplan.SelectWithHostSpeed(meta.BlockCount, size, hostBudget, hostSpeed, candidates, strategy)
 	if err != nil {
 		return selection, err
 	}
@@ -162,7 +170,7 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 	}
 	// A speed-optimized subset can fit the weights but not the KV/context.
 	// Preserve correctness by retrying placement with all healthy Guests.
-	full, fullErr := clusterplan.Select(meta.BlockCount, size, hostBudget, candidates, "capacity")
+	full, fullErr := clusterplan.SelectWithHostSpeed(meta.BlockCount, size, hostBudget, hostSpeed, candidates, "capacity")
 	if fullErr != nil {
 		return clusterplan.Selection{}, fullErr
 	}

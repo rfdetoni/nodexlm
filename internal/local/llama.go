@@ -43,9 +43,25 @@ func New(backend string) (*Engine, error) {
 	return &Engine{BackendURL: strings.TrimRight(backend, "/"), HTTP: &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConnsPerHost: 1}}}, nil
 }
 
+func encodeChatPayload(request protocol.ChatRequest) ([]byte, error) {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	if request.ReasoningEffort != "none" {
+		return data, nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, err
+	}
+	obj["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
+	return json.Marshal(obj)
+}
+
 func (e *Engine) Complete(ctx context.Context, request protocol.ChatRequest) (json.RawMessage, error) {
 	request.Stream = false
-	data, err := json.Marshal(request)
+	data, err := encodeChatPayload(request)
 	if err != nil {
 		return nil, err
 	}
