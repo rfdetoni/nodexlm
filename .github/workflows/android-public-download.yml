@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           run_id="$REQUESTED_RUN_ID"
           if [[ -z "$run_id" ]]; then
-            # Manual invocation: locate the newest non-expired debug artifact,
+            # Manual invocation: locate the newest non-expired permanently signed artifact,
             # not merely a successful run whose build job was skipped.
             run_id="$(gh api "repos/$GH_REPO/actions/artifacts?name=nodexlm-android-updatable&per_page=100" --jq '[.artifacts[] | select(.expired == false)] | .[0].workflow_run.id // empty')"
           fi
