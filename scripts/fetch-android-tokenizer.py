@@ -19,7 +19,7 @@ import urllib.request
 UPSTREAM = "https://publish.djl.ai/tokenizers/0.21.0/jnilib/0.40.0/android"
 HASHES = {
     "armeabi-v7a": "e7513baa8cbb77ea3c2bde284a28167d1a72643cbf705329ac863ea8f09e34b1",
-    "arm64-v8a": "b7f08219d3369d0d3b78625938af591d91f475d7a17e01fe99497138432999c4",
+    "arm64-v8a": "45f386891cee7544ab4e3b27c640878018c4441cf43ef165451b41d280ea4502",
 }
 MAX_BYTES = 64 * 1024 * 1024
 
