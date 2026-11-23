@@ -497,6 +497,19 @@ class RpcGuestService : Service() {
         return socket
     }
 
+    // LocalSocketImpl.close() only calls Os.close(fd) without shutdown(); on
+    // Linux AF_UNIX a blocked read() keeps the kernel file open so single-client
+    // ggml-rpc never sees EOF and hangs the next connection.
+    private fun shutdownLocalSocket(socket: android.net.LocalSocket) {
+        try { socket.shutdownOutput() } catch (_: Exception) { }
+        try { socket.shutdownInput() } catch (_: Exception) { }
+    }
+
+    private fun closeLocalSocket(socket: android.net.LocalSocket) {
+        shutdownLocalSocket(socket)
+        try { socket.close() } catch (_: Exception) { }
+    }
+
     private fun readStatus(input: java.io.InputStream): String {
         val result = ByteArrayOutputStream()
         var trailer = 0
@@ -648,7 +661,7 @@ class RpcGuestService : Service() {
                     } catch (e: Exception) {
                         if (running.get()) Log.w(LOG, "RPC tunnel $slot Host->native relay failed", e)
                     } finally {
-                        try { local.close() } catch (_: Exception) { }
+                        shutdownLocalSocket(local)
                         try { remote.close() } catch (_: Exception) { }
                         sender.join(1000)
                     }
@@ -663,7 +676,7 @@ class RpcGuestService : Service() {
                 }
             } finally {
                 localSockets.remove(local)
-                try { local.close() } catch (_: Exception) { }
+                closeLocalSocket(local)
             }
             } finally {
                 claimedNativeRelays.decrementAndGet()
@@ -702,7 +715,7 @@ class RpcGuestService : Service() {
         recordGuestEvent(state, reason)
         diagnostics.shutdownNow()
         running.set(false)
-        synchronized(localSockets){localSockets.forEach {try{it.close()}catch(_:Exception){}};localSockets.clear()}
+        synchronized(localSockets){localSockets.forEach { closeLocalSocket(it) };localSockets.clear()}
         synchronized(sockets) {
             sockets.forEach { try { it.close() } catch (_: Exception) {} }
             sockets.clear()
