@@ -90,7 +90,7 @@ internal object BetaApkDownload {
         val fileName = "NodexLM-android-beta-${valid.sha256.take(12)}.apk"
         val request = DownloadManager.Request(Uri.parse(valid.url))
             .setTitle("NodexLM Android beta")
-            .setDescription("Test APK: different signing keys may prevent in-place installation")
+            .setDescription("APK beta assinada: atualiza sem reinstalar após migração da antiga chave debug")
             .setMimeType("application/vnd.android.package-archive")
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
