@@ -2,6 +2,10 @@
 /nodexlm
 /bin/
 /.gradle/
+/android/.android/
+/android/.gradle/
+/android/app/.cxx/
+/android/app/src/main/jniLibs/
 **/build/
 .dart_tool/
 **/.idea/
