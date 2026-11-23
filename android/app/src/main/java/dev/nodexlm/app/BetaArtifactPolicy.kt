@@ -6,7 +6,7 @@ import java.net.URI
 
 internal data class BetaArtifact(val url: String, val sha256: String, val sizeBytes: Long)
 
-/** Public debug APK: downloadable for testing, never an automatic in-place update. */
+/** Public beta built as non-debuggable release with permanent signing. Legacy asset name retained for older clients. */
 internal object BetaArtifactPolicy {
     const val TAG = "android-debug"
     const val FILE = "NodexLM-android10-plus-debug.apk"
