@@ -27,7 +27,13 @@ O script verifica o certificado e envia os quatro secrets por stdin, sem senha n
 
 Para criar uma identidade em outra instalação, o script do repositório oferece `generate --directory CAMINHO`. Ele exige um diretório novo, fora de repositórios Git. Isso é bootstrap de uma identidade nova, não um procedimento de rotação.
 
-O workflow Android verifica um build release minificado mesmo sem secrets, usando uma chave efêmera de teste. Esse APK não é publicado. Releases reais usam a identidade persistente configurada. A transição de APK debug para release pode exigir reinstalação; preserve os dados antes.
+O pipeline Android compila um APK debug **apenas para testes de CI**. O download público beta (tag `android-debug`, nome legado mantido por compatibilidade) agora contém um **build release não debuggable**, assinado com a **mesma identidade permanente** utilizada nas releases. O workflow valida o SHA-256 público do certificado contra `android/signing-certificate.sha256` e exige os quatro secrets de assinatura antes de publicar qualquer APK instalável. Sem a identidade configurada, o build público falha em vez de distribuir uma chave efêmera.
+
+O `versionCode` usa o número crescente do workflow Android APK e o publicador rejeita um run anterior ao já publicado, para evitar downgrade acidental. Atualizações beta → release, release → beta e beta → beta são compatíveis **se** o certificado e o `versionCode` corresponderem às regras do Android.
+
+**Migração uma vez:** builds antigos `-debug.apk` assinados com certificados temporários de cada runner não podem ser atualizados in-place, pois o Android verifica a assinatura. Faça backup dos dados/pareamento antes da desinstalação inicial; reinstale uma vez o APK beta assinado permanentemente. Não existe forma segura de reutilizar as chaves debug dos runners anteriores. Depois disso, as próximas instalações assinadas com essa identidade atualizam normalmente sem desinstalar.
+
+Se os secrets ainda não estiverem configurados, use **a identidade já documentada e preservada**; não gere outra sem necessidade. Para configuração, consulte os passos anteriores nesta seção.
 
 O checksum público Android usa `SHA256SUMS-android.txt`. Ele não sobrescreve `SHA256SUMS.txt` dos arquivos desktop/CLI.
 
