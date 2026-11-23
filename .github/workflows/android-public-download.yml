@@ -1,7 +1,8 @@
 name: Android APK - Public Download
 
-# Reuse a successful Android build instead of recompiling native llama.cpp.
-# Publish an openly downloadable testing APK for Android 10+ sideload users.
+# Reuse the release-signed Android build rather than compiling again.
+# Legacy debug filename/tag are retained for existing in-app download URLs.
+# The APK is the non-debuggable, permanently signed release variant.
 on:
   workflow_run:
     workflows: ['Android APK']
@@ -18,7 +19,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: nodexlm-public-android-debug
+  group: nodexlm-public-android-updatable
   cancel-in-progress: false
 
 jobs:
@@ -42,7 +43,7 @@ jobs:
           if [[ -z "$run_id" ]]; then
             # Manual invocation: locate the newest non-expired debug artifact,
             # not merely a successful run whose build job was skipped.
-            run_id="$(gh api "repos/$GH_REPO/actions/artifacts?name=nodexlm-android-debug&per_page=100" --jq '[.artifacts[] | select(.expired == false)] | .[0].workflow_run.id // empty')"
+            run_id="$(gh api "repos/$GH_REPO/actions/artifacts?name=nodexlm-android-updatable&per_page=100" --jq '[.artifacts[] | select(.expired == false)] | .[0].workflow_run.id // empty')"
           fi
           if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
             echo "::error::No Android APK build artifact available"
@@ -53,20 +54,38 @@ jobs:
             echo "::error::Android APK run $run_id did not succeed"
             exit 1
           fi
-          available="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts?per_page=100" --jq '[.artifacts[] | select(.name == "nodexlm-android-debug" and .expired == false)] | length')"
+          run_branch="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.head_branch')"
+          if [[ "$run_branch" != "main" ]]; then
+            echo "::error::Refusing to publish an Android APK not built on main"
+            exit 1
+          fi
+          available="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts?per_page=100" --jq '[.artifacts[] | select(.name == "nodexlm-android-updatable" and .expired == false)] | length')"
           if [[ "$available" -eq 0 && "$AUTOMATIC_EVENT" == "true" ]]; then
             echo "No APK artifact in run $run_id (native/launcher unchanged); skipping public release without rebuilding."
             echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ "$available" -eq 0 ]]; then
-            echo "::error::Specified successful run $run_id has no debug APK"
+            echo "::error::Successful run $run_id does not contain a permanently signed APK"
             exit 1
           fi
+          # workflow_run events can arrive out of order. Never replace a
+          # newer installed beta with an older versionCode on the public URL.
+          if gh release view android-debug --repo "$GH_REPO" >/dev/null 2>&1; then
+            mkdir -p dist/previous
+            if gh release download android-debug --repo "$GH_REPO" --pattern BUILD_INFO.txt --dir dist/previous >/dev/null 2>&1; then
+              previous="$(sed -n 's/^android_workflow_run=//p' dist/previous/BUILD_INFO.txt)"
+              if [[ "$previous" =~ ^[0-9]+$ ]] && ((run_id <= previous)); then
+                echo "Newer or equal Android run $previous is already published; skipping stale run $run_id."
+                echo "available=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          fi
           mkdir -p dist
-          gh run download "$run_id" --repo "$GH_REPO" --name nodexlm-android-debug --dir dist
+          gh run download "$run_id" --repo "$GH_REPO" --name nodexlm-android-updatable --dir dist
           shopt -s nullglob
-          apks=(dist/*-debug.apk)
+          apks=(dist/NodexLM-android-universal.apk)
           if [[ "${#apks[@]}" -ne 1 ]]; then
             echo "::error::Expected exactly one APK in the successful Android artifact"
             exit 1
@@ -81,6 +100,11 @@ jobs:
           done
           (cd dist && sha256sum NodexLM-android10-plus-debug.apk > SHA256SUMS.txt)
           source_sha="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.head_sha')"
+          version_code="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.run_number')"
+          if [[ ! "$version_code" =~ ^[0-9]+$ ]]; then
+            echo "::error::Missing monotonically increasing Android versionCode"
+            exit 1
+          fi
           if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::Android build source commit could not be verified"
             exit 1
@@ -89,6 +113,9 @@ jobs:
             echo "source_commit=$source_sha"
             echo "android_workflow_run=$run_id"
             echo "package=NodexLM-android10-plus-debug.apk"
+            echo "build_variant=release"
+            echo "signature=permanent"
+            echo "version_code=$version_code"
             echo "min_sdk=29"
             echo "abis=armeabi-v7a,arm64-v8a"
           } > dist/BUILD_INFO.txt
@@ -105,13 +132,15 @@ jobs:
           set -euo pipefail
           tag="android-debug"
           files=(dist/NodexLM-android10-plus-debug.apk dist/SHA256SUMS.txt dist/BUILD_INFO.txt)
+          note='APK beta universal ARMv7/ARM64 para Android 10+, compilado como release e assinado com a mesma identidade permanente das releases oficiais. O nome do arquivo -debug foi mantido somente para preservar URLs de versões antigas. APKs anteriores assinados com chave debug temporária exigem migração única (faça backup antes de desinstalar); após isso, a atualização poderá ocorrer sem reinstalação. Não instalar builds debug dos jobs de CI.'
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$tag" "${files[@]}" --repo "$GH_REPO" --clobber
+            gh release edit "$tag" --repo "$GH_REPO" --title 'NodexLM Android 10+ - Beta assinada' --notes "$note" --prerelease --latest=false
           else
             gh release create "$tag" "${files[@]}" --repo "$GH_REPO" \
               --target "$GITHUB_SHA" \
-              --title 'NodexLM Android 10+ - APK de teste' \
-              --notes 'APK universal ARMv7/ARM64 para Android 10+. Instalação direta, sem Play Store. Versão de teste assinada com chave debug gerada no CI, que pode mudar entre compilações: pode ser necessário desinstalar a versão anterior, perdendo os dados locais. Para atualizações sem desinstalação utilize versões oficiais assinadas sempre com a mesma chave.' \
+              --title 'NodexLM Android 10+ - Beta assinada' \
+              --notes "$note" \
               --prerelease --latest=false
           fi
           echo "Download público: https://github.com/$GH_REPO/releases/download/$tag/NodexLM-android10-plus-debug.apk" >> "$GITHUB_STEP_SUMMARY"
