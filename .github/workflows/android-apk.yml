@@ -164,7 +164,8 @@ jobs:
           echo "configured=true" >> "$GITHUB_OUTPUT"
           echo "path=$path" >> "$GITHUB_OUTPUT"
 
-      - name: Build installable debug APK
+      - name: Build internal debug APK (PR only)
+        if: github.event_name == 'pull_request'
         working-directory: android
         shell: bash
         run: |
@@ -175,6 +176,7 @@ jobs:
             :app:assembleDebug
 
       - name: Verify debug APK and native library
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
