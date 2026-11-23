@@ -223,7 +223,7 @@ jobs:
             echo "::error::Android update certificate differs from the pinned permanent certificate. Refusing to distribute an incompatible APK."
             exit 1
           fi
-          package_line="$("$tools/aapt" dump badging "$apk" | head -n 1)"
+          package_line="$("$tools/aapt" dump badging "$apk" | sed -n '1p')"
           [[ "$package_line" == *"name='dev.nodexlm.app'"* && "$package_line" == *"versionCode='${{ steps.version.outputs.code }}'"* ]] || {
             echo "::error::Android application ID/versionCode mismatch"
             exit 1
