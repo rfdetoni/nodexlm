@@ -64,7 +64,7 @@ def install(root: pathlib.Path, arch: str, expected: str) -> None:
         # ELF e_machine: ARM (40) for armeabi-v7a, AArch64 (183) for arm64.
         with staged.open("rb") as binary:
             header = binary.read(20)
-        if (len(header) != 20 or header[:4] != b"\\x7fELF"
+        if (len(header) != 20 or header[:4] != b"\x7fELF"
                 or header[4] != (1 if arch == "armeabi-v7a" else 2)
                 or header[5] != 1
                 or int.from_bytes(header[18:20], "little") != (40 if arch == "armeabi-v7a" else 183)):
