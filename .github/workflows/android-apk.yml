@@ -6,11 +6,6 @@ name: Android APK
 # A successful full APK is published by android-public-download.yml.
 on:
   workflow_dispatch:
-    inputs:
-      verify_release:
-        description: 'Also validate minified release with disposable test signing (slower)'
-        type: boolean
-        default: false
   pull_request:
     paths:
       - 'android/**'
@@ -18,6 +13,7 @@ on:
       - 'internal/llamaruntime/patches/**'
       - 'scripts/apply-rpc-patch.cmake'
       - 'scripts/verify-android-pages.sh'
+      - 'scripts/fetch-android-tokenizer.py'
       - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
@@ -27,6 +23,7 @@ on:
       - 'internal/llamaruntime/patches/**'
       - 'scripts/apply-rpc-patch.cmake'
       - 'scripts/verify-android-pages.sh'
+      - 'scripts/fetch-android-tokenizer.py'
       - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
@@ -141,8 +138,9 @@ jobs:
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare release signing (required on tags)
+      - name: Prepare permanent Android signing for installable builds
         id: signing
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -151,22 +149,20 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          count=0
-          for value in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
-            [[ -n "$value" ]] && count=$((count + 1))
+          # A new debug key on every runner prevents Android in-place updates.
+          # Never publish an installable artifact when the permanent key is absent.
+          for secret in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            if [[ -z "$secret" ]]; then
+              echo '::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD for a compatible Android update.'
+              exit 1
+            fi
           done
-          if [[ "$count" -eq 4 ]]; then
-            path="$RUNNER_TEMP/nodexlm-release.jks"
-            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
-            chmod 600 "$path"
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "path=$path" >> "$GITHUB_OUTPUT"
-          elif [[ "$count" -ne 0 || "$GITHUB_REF" == refs/tags/* ]]; then
-            echo '::error::Set all four Android signing secrets for tag releases: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.'
-            exit 1
-          else
-            echo 'configured=false' >> "$GITHUB_OUTPUT"
-          fi
+          path="$RUNNER_TEMP/nodexlm-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
+          chmod 600 "$path"
+          test -s "$path"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
 
       - name: Build installable debug APK
         working-directory: android
@@ -190,36 +186,10 @@ jobs:
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify "$apk"
           bash scripts/verify-android-pages.sh "$apk"
-          mkdir -p dist
-          cp "$apk" "dist/NodexLM-${{ steps.version.outputs.name }}-android10-plus-debug.apk"
-          sha256sum dist/*.apk > dist/SHA256SUMS-debug.txt
-          echo "Built debug APK from \`$GITHUB_SHA\` (ARMv7 + ARM64, minSdk 29)." >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: nodexlm-android-debug
-          path: dist/*-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Validate minified release signing with an ephemeral test identity
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.verify_release && steps.signing.outputs.configured != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          identity="$RUNNER_TEMP/nodexlm-test-identity"
-          python3 scripts/android-signing.py generate --directory "$identity"
-          export NODEXLM_ANDROID_KEYSTORE_FILE="$identity/android-release.p12"
-          export NODEXLM_ANDROID_STORE_PASSWORD="$(cat "$identity/password.txt")"
-          export NODEXLM_ANDROID_KEY_PASSWORD="$NODEXLM_ANDROID_STORE_PASSWORD"
-          export NODEXLM_ANDROID_KEY_ALIAS=nodexlm-android-release
-          (cd android && gradle --no-daemon --max-workers=2 :app:assembleRelease)
-          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify android/app/build/outputs/apk/release/app-release.apk
-          echo 'Minified release validation passed. Test-signed APK is not published.'
+          echo "Internal debug APK compiled and verified from $GITHUB_SHA (not published as an updater)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build signed release APK
-        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true'
+        if: steps.signing.outputs.configured == 'true'
         working-directory: android
         shell: bash
         env:
@@ -234,8 +204,8 @@ jobs:
             -PnodexVersionCode='${{ steps.version.outputs.code }}' \
             :app:assembleRelease
 
-      - name: Verify signed release APK and package it
-        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true'
+      - name: Verify permanent APK identity and package update
+        if: steps.signing.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -244,11 +214,34 @@ jobs:
           for abi in armeabi-v7a arm64-v8a; do
             unzip -Z1 "$apk" | grep -Fqx "lib/${abi}/libnodexlm.so" || { echo "::error::Missing $abi native library"; exit 1; }
           done
-          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
-          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
+          tools="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS"
+          "$tools/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
+          "$tools/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/nodexlm-cert-info.txt"
+          expected="$(tr -d '[:space:]' < android/signing-certificate.sha256 | tr '[:upper:]' '[:lower:]')"
+          actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/nodexlm-cert-info.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d '\r')"
+          if [[ ! "$expected" =~ ^[0-9a-f]{64}$ || "$actual" != "$expected" ]]; then
+            echo "::error::Android update certificate differs from the pinned permanent certificate. Refusing to distribute an incompatible APK."
+            exit 1
+          fi
+          package_line="$("$tools/aapt" dump badging "$apk" | head -n 1)"
+          [[ "$package_line" == *"name='dev.nodexlm.app'"* && "$package_line" == *"versionCode='${{ steps.version.outputs.code }}'"* ]] || {
+            echo "::error::Android application ID/versionCode mismatch"
+            exit 1
+          }
           bash scripts/verify-android-pages.sh "$apk"
+          mkdir -p dist
           cp "$apk" dist/NodexLM-android-universal.apk
           (cd dist && sha256sum NodexLM-android-universal.apk > SHA256SUMS-android.txt)
+          echo "Verified permanent Android certificate ${expected}, versionCode ${{ steps.version.outputs.code }}." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload updatable Android APK for public beta
+        if: github.ref == 'refs/heads/main' && steps.signing.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodexlm-android-updatable
+          path: dist/NodexLM-android-universal.apk
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Build update manifest for direct Android updates
         if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true'
@@ -282,8 +275,7 @@ jobs:
       - name: Remove temporary signing keys
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/nodexlm-release.jks"
-          rm -rf "$RUNNER_TEMP/nodexlm-test-identity"
+          rm -f "$RUNNER_TEMP/nodexlm-release.jks" "$RUNNER_TEMP/nodexlm-cert-info.txt"
 
   publish:
     name: Publish signed APK to GitHub Releases
