@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
