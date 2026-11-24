@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -85,6 +86,9 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 	if err != nil {
 		return InferenceSample{}, err
 	}
+	if nodeID != "" && settings.ParallelSlots > 1 {
+		return InferenceSample{}, errors.New("RPC benchmark requires a single inference slot")
+	}
 	if nodeID == "" {
 		if err = validatePlacementMemory(meta, settings, uint64(size), hostBudget, nil); err != nil {
 			return InferenceSample{}, err
@@ -115,7 +119,41 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 		return InferenceSample{}, err
 	}
 	engine := managedFromSettings(settings, binary, path, model, draftPath)
-	if nodeID != "" {
+	var topology string
+	if nodeID == "cluster" {
+		if provider == nil {
+			return InferenceSample{}, errors.New("no RPC Guests")
+		}
+		guests := provider()
+		selection, err := m.chooseRPC(settings, meta, uint64(size), hostBudget, guests)
+		if err != nil {
+			return InferenceSample{}, err
+		}
+		if len(selection.Guests) == 0 {
+			return InferenceSample{}, errors.New("placement selected Host only; choose capacity strategy to measure a cluster")
+		}
+		placement, layers := withHostVulkan(planRPCDevices(selection, guests, meta, settings, uint64(size)), selection.LocalLayers, meta.BlockCount, settings.HostGPU, settings.GPULayers)
+		for _, selected := range selection.Guests {
+			for _, guest := range guests {
+				if selected.ID == guest.ID {
+					engine.RPCServers = append(engine.RPCServers, guest.Endpoint)
+					topology += guest.ID + ":"
+					break
+				}
+			}
+		}
+		if len(engine.RPCServers) != len(selection.Guests) {
+			return InferenceSample{}, errors.New("RPC placement changed")
+		}
+		if err = preflightRPCGuests(ctx, selection.Guests, engine.RPCServers); err != nil {
+			return InferenceSample{}, err
+		}
+		engine.RPCLocalLayers = layers
+		engine.RPCDeviceNames = placement.Devices
+		engine.RPCTensorSplit = placement.TensorSplitArg()
+		engine.GPULayers = "all"
+		topology += fmt.Sprint(layers) + ":" + placement.DeviceArg() + ":" + placement.TensorSplitArg()
+	} else if nodeID != "" {
 		if provider == nil {
 			return InferenceSample{}, errors.New("no RPC Guests")
 		}
@@ -129,6 +167,10 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 					return InferenceSample{}, err
 				}
 				engine.RPCServers = []string{guest.Endpoint}
+				topology = guest.ID
+				if err = preflightRPCGuests(ctx, []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}, engine.RPCServers); err != nil {
+					return InferenceSample{}, err
+				}
 				engine.RPCLocalLayers = 0
 				engine.GPULayers = "all"
 				found = true
@@ -160,7 +202,11 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 	measurements := make([]InferenceSample, 0, runs)
 	key := model
 	if nodeID != "" {
-		key += "@" + nodeID
+		if nodeID == "cluster" {
+			key += "@bench-cluster"
+		} else {
+			key += "@" + nodeID
+		}
 	}
 	for i := 0; i < runs; i++ {
 		start := time.Now()
@@ -186,6 +232,7 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 		}
 	}
 	sample.NativeSystemInfo = engine.SystemInfo()
+	sample.BenchmarkTopology = topology
 	sample.LoadMilliseconds = loadMilliseconds
 	sample.Kind = "benchmark"
 	sample.Runs = runs

@@ -41,6 +41,9 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 }
 
 func benchmarkModel(key string) string {
+	if strings.HasSuffix(key, "@bench-cluster") {
+		return strings.TrimSuffix(key, "@bench-cluster")
+	}
 	if at := strings.LastIndex(key, "@"); at > 0 && len(key)-at-1 == 64 {
 		return key[:at]
 	}

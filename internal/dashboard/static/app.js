@@ -395,6 +395,7 @@ async function refresh(){
  const benchTarget=$('inferenceBenchTarget'), selectedTarget=benchTarget.value;
  benchTarget.replaceChildren();
  const hostOption=el('option','', 'Host local (sem RPC)');hostOption.value='';benchTarget.append(hostOption);
+ if(nodes.some(n=>n.status==='online'&&n.runtime?.rpc_ready&&cluster.rpc_guests?.[n.id])){const opt=el('option','','Cluster (planejamento atual)');opt.value='cluster';benchTarget.append(opt);}
  for(const node of nodes){
   if(node.status!=='online'||!node.runtime?.rpc_ready||!cluster.rpc_guests?.[node.id])continue;
   const option=el('option','', (node.name||'Guest')+' · '+(node.platform||'')+' · '+node.id.slice(0,8));
@@ -712,7 +713,7 @@ $('inferenceBench').addEventListener('click',()=>guard(async()=>{
 $('autotuneBench').addEventListener('click',()=>guard(async()=>{
  const button=$('autotuneBench');button.disabled=true;
  try{
-  const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value});
+  const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value,node_id:$('inferenceBenchTarget').value});
   const area=$('autotuneResults');area.replaceChildren();
   for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s':row.error||'indisponível')));
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')));
