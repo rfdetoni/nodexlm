@@ -4,13 +4,13 @@ A implementação de assinatura e distribuição está na `main`. Uma release de
 
 ## Identidade Android permanente
 
-Foi preparada uma identidade PKCS#12 RSA-4096, separada das chaves debug/CI. O fingerprint público SHA-256 é:
+O aplicativo Android utiliza uma identidade permanente JKS RSA-4096 (`alias=nodexlm`, validade de `36500` dias, `CN=NodexLM,O=NodexLM,C=BR`), separada das chaves `debug` efêmeras de CI. O fingerprint público SHA-256 do certificado DER é:
 
 ```
-1aba7de39fb9d6147eed95abd3de9092058301359b27b37b8bd147984da421ff
+20fe35971bfdd2ef83cfdaf449e19fd5c8828b93f7595f7657a65730cd9cc4ee
 ```
 
-O backup cifrado e a senha são entregues separadamente ao proprietário. Nenhuma chave privada ou senha foi adicionada ao repositório. Preserve essa mesma identidade em futuras versões: gerar outra chave altera a identidade do app instalado.
+O fingerprint anterior (`1aba7de3...`) nunca foi publicado em APK público no GitHub Releases. A chave permanente local fica fora do repositório (`~/.nodexlm/signing/nodexlm.jks`, permissão `600` em diretório `700`) e deve ser preservada com backup cifrado offline (por exemplo, `gpg --symmetric --cipher-algo AES256 ~/.nodexlm/signing/nodexlm.jks`) e senha guardada em cofre separado. Nenhuma chave privada ou senha foi adicionada ao repositório. Preserve essa mesma identidade em futuras versões: gerar outra chave altera a identidade do app instalado.
 
 Para configurar a identidade já entregue:
 
