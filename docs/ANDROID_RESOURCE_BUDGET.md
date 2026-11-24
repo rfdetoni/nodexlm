@@ -32,9 +32,9 @@ and recent Android. No claimed percentage reduction until measured.
 
 ## Experimental Rust transport
 
-PR debug APKs compile Rust JNI libraries for ARMv7 and ARM64. In Settings,
+PR debug APKs and permanently signed main beta APKs compile Rust JNI libraries for ARMv7 and ARM64. In Settings,
 enable experimental Rust RPC and restart Guest. Kotlin remains the default;
-stable/signed builds do not include the experimental module. The Rust
+tagged stable builds do not include the experimental module. The Rust
 transport uses a current-thread Tokio executor with claim-driven slots,
 bounded transfer buffers allocated only for claimed streams, exact certificate
 pin and TLS handshake signature verification, HTTP/1.1 ALPN and existing
@@ -43,8 +43,7 @@ stops new connections without aborting active sessions. Android foreground
 service, telemetry, safety policy and GGML kernels remain native/Kotlin.
 
 For a local experimental build use `gradle -PnodexRustRpc=true :app:assembleDebug`
-after installing Rust 1.94.0 and pinned Android SDK/NDK. The experimental lock
-is generated locally; check in the reviewed Cargo.lock before release.
+after installing Rust 1.94.0 and pinned Android SDK/NDK. The Cargo.lock from the successful PR build is committed; builds use --locked.
 No production promotion until CI, TLS/protocol parity, hardware measurements
 and signing/update compatibility pass.
 

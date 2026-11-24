@@ -15,9 +15,7 @@ bin="$ndk/toolchains/llvm/prebuilt/$host/bin"
 test -x "$bin/aarch64-linux-android29-clang"
 test -x "$bin/armv7a-linux-androideabi29-clang"
 rustup target add --toolchain 1.94.0 aarch64-linux-android armv7-linux-androideabi
-# Experimental only: generate a lock locally once. Production promotion
-# requires checking the resolved lockfile into source and dependency audit.
-[[ -f Cargo.lock ]] || cargo +1.94.0 generate-lockfile
+test -s Cargo.lock # Never resolve new dependencies during an APK build.
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$bin/aarch64-linux-android29-clang"
 export CC_aarch64_linux_android="$bin/aarch64-linux-android29-clang"
 export AR_aarch64_linux_android="$bin/llvm-ar"
