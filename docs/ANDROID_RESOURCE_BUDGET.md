@@ -15,7 +15,7 @@ verified on real devices; a stuck Vulkan graph must not terminate unrelated UI w
   remain unchanged. Host honors explicitly reported Android reserves above
   its 512 MiB minimum and retains 1 GiB for missing telemetry/non-Android.
   Existing 20% graph allowance and shared Vulkan/CPU accounting are unchanged.
-- Actual process bitness determines the ARM32 address-space cap.
+- Actual process bitness determines the ARM32 address-space cap. Android GGML's reusable one-dimensional tensor upload staging buffer is capped at 4 MiB rather than 16 MiB (up to 12 MiB less live buffer capacity when a full-size buffer would otherwise be allocated). ARM32 rejects oversized wire lengths before narrowing. Measure upload throughput for CPU/Vulkan; smaller chunks can increase driver submissions.
 - A STOP intent for an inactive whole-model worker no longer initializes GGML in the UI process. ONNX probe sessions are released after validation, cached validation avoids loading weights on every lease, and switching model types releases the previous weights. Both model types expire after two idle minutes; external ONNX weights count toward admission.
 
 ## Hardware release gate

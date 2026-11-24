@@ -49,7 +49,30 @@ diff --git a/ggml/src/ggml-rpc/transport.cpp b/ggml/src/ggml-rpc/transport.cpp
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -2985,8 +2985,42 @@
+@@ -1766,7 +1766,10 @@
+     const rpc_tensor * in_tensor = (const rpc_tensor *)header;
+     memcpy(&cache_flag, header + sizeof(rpc_tensor), sizeof(cache_flag));
+     memcpy(&offset,     header + sizeof(rpc_tensor) + sizeof(cache_flag), sizeof(offset));
+-    const size_t size = input_size - header_size;
++    if (input_size - header_size > SIZE_MAX) {
++        return false;
++    }
++    const size_t size = static_cast<size_t>(input_size - header_size);
+ 
+     struct ggml_init_params params {
+         /*.mem_size   =*/ ggml_tensor_overhead(),
+@@ -1816,7 +1819,9 @@
+     }
+ 
+     // a buffer of the tensor size would be allocated and page faulted for every tensor, which is slow
+-    const size_t chunk_size = 16*1024*1024;
++    // Android guest allocations share physical RAM with Vulkan. Bound the
++    // reusable upload staging buffer to 4 MiB rather than 16 MiB.
++    const size_t chunk_size = 4*1024*1024;
+     if (set_tensor_buf.size() < std::min(size, chunk_size)) {
+         set_tensor_buf.resize(std::min(size, chunk_size));
+     }
+@@ -2985,8 +2990,42 @@
      }
  }
  
@@ -94,7 +117,7 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
      if (n_devices == 0 || devices == nullptr) {
          LOG_ERROR("Invalid arguments to ggml_backend_rpc_start_server\n");
          return;
-@@ -2993,6 +3027,7 @@
+@@ -2993,6 +3032,7 @@
      }
 -    std::vector<ggml_backend_t> backends;
 -    LOG_INFO("Starting RPC server v%d.%d.%d\n",
@@ -104,7 +127,7 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
          RPC_PROTO_MAJOR_VERSION,
          RPC_PROTO_MINOR_VERSION,
          RPC_PROTO_PATCH_VERSION);
-@@ -3035,25 +3070,36 @@
+@@ -3035,25 +3075,36 @@
          LOG_ERROR("Failed to initialize RPC transport\n");
          return;
      }
