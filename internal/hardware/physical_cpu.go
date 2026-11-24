@@ -14,8 +14,11 @@ import (
 func PhysicalCPUCount() int {
 	if runtime.GOOS == "linux" {
 		if n := physicalCPUCountFrom("/sys/devices/system/cpu"); n > 0 {
-			return n
+			return min(n, runtime.NumCPU())
 		}
+	}
+	if n := platformPhysicalCPUCount(); n > 0 {
+		return min(n, runtime.NumCPU())
 	}
 	return max(1, runtime.NumCPU()-1)
 }
@@ -30,6 +33,9 @@ func physicalCPUCountFrom(root string) int {
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasPrefix(name, "cpu") || len(name) < 4 || name[3] < '0' || name[3] > '9' {
+			continue
+		}
+		if raw, err := os.ReadFile(filepath.Join(root, name, "online")); err == nil && strings.TrimSpace(string(raw)) == "0" {
 			continue
 		}
 		topo := filepath.Join(root, name, "topology")

@@ -73,15 +73,17 @@ func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, 
 	return m.withGeneration(ctx, req, func(ctx context.Context, engine *local.Managed, req protocol.ChatRequest) error {
 		start := time.Now()
 		var usage []byte
+		latency := streamLatency{start: start}
 		err := engine.GenerateStream(ctx, req, func(frame []byte) error {
 			payload := bytes.TrimSpace(bytes.TrimPrefix(frame, []byte("data: ")))
+			latency.observe(payload, time.Now())
 			if bytes.Contains(payload, []byte(`"usage"`)) {
 				usage = append([]byte(nil), payload...)
 			}
 			return emit(frame)
 		})
 		if err == nil {
-			m.recordInference(req.Model, usage, time.Since(start))
+			m.recordInferenceWithLatency(req.Model, usage, time.Since(start), latency)
 		}
 		return err
 	})

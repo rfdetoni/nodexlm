@@ -22,10 +22,19 @@ type InferenceSample struct {
 	// rate includes prefill and first-token latency (end_to_end).
 	RateBasis string `json:"rate_basis,omitempty"`
 	// PromptMilliseconds is the native prefill timing, not an invented TTFT.
-	PromptMilliseconds  float64 `json:"prompt_ms,omitempty"`
-	ElapsedMilliseconds float64 `json:"elapsed_ms,omitempty"`
-	Runs                int     `json:"runs,omitempty"`
-	Fingerprint         string  `json:"fingerprint,omitempty"`
+	PromptMilliseconds         float64             `json:"prompt_ms,omitempty"`
+	PrefillTokensPerSecond     float64             `json:"prefill_tokens_per_second,omitempty"`
+	DraftTokens                int                 `json:"draft_tokens,omitempty"`
+	DraftAccepted              int                 `json:"draft_accepted,omitempty"`
+	DraftAcceptance            *float64            `json:"draft_acceptance,omitempty"`
+	LoadMilliseconds           float64             `json:"load_ms,omitempty"`
+	FirstOutputMilliseconds    float64             `json:"first_output_ms,omitempty"`
+	OutputChunkP50Milliseconds float64             `json:"output_chunk_p50_ms,omitempty"`
+	OutputChunkP95Milliseconds float64             `json:"output_chunk_p95_ms,omitempty"`
+	Workloads                  []BenchmarkWorkload `json:"workloads,omitempty"`
+	ElapsedMilliseconds        float64             `json:"elapsed_ms,omitempty"`
+	Runs                       int                 `json:"runs,omitempty"`
+	Fingerprint                string              `json:"fingerprint,omitempty"`
 }
 
 // parseInferenceSample is shared by live metrics and controlled benchmarks.
@@ -41,9 +50,13 @@ func parseInferenceSample(model string, raw []byte, elapsed time.Duration) (Infe
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 		Timings struct {
-			Tokens       int     `json:"predicted_n"`
-			Milliseconds float64 `json:"predicted_ms"`
-			PromptMS     float64 `json:"prompt_ms"`
+			Tokens        int     `json:"predicted_n"`
+			Milliseconds  float64 `json:"predicted_ms"`
+			PromptMS      float64 `json:"prompt_ms"`
+			PromptN       int     `json:"prompt_n"`
+			PromptRate    float64 `json:"prompt_per_second"`
+			DraftN        int     `json:"draft_n"`
+			DraftAccepted int     `json:"draft_n_accepted"`
 		} `json:"timings"`
 	}
 	if json.Unmarshal(raw, &out) != nil {
@@ -72,7 +85,18 @@ func parseInferenceSample(model string, raw []byte, elapsed time.Duration) (Infe
 	if seconds <= 0 {
 		return InferenceSample{}, false
 	}
+	prefill := out.Timings.PromptRate
+	if prefill <= 0 && out.Timings.PromptN > 0 && out.Timings.PromptMS > 0 {
+		prefill = float64(out.Timings.PromptN) * 1000 / out.Timings.PromptMS
+	}
+	var acceptance *float64
+	if out.Timings.DraftN > 0 && out.Timings.DraftAccepted >= 0 && out.Timings.DraftAccepted <= out.Timings.DraftN {
+		rate := float64(out.Timings.DraftAccepted) / float64(out.Timings.DraftN)
+		acceptance = &rate
+	}
 	return InferenceSample{
+		PrefillTokensPerSecond: prefill, DraftTokens: out.Timings.DraftN,
+		DraftAccepted: out.Timings.DraftAccepted, DraftAcceptance: acceptance,
 		Model: model, MeasuredAt: time.Now(), Tokens: tokens, PromptTokens: prompt,
 		CachedTokens: out.Usage.Details.Cached, Seconds: seconds,
 		TokensPerSecond: float64(tokens) / seconds,
@@ -117,10 +141,15 @@ func (m *Manager) pruneSamplesLocked(now time.Time) {
 }
 
 func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duration) {
+	m.recordInferenceWithLatency(model, raw, elapsed, streamLatency{})
+}
+
+func (m *Manager) recordInferenceWithLatency(model string, raw []byte, elapsed time.Duration, latency streamLatency) {
 	sample, ok := parseInferenceSample(model, raw, elapsed)
 	if !ok {
 		return
 	}
+	latency.apply(&sample)
 	m.mu.Lock()
 	// A live distributed result is not evidence of Host-only performance.
 	if m.engine != nil {
@@ -182,6 +211,12 @@ func (m *Manager) WriteMetrics(w http.ResponseWriter) {
 	}
 	fmt.Fprintf(w, "nodexlm_host_generation_seconds_bucket{le=\"+Inf\"} %d\n", count)
 	for _, s := range m.InferenceSamples() {
+		if s.PrefillTokensPerSecond > 0 {
+			fmt.Fprintf(w, "nodexlm_model_prefill_tokens_per_second{model=%q} %g\n", s.Model, s.PrefillTokensPerSecond)
+		}
+		if s.DraftAcceptance != nil {
+			fmt.Fprintf(w, "nodexlm_model_draft_acceptance_ratio{model=%q} %g\n", s.Model, *s.DraftAcceptance)
+		}
 		fmt.Fprintf(w, "nodexlm_model_tokens_per_second{model=%q} %g\nnodexlm_model_cached_prompt_tokens{model=%q} %d\n", s.Model, s.TokensPerSecond, s.Model, s.CachedTokens)
 	}
 }
