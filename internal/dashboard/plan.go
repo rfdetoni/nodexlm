@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
@@ -48,7 +47,10 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if meta.BlockCount == 0 {
 		return nil, errors.New("GGUF block_count is unavailable")
 	}
-	host := clusterplan.Budget(hardware.Collect("Host", nil))
+	host, err := m.hostBudget(settings, hardware.Collect("Host", nil))
+	if err != nil {
+		return nil, err
+	}
 	nodes := []placement{}
 	localLayers := int(meta.BlockCount)
 	strategy := effectivePlacementStrategy(settings.PlacementStrategy)

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/catalog"
-	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
@@ -498,7 +497,10 @@ func (m *Manager) load(ctx context.Context) error {
 			return err
 		}
 		name, _ := os.Hostname()
-		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
+		hostCapacity, budgetErr := m.hostBudget(s, hardware.Collect(name, nil))
+		if budgetErr != nil {
+			return budgetErr
+		}
 		selection, selectErr := m.chooseRPC(s, model, uint64(size), hostCapacity, guests)
 		if selectErr != nil {
 			return selectErr
@@ -553,7 +555,10 @@ func (m *Manager) load(ctx context.Context) error {
 			return sizeErr
 		}
 		name, _ := os.Hostname()
-		hostCapacity := clusterplan.Budget(hardware.Collect(name, nil))
+		hostCapacity, budgetErr := m.hostBudget(s, hardware.Collect(name, nil))
+		if budgetErr != nil {
+			return budgetErr
+		}
 		if inspectErr = validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
 			return inspectErr
 		}

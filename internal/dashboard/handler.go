@@ -87,6 +87,22 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, sample)
 	}))
+	mux.HandleFunc("POST /api/bench/autotune", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model string `json:"model"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		report, err := d.Manager.TuneInference(ctx, input.Model)
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, report)
+	}))
 	mux.HandleFunc("GET /api/observability", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"inference": d.Manager.InferenceSamples(), "nodes": d.Cluster.Observations()})
 	}))

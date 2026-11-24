@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/local"
 )
@@ -57,7 +56,11 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 	// OS-available memory already reflects loaded model allocations. Subtracting
 	// the resident GGUF sizes again penalizes them twice. Use a fresh hardware
 	// sample and the same context/batch admission guard as primary loads.
-	budget := clusterplan.Budget(hardware.Collect("Host", nil))
+	settings.Model = name
+	budget, err := m.hostBudget(settings, hardware.Collect("Host", nil))
+	if err != nil {
+		return err
+	}
 	if modelExceedsBudget(uint64(size), budget) {
 		return errors.New("insufficient available memory for another resident model")
 	}
