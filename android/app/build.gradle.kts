@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 val rustRpcEnabled = providers.gradleProperty("nodexRustRpc").map { it == "true" }.orElse(false).get()
+val kleidiAiEnabled = providers.gradleProperty("nodexKleidiAi").map { it == "true" }.orElse(false).get()
 val rustRpcOutput = layout.buildDirectory.dir("generated/rustRpc/jniLibs")
 val llamaRevision = groovy.json.JsonSlurper().parse(file("../../internal/llamaruntime/revision.json")) as Map<*, *>
 val releaseKeystore = System.getenv("NODEXLM_ANDROID_KEYSTORE_FILE")
@@ -29,7 +30,7 @@ android {
         // Both common smartphone ABIs: 32-bit Android 10 and 64-bit Android 10+.
         // Android loads only its matching library from the universal APK.
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
-        externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"; cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden") } }
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON", "-DNODEXLM_KLEIDIAI=${if (kleidiAiEnabled) "ON" else "OFF"}"); cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden") } }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
     signingConfigs {

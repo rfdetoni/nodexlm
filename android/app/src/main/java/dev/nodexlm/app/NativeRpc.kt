@@ -10,6 +10,8 @@ package dev.nodexlm.app
 internal object NativeRpc {
     val VERSION = BuildConfig.LLAMA_VERSION
     init { System.loadLibrary("nodexlm") }
+    /** Count faster CPU cores within the current Android cpuset, with safe fallback. */
+    external fun recommendedThreads(logical: Int): Int
     external fun start(threads: Int, mode: String, socketPath: String): String
     /** Request socket shutdown and join after backend cleanup; false on timeout. */
     external fun stopAndJoin(timeoutMs: Int): Boolean

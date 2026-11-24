@@ -194,6 +194,7 @@ jobs:
             -PnodexVersionName='${{ steps.version.outputs.name }}' \
             -PnodexVersionCode='${{ steps.version.outputs.code }}' \
             -PnodexRustRpc='${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}' \
+            -PnodexKleidiAi='${{ github.event_name == 'pull_request' }}' \
             :app:assembleDebug
 
       - name: Verify debug APK and native library

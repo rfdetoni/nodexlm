@@ -13,6 +13,14 @@ set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 set(GGML_RPC ON CACHE BOOL "" FORCE)
 set(GGML_RPC_RDMA OFF CACHE BOOL "" FORCE)
 set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+# Retain the ARMv8 baseline; KleidiAI selects supported quantized kernels at
+# runtime using native CPU features. Never raise -march for the whole APK.
+option(NODEXLM_KLEIDIAI "Build experimental ARM64 KleidiAI kernels" OFF)
+if(ANDROID_ABI STREQUAL "arm64-v8a" AND NODEXLM_KLEIDIAI)
+    set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
+else()
+    set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+endif()
 # ARM64 can expose CPU and Vulkan (integrated) GPU to the same RPC endpoint.
 # ARM32 remains CPU-only for compatibility with older Android 10 phones.
 if(ANDROID_ABI STREQUAL "arm64-v8a")
@@ -76,7 +84,7 @@ FetchContent_Declare(llamacpp
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     GIT_TAG ${NODEXLM_LLAMA_COMMIT}
     GIT_SHALLOW FALSE
-    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/unix-rpc.patch -DEXTRA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/arm32-rpc-wire.patch -DANDROID_SHUTDOWN_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/android-rpc-shutdown.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake
+    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/unix-rpc.patch -DEXTRA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/arm32-rpc-wire.patch -DANDROID_SHUTDOWN_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/android-rpc-shutdown.patch -DKLEIDIAI_SHA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/kleidiai-sha256.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake
 )
 FetchContent_MakeAvailable(llamacpp)
 if(ANDROID_ABI STREQUAL "arm64-v8a" AND TARGET ggml-vulkan)
