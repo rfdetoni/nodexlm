@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -60,6 +62,10 @@ func tuneCandidates(s Settings, physical int) []TuneCandidate {
 // TuneInference owns the same model pool lock as load/benchmark and uses
 // one runtime at a time. It never writes runtime.json or changes user settings.
 func (m *Manager) TuneInference(ctx context.Context, model string) (TuneReport, error) {
+	return m.tuneInferenceTarget(ctx, model, "")
+}
+
+func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (TuneReport, error) {
 	m.poolMu.Lock()
 	defer m.poolMu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
@@ -70,11 +76,12 @@ func (m *Manager) TuneInference(ctx context.Context, model string) (TuneReport, 
 		return TuneReport{}, errors.New("unload all models before autotuning")
 	}
 	s := m.settings
+	provider := m.rpcEndpoints
 	m.poolCancel = cancel
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.poolCancel = nil; m.mu.Unlock() }()
-	if s.Distributed || s.ParallelSlots > 1 || local.EffectiveBackend(s.Backend) != local.BackendLlama {
-		return TuneReport{}, errors.New("autotuning currently requires one local llama.cpp slot")
+	if s.ParallelSlots > 1 || local.EffectiveBackend(s.Backend) != local.BackendLlama {
+		return TuneReport{}, errors.New("autotuning requires one llama.cpp slot")
 	}
 	s.Model = model
 	fingerprint := m.benchmarkSignature(s, model)
@@ -86,7 +93,7 @@ func (m *Manager) TuneInference(ctx context.Context, model string) (TuneReport, 
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
-		sample, err := m.measureInference(ctx, row.Settings, model, "", false, nil)
+		sample, err := m.measureInference(ctx, row.Settings, model, node, false, provider)
 		if err != nil {
 			row.Error = err.Error()
 		} else {
@@ -101,7 +108,7 @@ func (m *Manager) TuneInference(ctx context.Context, model string) (TuneReport, 
 		best := baseline.TokensPerSecond * 1.05
 		for _, row := range report.Candidates[1:] {
 			sample := row.Sample
-			if sample == nil || sample.RateBasis != baseline.RateBasis || sample.TokensPerSecond <= best {
+			if sample == nil || sample.RateBasis != baseline.RateBasis || sample.BenchmarkTopology != baseline.BenchmarkTopology || sample.TokensPerSecond <= best {
 				continue
 			}
 			if baseline.PrefillTokensPerSecond > 0 && sample.PrefillTokensPerSecond < baseline.PrefillTokensPerSecond*0.9 {
@@ -124,5 +131,10 @@ func (m *Manager) TuneInference(ctx context.Context, model string) (TuneReport, 
 	if err != nil {
 		return report, err
 	}
-	return report, writePrivate(filepath.Join(m.dir, "autotune.json"), raw)
+	filename := "autotune.json"
+	if node != "" {
+		// Hash the target instead of using an untrusted node ID as a path.
+		filename = fmt.Sprintf("autotune-%x.json", sha256.Sum256([]byte(node)))
+	}
+	return report, writePrivate(filepath.Join(m.dir, filename), raw)
 }

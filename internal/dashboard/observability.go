@@ -36,6 +36,7 @@ type InferenceSample struct {
 	Runs                       int                  `json:"runs,omitempty"`
 	Fingerprint                string               `json:"fingerprint,omitempty"`
 	NativeSystemInfo           string               `json:"native_system_info,omitempty"`
+	BenchmarkTopology          string               `json:"benchmark_topology,omitempty"`
 	RPCTraffic                 *InferenceRPCTraffic `json:"rpc_traffic,omitempty"`
 }
 

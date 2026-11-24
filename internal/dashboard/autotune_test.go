@@ -16,3 +16,9 @@ func TestTuneCandidatesBoundedAndUnique(t *testing.T) {
 		seen[row.Settings] = true
 	}
 }
+
+func TestBenchmarkClusterKeyDoesNotReplaceLiveSample(t *testing.T) {
+	if got := benchmarkModel("model.gguf@bench-cluster"); got != "model.gguf" {
+		t.Fatalf("incorrect cluster benchmark key: %s", got)
+	}
+}
