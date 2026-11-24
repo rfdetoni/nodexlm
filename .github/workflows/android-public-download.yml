@@ -66,9 +66,8 @@ jobs:
             variant="release"
             signature="permanent"
           elif [[ "$debug" -gt 0 ]]; then
-            artifact_name="nodexlm-android-debug"
-            variant="debug"
-            signature="ephemeral-debug"
+            echo "::error::Refusing to replace the permanently signed beta with an incompatible debug APK"
+            exit 1
           elif [[ "$AUTOMATIC_EVENT" == "true" ]]; then
             echo "No APK artifact in run $run_id (native/launcher unchanged); skipping public release without rebuilding."
             echo "available=false" >> "$GITHUB_OUTPUT"
