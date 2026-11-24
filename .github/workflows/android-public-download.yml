@@ -129,14 +129,19 @@ jobs:
               }
             done
           done
-          tools="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          sdk_bt="${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools"
+          if [[ -x "$sdk_bt/35.0.0/apksigner" && -x "$sdk_bt/35.0.0/aapt" ]]; then
+            tools="$sdk_bt/35.0.0"
+          else
+            tools="$(find "$sdk_bt" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          fi
           if [[ -z "$tools" || ! -x "$tools/apksigner" || ! -x "$tools/aapt" ]]; then
             echo "::error::Android build-tools (apksigner/aapt) unavailable on runner"
             exit 1
           fi
           badging="$("$tools/aapt" dump badging "$apk")"
-          echo "$badging" | grep -Fq "sdkVersion:'29'"
-          if echo "$badging" | grep -Fq "application-debuggable"; then
+          grep -Fq "sdkVersion:'29'" <<< "$badging"
+          if grep -Fq "application-debuggable" <<< "$badging"; then
             echo "::error::Refusing to publish a debuggable APK"
             exit 1
           fi
@@ -146,9 +151,10 @@ jobs:
             exit 1
           }
           expected="$(tr -d '[:space:]' < android/signing-certificate.sha256 | tr '[:upper:]' '[:lower:]')"
-          "$tools/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/public-cert-info.txt"
-          actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/public-cert-info.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d '\r')"
+          "$tools/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/public-cert-info.txt"
+          actual="$(grep -iE 'Signer #1.*certificate SHA-256 digest:' "$RUNNER_TEMP/public-cert-info.txt" | head -n 1 | awk '{print tolower($NF)}' | tr -d '\r')"
           if [[ ! "$expected" =~ ^[0-9a-f]{64}$ || "$actual" != "$expected" ]]; then
+            cat "$RUNNER_TEMP/public-cert-info.txt" || true
             echo "::error::Refusing to publish APK signed with unexpected certificate ($actual != $expected)"
             exit 1
           fi
