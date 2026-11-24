@@ -1,0 +1,15 @@
+diff --git a/ggml/src/ggml-cpu/CMakeLists.txt b/ggml/src/ggml-cpu/CMakeLists.txt
+--- a/ggml/src/ggml-cpu/CMakeLists.txt
++++ b/ggml/src/ggml-cpu/CMakeLists.txt
+@@ -653,9 +653,9 @@
+         set(KLEIDIAI_COMMIT_TAG "v1.32.0")
+         set(KLEIDIAI_DOWNLOAD_URL "https://github.com/ARM-software/kleidiai/releases/download/${KLEIDIAI_COMMIT_TAG}/kleidiai-${KLEIDIAI_COMMIT_TAG}-src.tar.gz")
+-        set(KLEIDIAI_RELEASE_ARCHIVE_MD5  "05f1953428ffe8e8c7f585dc6d508887")
++        set(KLEIDIAI_RELEASE_ARCHIVE_SHA256  "a48d373e7c5d721a0aecbf5ddaf0bdf245bc8064e6b84086f13db0e102b553a6")
+ 
+         set(KLEIDIAI_FETCH_ARGS
+             URL ${KLEIDIAI_DOWNLOAD_URL}
+-            URL_HASH MD5=${KLEIDIAI_RELEASE_ARCHIVE_MD5}
++            URL_HASH SHA256=${KLEIDIAI_RELEASE_ARCHIVE_SHA256}
+         )
+         if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")

@@ -13,6 +13,8 @@
 #include <condition_variable>
 #include <exception>
 #include <sstream>
+#include <fstream>
+#include <sched.h>
 #include <android/log.h>
 #include "llama.h"
 #include "ggml-backend.h"
@@ -220,6 +222,30 @@ Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
 // Exposing both CPU and shared-memory Vulkan on Auto causes GGML to spread
 // a single decode across two RPC devices on the same phone, multiplying
 // synchronization and transfers each token without evidence of speed gain.
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_nodexlm_app_NativeRpc_recommendedThreads(JNIEnv*, jobject, jint logical) {
+    cpu_set_t allowed;
+    CPU_ZERO(&allowed);
+    const int fallback = std::clamp<int>(logical - 1, 1, 6);
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) return fallback;
+    std::vector<unsigned long> capacities;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (!CPU_ISSET(cpu, &allowed)) continue;
+        unsigned long capacity = 0;
+        std::ifstream in("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpu_capacity");
+        if (!(in >> capacity) || capacity == 0 || capacity > 1000000) return fallback;
+        capacities.push_back(capacity);
+    }
+    if (capacities.size() < 2) return fallback;
+    const auto range = std::minmax_element(capacities.begin(), capacities.end());
+    if (*range.first * 100 >= *range.second * 80) return fallback;
+    const int performance = static_cast<int>(std::count_if(capacities.begin(), capacities.end(),
+        [&](unsigned long n) { return n * 100 >= *range.second * 80; }));
+    // Only choose a thread count; do not pin driver or compute threads to
+    // potentially restricted cores. Explicit user settings take precedence.
+    return std::clamp<int>(performance, 1, std::min<int>(6, std::max<int>(1, logical)));
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jstring socketValue) {
     const std::string socketPath=utf(env,socketValue);
