@@ -1,0 +1,33 @@
+diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
+--- a/ggml/src/ggml-backend-reg.cpp
++++ b/ggml/src/ggml-backend-reg.cpp
+@@ -488,15 +488,8 @@
+ #ifdef GGML_BACKEND_DIR
+         search_paths.push_back(fs::u8path(GGML_BACKEND_DIR));
+ #endif
+-        // default search paths: executable directory, current directory
+-        search_paths.push_back(get_executable_path());
+-        std::error_code cwd_ec;
+-        const fs::path cwd = fs::current_path(cwd_ec);
+-        if (cwd_ec) {
+-            GGML_LOG_DEBUG("%s: failed to get current directory: %s\n", __func__, cwd_ec.message().c_str());
+-        } else {
+-            search_paths.push_back(cwd);
+-        }
++        // NodexLM verified bundles load only siblings, never arbitrary CWD plugins.
++        search_paths.push_back(get_executable_path());
+     } else {
+         search_paths.push_back(fs::u8path(user_search_path));
+     }
+@@ -591,11 +584,7 @@
+     ggml_backend_load_best("musa",     silent, dir_path);
+     ggml_backend_load_best("openvino", silent, dir_path);
+     ggml_backend_load_best("cpu",      silent, dir_path);
+-    // check the environment variable GGML_BACKEND_PATH to load an out-of-tree backend
+-    const char * backend_path = std::getenv("GGML_BACKEND_PATH");
+-    if (backend_path) {
+-        ggml_backend_load(backend_path);
+-    }
++    // Out-of-tree plugins are not covered by the verified bundle manifest.
+ }
+ 

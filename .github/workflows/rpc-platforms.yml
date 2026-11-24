@@ -9,6 +9,9 @@ on:
     paths:
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
+      - '.github/workflows/rpc-platforms.yml'
+      - 'scripts/stage-rpc-bundle.py'
+      - 'scripts/optimized-rpc-backend-search.patch'
 permissions:
   contents: read
 concurrency:
@@ -25,10 +28,20 @@ jobs:
       - id: native
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+          # r2 is already immutable. Until its reviewed promotion sets the
+          # next candidate tag, never build optimized binaries under r2.
+          candidate=$(python3 -c 'import json; print(json.load(open("internal/llamaruntime/revision.json"))["rpc_candidate_release"])')
+          if [[ "$candidate" == nodexlm-rpc-b12255-r2 ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || [[ -n "$(git diff --name-only HEAD^ HEAD -- .github/workflows/rpc-platforms.yml scripts/stage-rpc-bundle.py scripts/optimized-rpc-backend-search.patch)" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
+            previous=$(git show HEAD^:internal/llamaruntime/revision.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("rpc_candidate_release",""))')
+            if [[ "$candidate" != "$previous" ]]; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
+            fi
           fi
   build:
     needs: detect
@@ -68,27 +81,37 @@ jobs:
           test "$(git -C upstream rev-parse HEAD)" = "$commit"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
-          options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release)
+          git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
+          options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release)
           if [[ "$BACKEND" == vulkan ]]; then options+=(-DGGML_VULKAN=ON); fi
           if [[ "$TARGET_OS" == darwin ]]; then options+=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON); fi
           cmake -S upstream -B native "${options[@]}"
           cmake --build native --config Release --parallel 3 --target llama-server ggml-rpc-server
-          if [[ "$TARGET_OS" == linux && "$TARGET_ARCH" == amd64 && "$BACKEND" == cpu ]]; then
-            strings native/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled' >/dev/null
-          fi
           mkdir -p stage/bin dist
-          python3 - <<'PY'
-          import pathlib,shutil
-          for p in pathlib.Path('native').rglob('*'):
-              if not p.is_file():continue
-              name=p.name
-              if name in ('llama-server','ggml-rpc-server','rpc-server','llama-server.exe','ggml-rpc-server.exe','rpc-server.exe') or name.endswith(('.dll','.dylib','.so','.metallib')) or '.so.' in name:
-                  shutil.copyfile(p,pathlib.Path('stage/bin')/name)
-          shutil.copyfile('upstream/LICENSE','stage/LICENSE.llama.cpp')
-          PY
+          python3 scripts/stage-rpc-bundle.py native stage
+          cp upstream/LICENSE stage/LICENSE.llama.cpp
           chmod -R u+rx stage/bin
+          # Test the actual staged layout, not the CMake build tree.
+          export LD_LIBRARY_PATH="$PWD/stage/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export DYLD_LIBRARY_PATH="$PWD/stage/bin${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+          export PATH="$PWD/stage/bin:$PATH"
+          suffix=""
+          if [[ "$TARGET_OS" == windows ]]; then suffix=".exe"; fi
+          stage/bin/llama-server"$suffix" --version 2>&1 | tee stage/native-capabilities.txt
+          stage/bin/llama-server"$suffix" --list-devices 2>&1 | tee -a stage/native-capabilities.txt
+          worker="stage/bin/ggml-rpc-server$suffix"
+          if [[ ! -f "$worker" ]]; then worker="stage/bin/rpc-server$suffix"; fi
+          "$worker" --help 2>&1 | tee -a stage/native-capabilities.txt
+          python3 - <<'PY'
+          import pathlib
+          root=pathlib.Path("stage/bin")
+          cpu=[p for p in root.iterdir() if p.is_file() and "ggml-cpu-" in p.name]
+          assert len(cpu)>=2, "CPU variant modules missing"
+          assert any(b"bounded parallel RPC tensor uploads enabled" in p.read_bytes() for p in root.iterdir() if p.is_file()), "RPC loader patch marker missing"
+          PY
           archive="nodexlm-rpc_${version}_${TARGET_OS}_${TARGET_ARCH}_${BACKEND}.tar.gz"
-          tar -czf "dist/$archive" -C stage bin LICENSE.llama.cpp
+          tar -czf "dist/$archive" -C stage bin LICENSE.llama.cpp native-capabilities.txt
+          test "$(wc -c < "dist/$archive")" -le 419430400
           python3 - <<'PY'
           import hashlib,pathlib
           for p in pathlib.Path('dist').glob('*.tar.gz'):
@@ -105,7 +128,7 @@ jobs:
           echo '270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d  tiny.gguf' | sha256sum -c -
           go build -o nodexlm ./cmd/nodexlm
           NODEXLM_TEST_GUEST_COUNT=2 NODEXLM_PARALLEL_RPC_UPLOAD=1 \
-            NODEXLM_RPC_DIR="$PWD/native" NODEXLM_TEST_MODEL="$PWD/tiny.gguf" python3 scripts/e2e-rpc.py
+            NODEXLM_RPC_DIR="$PWD/stage" NODEXLM_TEST_MODEL="$PWD/tiny.gguf" python3 scripts/e2e-rpc.py
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with: {subject-path: 'dist/*.tar.gz'}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -129,8 +152,10 @@ jobs:
           set -euo pipefail
           cat dist/*.sha256 > dist/SHA256SUMS.txt
           tag=$(python3 -c 'import json; r=json.load(open("internal/llamaruntime/revision.json")); print(r.get("rpc_candidate_release",r["rpc_release"]))')
+          active=$(python3 -c 'import json; print(json.load(open("internal/llamaruntime/revision.json"))["rpc_release"])')
+          [[ "$tag" != "$active" ]] || { echo "::error::Candidate must not overwrite the active runtime"; exit 1; }
           if gh release view "$tag" >/dev/null 2>&1; then
             echo 'Immutable release already exists; do not overwrite reviewed binaries.'
             exit 0
           fi
-          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target main --title "Pinned RPC b12255 with private Unix sockets" --notes "Matched b12255 RPC pairs built from $GITHUB_SHA; private Unix sockets plus bounded per-Guest parallel mmap tensor uploads. Five platform artifact attestations are available. Review and pin each SHA-256 before enabling downloads." --prerelease --latest=false
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target main --title "Pinned RPC b12255 with private Unix sockets" --notes "Matched b12255 RPC pairs built from $GITHUB_SHA; private Unix sockets plus bounded per-Guest parallel mmap tensor uploads and runtime-selected CPU variants. Five platform artifact attestations are available. Review and pin each SHA-256 before enabling downloads." --prerelease --latest=false
