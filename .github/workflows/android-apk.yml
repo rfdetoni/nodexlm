@@ -84,6 +84,35 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare permanent Android signing (required on main and tags)
+        id: signing
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          count=0
+          for secret in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [[ -n "$secret" ]] && count=$((count + 1))
+          done
+          if [[ "$count" -eq 4 ]]; then
+            path="$RUNNER_TEMP/nodexlm-release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
+            chmod 600 "$path"
+            test -s "$path"
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "path=$path" >> "$GITHUB_OUTPUT"
+          elif [[ "$count" -ne 0 || "$GITHUB_REF" == refs/tags/* || "$GITHUB_REF" == refs/heads/main ]]; then
+            echo '::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD for signed beta and tagged releases.'
+            exit 1
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Java 17
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
@@ -129,7 +158,8 @@ jobs:
           rustup toolchain install 1.94.0 --profile minimal
           test -s Cargo.lock
           cargo +1.94.0 test --locked
-          bash -n ../rpc-rust/build-android.sh ../../scripts/android-rpc-acceptance.sh
+          bash -n build-android.sh
+          bash -n ../../scripts/android-rpc-acceptance.sh
       - name: Preserve resolved Rust dependency lock for review
         if: github.event_name == 'pull_request' && always()
         uses: actions/upload-artifact@v4
@@ -155,37 +185,8 @@ jobs:
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare Android signing (required on tags)
-        id: signing
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-        shell: bash
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          count=0
-          for secret in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
-            [[ -n "$secret" ]] && count=$((count + 1))
-          done
-          if [[ "$count" -eq 4 ]]; then
-            path="$RUNNER_TEMP/nodexlm-release.jks"
-            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
-            chmod 600 "$path"
-            test -s "$path"
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "path=$path" >> "$GITHUB_OUTPUT"
-          elif [[ "$count" -ne 0 || "$GITHUB_REF" == refs/tags/* || "$GITHUB_REF" == refs/heads/main ]]; then
-            echo '::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD for tag releases.'
-            exit 1
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build debug APK (PR or unsigned main)
-        if: github.event_name == 'pull_request' || steps.signing.outputs.configured != 'true'
+      - name: Build debug APK (PR only)
+        if: github.event_name == 'pull_request'
         working-directory: android
         shell: bash
         run: |
@@ -198,7 +199,7 @@ jobs:
             :app:assembleDebug
 
       - name: Verify debug APK and native library
-        if: github.event_name == 'pull_request' || steps.signing.outputs.configured != 'true'
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -220,12 +221,14 @@ jobs:
           sha256sum dist/*-debug.apk > dist/SHA256SUMS-debug.txt
           echo "Debug APK compiled and verified from \`$GITHUB_SHA\` (ARMv7 + ARM64, minSdk 29)." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload debug APK for public beta
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.signing.outputs.configured != 'true'
+      - name: Upload isolated PR test APK (not update-compatible)
+        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: nodexlm-android-debug
-          path: dist/*-debug.apk
+          name: nodexlm-android-pr-test-only
+          path: |
+            dist/*-debug.apk
+            dist/SHA256SUMS-debug.txt
           if-no-files-found: error
           retention-days: 14
 
