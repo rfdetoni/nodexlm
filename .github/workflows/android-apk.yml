@@ -120,6 +120,15 @@ jobs:
           gradle-version: '8.11.1'
           cache-read-only: ${{ startsWith(github.ref, 'refs/tags/') }}
 
+      - name: Rust RPC experimental tests (PR only)
+        if: github.event_name == 'pull_request'
+        working-directory: android/rpc-rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.94.0 --profile minimal
+          cargo +1.94.0 generate-lockfile
+          cargo +1.94.0 test --locked
       - name: Model and energy policy regressions
         working-directory: android
         run: gradle --no-daemon :app:testDebugUnitTest
@@ -176,6 +185,7 @@ jobs:
           gradle --no-daemon --max-workers=2 \
             -PnodexVersionName='${{ steps.version.outputs.name }}' \
             -PnodexVersionCode='${{ steps.version.outputs.code }}' \
+            -PnodexRustRpc='${{ github.event_name == 'pull_request' }}' \
             :app:assembleDebug
 
       - name: Verify debug APK and native library
@@ -188,6 +198,11 @@ jobs:
           for abi in armeabi-v7a arm64-v8a; do
             unzip -Z1 "$apk" | grep -Fqx "lib/${abi}/libnodexlm.so" || { echo "::error::Missing $abi native library"; exit 1; }
           done
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            for abi in armeabi-v7a arm64-v8a; do
+              unzip -Z1 "$apk" | grep -Fqx "lib/$abi/libnodexlm_rpc.so" || { echo "::error::Missing experimental Rust RPC library for $abi"; exit 1; }
+            done
+          fi
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify "$apk"
           bash scripts/verify-android-pages.sh "$apk"

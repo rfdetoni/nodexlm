@@ -239,4 +239,5 @@
     <string name="decision_embedded_deleted">ONNX decision model deleted</string>
     <string name="decision_embedded_importing">Copying ONNX weights and configuration locally…</string>
     <string name="decision_embedded_imported">ONNX decision model ready: %1$s</string>
+    <string name="rpc_rust_transport">Experimental Rust RPC transport (restart Guest to apply)</string>
 </resources>

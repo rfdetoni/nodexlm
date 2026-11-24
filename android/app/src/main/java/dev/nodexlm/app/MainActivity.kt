@@ -655,6 +655,11 @@ class MainActivity : Activity() {
         val memoryCap = field(settings,getString(R.string.rpc_memory_cap),prefs.getInt("rpc_max_contribution_mib",0).toString())
         val memoryReserve = field(settings,getString(R.string.rpc_memory_reserve),prefs.getInt("rpc_memory_reserve_mib",0).toString())
         val cpuThreads = field(settings,getString(R.string.rpc_cpu_threads),prefs.getInt("rpc_threads",0).toString())
+        val rustTransport = CheckBox(this).apply {
+            text = getString(R.string.rpc_rust_transport)
+            isChecked = BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false)
+        }
+        if (BuildConfig.RUST_RPC_ENABLED) settings.addView(rustTransport)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         }
@@ -673,7 +678,8 @@ class MainActivity : Activity() {
                 prefs.edit().putBoolean("rpc_only_charging",onlyCharging.isChecked).putInt("rpc_min_battery",min)
                     .putInt("rpc_start_hour",from).putInt("rpc_end_hour",until)
                     .putInt("rpc_max_contribution_mib",cap).putInt("rpc_memory_reserve_mib",reserve)
-                    .putInt("rpc_threads",threads).apply()
+                    .putInt("rpc_threads",threads)
+                    .putBoolean("rpc_rust_transport", BuildConfig.RUST_RPC_ENABLED && rustTransport.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
         })
@@ -756,6 +762,7 @@ class MainActivity : Activity() {
                 .putExtra(RpcGuestService.EXTRA_NODE,id)
                 .putExtra(RpcGuestService.EXTRA_NAME,prefs.getString("name",Build.MODEL) ?: Build.MODEL)
                 .putExtra(RpcGuestService.EXTRA_MODE,prefs.getString("rpc_mode", "auto") ?: "auto")
+                .putExtra(RpcGuestService.EXTRA_RUST_TRANSPORT, BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false))
             startForegroundService(intent)
             setStatus(getString(R.string.ui_69873d9d8387))
         } catch(e:Exception) {setStatus(getString(R.string.rpc_failed,e.message))}

@@ -220,6 +220,7 @@ async fn relay(cfg: &Config, c: Arc<Control>) -> Result<(), RelayError> {
     let tcp = timeout(Duration::from_secs(7), TcpStream::connect((cfg.host.as_str(), cfg.port)))
         .await.map_err(|_| timed_out())??;
     tcp.set_nodelay(true)?;
+    socket2::SockRef::from(&tcp).set_keepalive(true)?;
     let mut remote = timeout(Duration::from_secs(10), cfg.tls.connect(cfg.server_name.clone(), tcp))
         .await.map_err(|_| timed_out())??;
     if let Some(alpn) = remote.get_ref().1.alpn_protocol() {

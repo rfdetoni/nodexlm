@@ -239,4 +239,5 @@
     <string name="decision_embedded_deleted">Modelo ONNX excluído</string>
     <string name="decision_embedded_importing">Copiando pesos ONNX e configuração localmente…</string>
     <string name="decision_embedded_imported">Modelo ONNX de decisão pronto: %1$s</string>
+    <string name="rpc_rust_transport">Transporte RPC Rust experimental (reinicie o Guest para aplicar)</string>
 </resources>

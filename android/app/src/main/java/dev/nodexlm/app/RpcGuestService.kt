@@ -56,6 +56,7 @@ class RpcGuestService : Service() {
         const val EXTRA_NODE = "node"
         const val EXTRA_NAME = "name"
         const val EXTRA_MODE = "mode"
+        const val EXTRA_RUST_TRANSPORT = "rust_transport"
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
 
@@ -77,6 +78,8 @@ class RpcGuestService : Service() {
     private val stopSignal = java.util.concurrent.CountDownLatch(1)
     private val tunnelPool = RpcTunnelBudget(MAX_TUNNELS)
     @Volatile private var expandTunnels: (() -> Unit)? = null
+    @Volatile private var rustStarted = false
+    private fun activeClaims(): Long = if (rustStarted) NativeRustRpc.claimed() else claimedNativeRelays.get()
     private val stopping = AtomicBoolean(false)
     private val draining = AtomicBoolean(false)
     @Volatile private var drainReason = ""
@@ -111,6 +114,7 @@ class RpcGuestService : Service() {
         }
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { Build.MODEL }
         val mode = intent.getStringExtra(EXTRA_MODE).orEmpty().ifBlank { "auto" }
+        val useRust = BuildConfig.RUST_RPC_ENABLED && intent.getBooleanExtra(EXTRA_RUST_TRANSPORT, false)
         val parsed = try { URI(endpoint) } catch (_: Exception) { null }
         if (parsed == null || parsed.scheme != "https" || parsed.host.isNullOrEmpty() || parsed.rawUserInfo != null ||
             parsed.rawQuery != null || parsed.rawFragment != null || endpoint.contains('\r') ||
@@ -173,6 +177,13 @@ class RpcGuestService : Service() {
                         sleepWhileRunning(15_000)
                     }
                 }
+                if (useRust) {
+                    check(running.get()) { "Guest stopped" }
+                    val error = NativeRustRpc.start(host, port, node, token, cert, rpcSocket)
+                    check(error.isEmpty()) { error }
+                    rustStarted = true
+                    Log.i(LOG, "Experimental Rust RPC transport selected")
+                } else {
                 fun startTunnel(slot: Int) {
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
@@ -225,10 +236,14 @@ class RpcGuestService : Service() {
                     tunnelPool.grow(claimedNativeRelays.get()).forEach(::startTunnel)
                 }
                 expandTunnels?.invoke()
+                }
                 // After startup the detached GGML thread may still exit.
                 // Do not keep publishing heartbeat or reconnecting to a dead worker.
                 while (running.get()) {
                     check(NativeRpc.isRunning()) { "Native GGML RPC server exited unexpectedly" }
+                    if (rustStarted) check(NativeRustRpc.isRunning()) {
+                        NativeRustRpc.failure().ifBlank { "Rust RPC transport stopped unexpectedly" }
+                    }
                     // SEVERE thermal status still stops immediately. Other policy
                     // exits withdraw from new Host placements before closing
                     // any active native RPC sessions.
@@ -237,10 +252,11 @@ class RpcGuestService : Service() {
                         drainReason = reason
                         drainStartedMs = android.os.SystemClock.elapsedRealtime()
                         if (draining.compareAndSet(false, true)) {
+                            if (rustStarted) NativeRustRpc.setDraining(true)
                             thermalRecovery.reset()
                             recordGuestEvent("draining", reason)
                             Log.w(LOG, "RPC Guest draining because of $reason; " +
-                                "claimed tunnels=${claimedNativeRelays.get()}")
+                                "claimed tunnels=${activeClaims()}")
                             // Publish withdrawal immediately, not only at the
                             // next scheduled heartbeat (up to 15s later).
                             try { sendHeartbeat(endpoint, node, token, name, mode, sslContext, cert) }
@@ -250,7 +266,7 @@ class RpcGuestService : Service() {
                     if (draining.get()) {
                         val nowMs = android.os.SystemClock.elapsedRealtime()
                         val elapsed = nowMs - drainStartedMs
-                        val idle = claimedNativeRelays.get() == 0L
+                        val idle = activeClaims() == 0L
                         // Native GGML has no live thread throttling. After
                         // MODERATE thermal status, allow a bounded cool-down
                         // without dropping the process, then reconnect only
@@ -260,6 +276,7 @@ class RpcGuestService : Service() {
                             thermalRecovery.eligible(nowMs, reason == null, idle)
                         if (recovered && elapsed < 90_000L) {
                             draining.set(false)
+                            if (rustStarted) NativeRustRpc.setDraining(false)
                             expandTunnels?.invoke()
                             drainReason = ""
                             thermalRecovery.reset()
@@ -269,7 +286,7 @@ class RpcGuestService : Service() {
                         } else if (elapsed >= 90_000L ||
                             (drainReason != "thermal" && elapsed >= 5_000L && idle)) {
                             Log.w(LOG, "RPC Guest drain finished: $drainReason, " +
-                                "claimed=${claimedNativeRelays.get()}, elapsed_ms=$elapsed")
+                                "claimed=${activeClaims()}, elapsed_ms=$elapsed")
                             shutdown("stopped", "drained_$drainReason")
                             break
                         }
@@ -460,7 +477,7 @@ class RpcGuestService : Service() {
                 .put("version", NativeRpc.VERSION)
                 .put("installed", true)
                 .put("benchmark", true)
-                .put("reconnect_failures",reconnectFailures.get())
+                .put("reconnect_failures", if (rustStarted) NativeRustRpc.failures() else reconnectFailures.get())
                 .put("rpc_ready", false))
         if (percent in 0..100) device.put("battery_percent", percent)
         if (Build.VERSION.SDK_INT >= 30) {
@@ -726,6 +743,7 @@ class RpcGuestService : Service() {
         running.set(false)
         stopSignal.countDown()
         expandTunnels = null
+        if (rustStarted) runCatching { NativeRustRpc.stop() }
         synchronized(localSockets){localSockets.forEach { closeLocalSocket(it) };localSockets.clear()}
         synchronized(sockets) {
             sockets.forEach { try { it.close() } catch (_: Exception) {} }

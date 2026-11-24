@@ -30,12 +30,28 @@ Host relay counters, free Vulkan heap, weight allocation, first-token latency,
 decode throughput and LMKD/thermal events. Test ARM32 and ARM64, Android 10/11/12
 and recent Android. No claimed percentage reduction until measured.
 
-## Further work (not in this stage)
+## Experimental Rust transport
 
-Implement a Rust async TLS transport with exact cert pin AND handshake
-signature verification, HTTP/1.1 ALPN, bounded response parsing, benchmark
-marker support and cancellation; test all byte paths against current Host
-before replacing Kotlin. Add native GGML shutdown and join before any process
-unification. Evaluate buffer pooling, affinity, reduced ONNX packaging and
-KV/cache policies only with parity and hardware measurements. Do not
-automatically lower the safety reserve under sustained memory pressure.
+PR debug APKs compile Rust JNI libraries for ARMv7 and ARM64. In Settings,
+enable experimental Rust RPC and restart Guest. Kotlin remains the default;
+stable/signed builds do not include the experimental module. The Rust
+transport uses a current-thread Tokio executor with claim-driven slots,
+bounded transfer buffers allocated only for claimed streams, exact certificate
+pin and TLS handshake signature verification, HTTP/1.1 ALPN and existing
+benchmark/claim markers. Shutdown cancels asynchronous sockets; draining
+stops new connections without aborting active sessions. Android foreground
+service, telemetry, safety policy and GGML kernels remain native/Kotlin.
+
+For a local experimental build use `gradle -PnodexRustRpc=true :app:assembleDebug`
+after installing Rust 1.94.0 and pinned Android SDK/NDK. The experimental lock
+is generated locally; check in the reviewed Cargo.lock before release.
+No production promotion until CI, TLS/protocol parity, hardware measurements
+and signing/update compatibility pass.
+
+## Remaining hardware-dependent engineering
+
+Add native GGML shutdown and join before any process unification. Evaluate
+buffer pooling (currently bounded per claimed stream), core affinity, reduced
+ONNX packaging, OpenCL and KV/cache policies only with parity and hardware
+measurements. Do not automatically lower the safety reserve under sustained
+memory pressure. No automatic fallback from an authentication failure.
