@@ -13,6 +13,8 @@ on:
       - 'scripts/**'
       - 'install.sh'
       - '.github/workflows/pr-checks.yml'
+      - '.github/workflows/rpc-platforms.yml'
+      - 'internal/llamaruntime/patches/**'
   workflow_dispatch:
 
 permissions:
@@ -63,3 +65,23 @@ jobs:
           go-version-file: go.mod
           cache: false
       - run: go test ./internal/config -run 'TestEnsureSecretsPersistsAcrossRestarts|TestReadSecretsRejectsLooseUnixPermissions' -count=1
+
+  native-patch:
+    name: Native patch preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Verify pinned upstream and exact patch application
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')
+          commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
+          git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
+          test "$(git -C upstream rev-parse HEAD)" = "$commit"
+          for patch in internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/parallel-rpc-loader.patch scripts/optimized-rpc-backend-search.patch; do
+            git -C upstream apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C upstream apply "$GITHUB_WORKSPACE/$patch"
+          done

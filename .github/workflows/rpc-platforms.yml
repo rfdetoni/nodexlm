@@ -81,6 +81,7 @@ jobs:
           test "$(git -C upstream rev-parse HEAD)" = "$commit"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          git -C upstream apply --check "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release)
           if [[ "$BACKEND" == vulkan ]]; then options+=(-DGGML_VULKAN=ON); fi
