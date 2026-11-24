@@ -76,11 +76,9 @@ FetchContent_Declare(llamacpp
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     GIT_TAG ${NODEXLM_LLAMA_COMMIT}
     GIT_SHALLOW FALSE
-    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/unix-rpc.patch -DEXTRA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/arm32-rpc-wire.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake
+    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/unix-rpc.patch -DEXTRA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/arm32-rpc-wire.patch -DANDROID_SHUTDOWN_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/android-rpc-shutdown.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake
 )
 FetchContent_MakeAvailable(llamacpp)
-# Android-only lifecycle extension; upstream Host RPC protocol is unchanged.
-execute_process(COMMAND ${CMAKE_COMMAND} -DSOURCE=${llamacpp_SOURCE_DIR} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/android-rpc-shutdown.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake COMMAND_ERROR_IS_FATAL ANY)
 if(ANDROID_ABI STREQUAL "arm64-v8a" AND TARGET ggml-vulkan)
     target_include_directories(ggml-vulkan BEFORE PRIVATE
         "${NODEXLM_VULKAN_STAGING}" "${NODEXLM_SPIRV_STAGING}")

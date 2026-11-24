@@ -24,7 +24,7 @@ Compare same Host revision, GGUF hash, model layers, context, batch, device
 mode, thermal state and Wi-Fi. Run at least five cold and warm trials with
 screen on and off; include simultaneous native sessions and probe/upload.
 
-Collect `adb shell dumpsys meminfo dev.nodexlm.app:rpc` (PSS, native heap),
+Use `bash scripts/android-rpc-acceptance.sh --output evidence/kotlin-idle --resource-samples 12 --resource-interval 5` and repeat with Rust enabled, plus separate inference and screen-off captures. The script records process PSS/RSS/native heap, CPU and thread observations without collecting credentials. Compare only same-device, same-workload intervals. Collect `adb shell dumpsys meminfo dev.nodexlm.app:rpc` (PSS, native heap),
 `adb shell dumpsys meminfo dev.nodexlm.app`, `adb shell top -H -b -n 1`,
 Host relay counters, free Vulkan heap, weight allocation, first-token latency,
 decode throughput and LMKD/thermal events. Test ARM32 and ARM64, Android 10/11/12
