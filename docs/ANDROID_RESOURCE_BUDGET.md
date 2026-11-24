@@ -16,6 +16,7 @@ native allocations or terminate unrelated UI work.
   its 512 MiB minimum and retains 1 GiB for missing telemetry/non-Android.
   Existing 20% graph allowance and shared Vulkan/CPU accounting are unchanged.
 - Actual process bitness determines the ARM32 address-space cap.
+- A STOP intent for an inactive whole-model worker no longer initializes GGML in the UI process. ONNX probe sessions are released after validation, cached validation avoids loading weights on every lease, and switching model types releases the previous weights. Both model types expire after two idle minutes; external ONNX weights count toward admission.
 
 ## Hardware release gate
 

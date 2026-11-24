@@ -32,6 +32,9 @@ import kotlin.math.min
 class ComputeService : Service() {
     companion object { const val START="dev.nodexlm.START";const val STOP="dev.nodexlm.STOP";private const val CHANNEL="nodexlm_worker" }
     private val running = AtomicBoolean(false)
+    // A STOP intent sent before any whole-model job must not load GGML/Vulkan
+    // into the UI process merely to cancel a nonexistent inference.
+    private val nativeTouched = AtomicBoolean(false)
     // This is an explicitly user-started foreground worker. Keep CPU/network
     // polling running through screen-off Doze, but never outside worker lifetime.
     private var workerWakeLock: PowerManager.WakeLock? = null
@@ -80,7 +83,7 @@ class ComputeService : Service() {
         running.set(false)
         RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_STOP)
         releaseWorkerWakeLock()
-        try{NativeEntry.cancel()}catch (_:Throwable){}
+        if (nativeTouched.get()) try { NativeEntry.cancel() } catch (_: Throwable) {}
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -117,12 +120,19 @@ class ComputeService : Service() {
             var lastInference=android.os.SystemClock.elapsedRealtime()
             while(running.get()) {
                 try {
+                    if (android.os.SystemClock.elapsedRealtime() - lastInference > 120_000L) {
+                        if (loaded) {
+                            NativeEntry.unload()
+                            loaded = false
+                        }
+                        EmbeddedDecisionRuntime.close()
+                    }
                     val memory = ActivityManager.MemoryInfo()
                     (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
                     val embedded = decisionModel.isNotEmpty() &&
                         DecisionModelStore.find(this, decisionModel) != null
                     val decisionReady = decisionModel.isNotEmpty() && if (embedded) {
-                        EmbeddedDecisionRuntime.available(this, decisionModel)
+                        EmbeddedDecisionRuntime.available(this, decisionModel, allowLoad = !loaded)
                     } else {
                         MobileDecisionClient.available(decisionPort, decisionModel, decisionKey)
                     }
@@ -145,10 +155,6 @@ class ComputeService : Service() {
                     if (thermal in 0..6) payload.put("thermal_status", thermal)
                     val job=request(coordinator+"/v1/nodes/lease",token,id,payload)
                     if(job.length()==0) {
-                        if(loaded && android.os.SystemClock.elapsedRealtime()-lastInference>120_000L) {
-                            NativeEntry.unload()
-                            loaded=false
-                        }
                         continue
                     }
                     val jid=job.getString("id")
@@ -163,6 +169,10 @@ class ComputeService : Service() {
                             require(decisionReady && job.getJSONObject("request").getString("model") == decisionModel) {
                                 "Decision model not available on Android"
                             }
+                            if (loaded) {
+                                NativeEntry.unload()
+                                loaded = false
+                            }
                             answer = if (embedded) {
                                 EmbeddedDecisionRuntime.decide(this, decisionModel,
                                     job.getJSONObject("decision")).toString()
@@ -173,6 +183,9 @@ class ComputeService : Service() {
                         } else {
                         require(model?.isFile == true) { "GGUF chat model not selected" }
                         if (!loaded) {
+                            EmbeddedDecisionRuntime.close()
+                            nativeTouched.set(true)
+                            check(running.get()) { "Worker stopped" }
                             val init=NativeEntry.load(model!!.absolutePath,2048,maxOf(1,Runtime.getRuntime().availableProcessors()-2))
                             if(init.isNotEmpty())throw IllegalStateException(init)
                             loaded=true
@@ -246,7 +259,7 @@ class ComputeService : Service() {
             Log.e(logTag,"Worker stopped",e)
         }
         finally {
-            try { NativeEntry.unload() } catch (_: Throwable) {}
+            if (nativeTouched.get()) try { NativeEntry.unload() } catch (_: Throwable) {}
             try { EmbeddedDecisionRuntime.close() } catch (e: Exception) {
                 Log.w(logTag, "Could not close local ONNX decision session", e)
             }

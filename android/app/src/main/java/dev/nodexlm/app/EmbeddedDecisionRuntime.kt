@@ -20,39 +20,52 @@ import kotlin.math.max
  */
 internal object EmbeddedDecisionRuntime {
     private data class Loaded(
-        val path: String,
+        val key: List<String>,
         val config: LayaDecisionProtocol.Config,
         val calibration: JSONObject,
         val session: OrtSession,
         val tokenizer: HuggingFaceTokenizer
     ) : AutoCloseable {
         override fun close() {
-            session.close()
-            tokenizer.close()
+            try { session.close() } finally { tokenizer.close() }
         }
     }
 
     private val environment: OrtEnvironment by lazy { OrtEnvironment.getEnvironment() }
     private var resident: Loaded? = null
+    // Installed bundles are immutable within the app; invalidate when their
+    // metadata changes (including external ONNX weights).
+    private var validated: List<String>? = null
 
     @Synchronized
     fun close() {
-        resident?.close()
+        val previous = resident
         resident = null
+        previous?.close()
+    }
+
+    private fun key(bundle: DecisionModelStore.Bundle): List<String> =
+        (listOf(bundle.graph, bundle.tokenizer, bundle.decision, bundle.calibration) +
+            java.io.File(bundle.graph.path + ".data")).map {
+            "${it.canonicalPath}:${it.length()}:${it.lastModified()}"
+        }
+
+    private fun enoughMemory(context: Context, bundle: DecisionModelStore.Bundle): Boolean {
+        val memory = ActivityManager.MemoryInfo()
+        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+        val weights = bundle.graph.length() + java.io.File(bundle.graph.path + ".data").length()
+        val reserve = GuestResourceBudget.reserveBytes(0, memory.totalMem, memory.threshold)
+        return !memory.lowMemory && memory.availMem > reserve &&
+            weights < memory.availMem - reserve
     }
 
     private fun load(context: Context, alias: String): Loaded {
         val bundle = DecisionModelStore.find(context, alias) ?: error("No installed ONNX decision bundle for $alias")
-        val path = bundle.graph.canonicalPath
-        resident?.takeIf { it.path == path }?.let { return it }
+        val key = key(bundle)
+        resident?.takeIf { it.key == key }?.let { return it }
         close()
-        val memory = ActivityManager.MemoryInfo()
-        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
-        // A large ONNX encoder graph needs weight buffers and activation memory.
-        // Don't trigger low-memory eviction on phones with limited free RAM.
-        require(memory.availMem > bundle.graph.length() + (512L shl 20)) {
-            "Insufficient free RAM for ONNX decision weights"
-        }
+        require(enoughMemory(context, bundle)) { "Insufficient free RAM for ONNX decision weights" }
+        val path = bundle.graph.canonicalPath
         val config = LayaDecisionProtocol.Config.parse(JSONObject(bundle.decision.readText()))
         val calibration = JSONObject(bundle.calibration.readText())
         val rawTokenizer = JSONObject(bundle.tokenizer.readText())
@@ -82,8 +95,8 @@ internal object EmbeddedDecisionRuntime {
                 )) && session.outputNames.contains("logits")) {
                     "ONNX model is not a Laya System One graph"
                 }
-                return Loaded(path, config, calibration, session, tokenizer)
-                    .also { resident = it }
+                return Loaded(key, config, calibration, session, tokenizer)
+                    .also { resident = it; validated = key }
             } catch (e: Exception) {
                 session.close()
                 throw e
@@ -94,13 +107,28 @@ internal object EmbeddedDecisionRuntime {
         }
     }
 
-    /** Adverts only *loaded and validated* models, never a guessed HF filename. */
+    /** Validate once, then release a probe-only session. Do not allocate
+     * weights on every lease or keep a model resident merely to advertise it.
+     * Actual decision execution reopens and validates the native session.
+     */
     @Synchronized
-    fun available(context: Context, alias: String): Boolean = try {
-        load(context, alias)
-        true
-    } catch (_: Exception) {
-        false
+    fun available(context: Context, alias: String, allowLoad: Boolean = true): Boolean {
+        return try {
+            val bundle = DecisionModelStore.find(context, alias) ?: return false
+            val key = key(bundle)
+            if (resident?.key == key) return true
+            if (!enoughMemory(context, bundle)) return false
+            if (validated == key) return true
+            if (!allowLoad || resident != null) return false
+            try {
+                load(context, alias)
+                true
+            } finally {
+                close()
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     @Synchronized
