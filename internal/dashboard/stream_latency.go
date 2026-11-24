@@ -10,16 +10,16 @@ import (
 // not fabricated exact per-token timing.
 type streamLatency struct {
 	start, first, last time.Time
-	gaps []float64
+	gaps               []float64
 }
 
 func (l *streamLatency) observe(payload []byte, now time.Time) {
 	var event struct {
 		Choices []struct {
 			Delta struct {
-				Content string `json:"content"`
-				Reasoning string `json:"reasoning_content"`
-				Tools []json.RawMessage `json:"tool_calls"`
+				Content   string            `json:"content"`
+				Reasoning string            `json:"reasoning_content"`
+				Tools     []json.RawMessage `json:"tool_calls"`
 			} `json:"delta"`
 		} `json:"choices"`
 	}

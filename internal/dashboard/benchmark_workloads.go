@@ -12,9 +12,9 @@ import (
 )
 
 type BenchmarkWorkload struct {
-	Profile string `json:"profile"`
-	Sample *InferenceSample `json:"sample,omitempty"`
-	Status string `json:"status"`
+	Profile string           `json:"profile"`
+	Sample  *InferenceSample `json:"sample,omitempty"`
+	Status  string           `json:"status"`
 }
 
 func runStreamingBenchmark(ctx context.Context, engine *local.Managed, key string, request protocol.ChatRequest) (InferenceSample, error) {
@@ -48,7 +48,7 @@ func runStreamingBenchmark(ctx context.Context, engine *local.Managed, key strin
 func benchmarkWorkloads(ctx context.Context, engine *local.Managed, key string, request protocol.ChatRequest, contextTokens int) []BenchmarkWorkload {
 	var result []BenchmarkWorkload
 	for _, workload := range []struct {
-		name string
+		name                string
 		repeats, minContext int
 	}{{"short", 0, 256}, {"medium", 60, 2048}, {"long", 240, 8192}} {
 		row := BenchmarkWorkload{Profile: workload.name, Status: "skipped_context"}
@@ -72,7 +72,9 @@ func benchmarkWorkloads(ctx context.Context, engine *local.Managed, key string, 
 			}
 		}
 		result = append(result, row)
-		if ctx.Err() != nil { break }
+		if ctx.Err() != nil {
+			break
+		}
 	}
 	return result
 }

@@ -67,15 +67,17 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
 	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			Model string `json:"model"`
-			Node  string `json:"node_id"`
-			Extended bool `json:"extended,omitempty"`
+			Model    string `json:"model"`
+			Node     string `json:"node_id"`
+			Extended bool   `json:"extended,omitempty"`
 		}
 		if !decode(w, r, &input) {
 			return
 		}
-		timeout := 5*time.Minute
-		if input.Extended { timeout = 20*time.Minute }
+		timeout := 5 * time.Minute
+		if input.Extended {
+			timeout = 20 * time.Minute
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		sample, err := d.Manager.benchmarkInference(ctx, input.Model, input.Node, input.Extended)

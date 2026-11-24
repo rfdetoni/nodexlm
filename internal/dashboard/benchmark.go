@@ -144,7 +144,9 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 	sample := medianInferenceSample(measurements)
 	if extended {
 		sample.Workloads = benchmarkWorkloads(ctx, engine, key, request, settings.ContextTokens)
-		if ctx.Err() != nil { return InferenceSample{}, ctx.Err() }
+		if ctx.Err() != nil {
+			return InferenceSample{}, ctx.Err()
+		}
 	}
 	sample.LoadMilliseconds = loadMilliseconds
 	sample.Kind = "benchmark"

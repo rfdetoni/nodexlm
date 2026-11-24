@@ -22,19 +22,19 @@ type InferenceSample struct {
 	// rate includes prefill and first-token latency (end_to_end).
 	RateBasis string `json:"rate_basis,omitempty"`
 	// PromptMilliseconds is the native prefill timing, not an invented TTFT.
-	PromptMilliseconds  float64 `json:"prompt_ms,omitempty"`
-	PrefillTokensPerSecond float64 `json:"prefill_tokens_per_second,omitempty"`
-	DraftTokens int `json:"draft_tokens,omitempty"`
-	DraftAccepted int `json:"draft_accepted,omitempty"`
-	DraftAcceptance *float64 `json:"draft_acceptance,omitempty"`
-	LoadMilliseconds float64 `json:"load_ms,omitempty"`
-	FirstOutputMilliseconds float64 `json:"first_output_ms,omitempty"`
-	OutputChunkP50Milliseconds float64 `json:"output_chunk_p50_ms,omitempty"`
-	OutputChunkP95Milliseconds float64 `json:"output_chunk_p95_ms,omitempty"`
-	Workloads []BenchmarkWorkload `json:"workloads,omitempty"`
-	ElapsedMilliseconds float64 `json:"elapsed_ms,omitempty"`
-	Runs                int     `json:"runs,omitempty"`
-	Fingerprint         string  `json:"fingerprint,omitempty"`
+	PromptMilliseconds         float64             `json:"prompt_ms,omitempty"`
+	PrefillTokensPerSecond     float64             `json:"prefill_tokens_per_second,omitempty"`
+	DraftTokens                int                 `json:"draft_tokens,omitempty"`
+	DraftAccepted              int                 `json:"draft_accepted,omitempty"`
+	DraftAcceptance            *float64            `json:"draft_acceptance,omitempty"`
+	LoadMilliseconds           float64             `json:"load_ms,omitempty"`
+	FirstOutputMilliseconds    float64             `json:"first_output_ms,omitempty"`
+	OutputChunkP50Milliseconds float64             `json:"output_chunk_p50_ms,omitempty"`
+	OutputChunkP95Milliseconds float64             `json:"output_chunk_p95_ms,omitempty"`
+	Workloads                  []BenchmarkWorkload `json:"workloads,omitempty"`
+	ElapsedMilliseconds        float64             `json:"elapsed_ms,omitempty"`
+	Runs                       int                 `json:"runs,omitempty"`
+	Fingerprint                string              `json:"fingerprint,omitempty"`
 }
 
 // parseInferenceSample is shared by live metrics and controlled benchmarks.
@@ -50,13 +50,13 @@ func parseInferenceSample(model string, raw []byte, elapsed time.Duration) (Infe
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 		Timings struct {
-			Tokens       int     `json:"predicted_n"`
-			Milliseconds float64 `json:"predicted_ms"`
-			PromptMS     float64 `json:"prompt_ms"`
-			PromptN int `json:"prompt_n"`
-			PromptRate float64 `json:"prompt_per_second"`
-			DraftN int `json:"draft_n"`
-			DraftAccepted int `json:"draft_n_accepted"`
+			Tokens        int     `json:"predicted_n"`
+			Milliseconds  float64 `json:"predicted_ms"`
+			PromptMS      float64 `json:"prompt_ms"`
+			PromptN       int     `json:"prompt_n"`
+			PromptRate    float64 `json:"prompt_per_second"`
+			DraftN        int     `json:"draft_n"`
+			DraftAccepted int     `json:"draft_n_accepted"`
 		} `json:"timings"`
 	}
 	if json.Unmarshal(raw, &out) != nil {
