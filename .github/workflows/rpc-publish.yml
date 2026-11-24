@@ -41,7 +41,30 @@ jobs:
           assert before['commit']==current['commit'] and before['version']==current['version']
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('run='+str(build['run_id'])+'\n')
           PY
+      - name: Verify existing immutable release before downloading old artifacts
+        id: existing
+        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          current=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())
+          tag=current['rpc_release']
+          result=subprocess.run(['gh','api','repos/'+os.environ['GH_REPO']+'/releases/tags/'+tag],capture_output=True,text=True)
+          if result.returncode:
+              if '404' not in result.stderr:
+                  raise RuntimeError(result.stderr)
+              exists=False
+          else:
+              release=json.loads(result.stdout)
+              assets={a['name']:a.get('digest') for a in release['assets']}
+              for platform,digest in current['published'].items():
+                  name='nodexlm-rpc_'+current['version']+'_'+platform.replace('/','_')+'.tar.gz'
+                  assert assets.get(name)=='sha256:'+digest, 'Pinned hash mismatch: '+name
+              exists=True
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('verified='+str(exists).lower()+'\n')
+          PY
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: steps.existing.outputs.verified != 'true'
         with:
           github-token: ${{ github.token }}
           run-id: ${{ steps.build.outputs.run }}
@@ -49,6 +72,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Publish immutable bundles
+        if: steps.existing.outputs.verified != 'true'
         env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
         run: |
           set -euo pipefail
