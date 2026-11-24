@@ -188,3 +188,27 @@ func TestAndroidGPUOnlyUsesOneSharedMemoryBudget(t *testing.T) {
 		t.Fatal("Android CPU budget should continue using allocatable system RAM")
 	}
 }
+
+func TestAndroidExplicitReserveAndLegacyFloor(t *testing.T) {
+	d := protocol.Device{Platform: "android", RAMBytes: 4 * GiB, AvailableRAMBytes: 2 * GiB}
+	if got := Budget(d); got != GiB*80/100 {
+		t.Fatalf("legacy reserve: %d", got)
+	}
+	d.MemoryReserveBytes = 512 * MiB
+	want := (2*GiB - 512*MiB) * 80 / 100
+	if got := Budget(d); got != want {
+		t.Fatalf("explicit Android reserve: got %d want %d", got, want)
+	}
+	d.Runtime.RPCDevices = []string{"cpu"}
+	if got := RPCMemory(d).RAM; got != want {
+		t.Fatalf("RPC reserve: got %d want %d", got, want)
+	}
+	d.MemoryReserveBytes = 1
+	if got := Budget(d); got != want {
+		t.Fatalf("Android floor: %d", got)
+	}
+	d.Platform = "linux"
+	if got := Budget(d); got != GiB*80/100 {
+		t.Fatalf("desktop floor: %d", got)
+	}
+}

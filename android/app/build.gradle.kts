@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+val rustRpcEnabled = providers.gradleProperty("nodexRustRpc").map { it == "true" }.orElse(false).get()
+val rustRpcOutput = layout.buildDirectory.dir("generated/rustRpc/jniLibs")
 val llamaRevision = groovy.json.JsonSlurper().parse(file("../../internal/llamaruntime/revision.json")) as Map<*, *>
 val releaseKeystore = System.getenv("NODEXLM_ANDROID_KEYSTORE_FILE")
 val releaseStorePassword = System.getenv("NODEXLM_ANDROID_STORE_PASSWORD")
@@ -17,6 +19,7 @@ android {
     compileSdk = 35
     ndkVersion = "27.2.12479018"
     defaultConfig {
+        buildConfigField("boolean", "RUST_RPC_ENABLED", rustRpcEnabled.toString())
         buildConfigField("String", "LLAMA_VERSION", "\"${llamaRevision["version"]}\"")
         applicationId = "dev.nodexlm.app"
         minSdk = 29 // Android 10 (API 29) and newer
@@ -50,6 +53,7 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     packaging { jniLibs { useLegacyPackaging = false } }
+    if (rustRpcEnabled) sourceSets.getByName("main").jniLibs.srcDir(rustRpcOutput)
 }
 
 dependencies {
@@ -75,4 +79,18 @@ val prepareDecisionTokenizerNative by tasks.registering(Exec::class) {
 }
 tasks.named("preBuild") {
     dependsOn(prepareDecisionTokenizerNative)
+}
+
+if (rustRpcEnabled) {
+    val buildRustRpc by tasks.registering(Exec::class) {
+        inputs.dir(file("../rpc-rust/src"))
+        inputs.files(file("../rpc-rust/Cargo.toml"), file("../rpc-rust/Cargo.lock"), file("../rpc-rust/build-android.sh"))
+        outputs.dir(rustRpcOutput)
+        commandLine("bash", file("../rpc-rust/build-android.sh").absolutePath, rustRpcOutput.get().asFile.absolutePath)
+    }
+    tasks.named("preBuild") { dependsOn(buildRustRpc) }
+    tasks.configureEach {
+        if (name.startsWith("merge") && name.endsWith("NativeLibs")) dependsOn(buildRustRpc)
+        if (name.startsWith("merge") && name.endsWith("JniLibFolders")) dependsOn(buildRustRpc)
+    }
 }

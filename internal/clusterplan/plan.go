@@ -44,6 +44,19 @@ type RPCDeviceMemory struct {
 	GPU uint64
 }
 
+// Explicit Android telemetry includes the OS threshold and additional headroom.
+// Missing telemetry and all other platforms retain the legacy 1 GiB floor.
+func ramReserveBytes(d protocol.Device) uint64 {
+	floor := GiB
+	if d.Platform == "android" && d.MemoryReserveBytes > 0 {
+		floor = 512 * MiB
+	}
+	if d.MemoryReserveBytes > floor {
+		return d.MemoryReserveBytes
+	}
+	return floor
+}
+
 // exposedRPCMemory budgets GPU and RAM independently, with separate runtime
 // reserves, rather than assuming GPU memory is backed by system RAM.
 func exposedRPCMemory(d protocol.Device) RPCDeviceMemory {
@@ -51,10 +64,7 @@ func exposedRPCMemory(d protocol.Device) RPCDeviceMemory {
 	if d.RAMBytes > 0 && ram > d.RAMBytes {
 		ram = d.RAMBytes
 	}
-	ramReserve := GiB
-	if d.MemoryReserveBytes > ramReserve {
-		ramReserve = d.MemoryReserveBytes
-	}
+	ramReserve := ramReserveBytes(d)
 	var result RPCDeviceMemory
 	if ram > ramReserve {
 		result.RAM = (ram - ramReserve) * 80 / 100
@@ -190,10 +200,7 @@ func Budget(d protocol.Device) uint64 {
 			avail = free
 		}
 	}
-	reserve := GiB
-	if d.MemoryReserveBytes > reserve {
-		reserve = d.MemoryReserveBytes
-	}
+	reserve := ramReserveBytes(d)
 	if avail <= reserve {
 		return 0
 	}

@@ -63,9 +63,14 @@ internal object RpcGuestDiagnostics {
             .put("thermal_status", power.currentThermalStatus)
             .put("battery_percent", if (percent in 0..100) percent else JSONObject.NULL)
             .put("configured_backend", prefs.getString("rpc_mode", "auto"))
+            .put("dedicated_guest", prefs.getBoolean("rpc_dedicated_guest", false))
+            .put("efficient_cores_requested", prefs.getBoolean("rpc_efficient_cores", false))
+            .put("configured_transport", if (BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false)) "rust-experimental" else "kotlin")
             .put("configured_threads", prefs.getInt("rpc_threads", 0))
             .put("max_contribution_mib", prefs.getInt("rpc_max_contribution_mib", 0))
-            .put("memory_reserve_mib", prefs.getInt("rpc_memory_reserve_mib", 1024))
+            .put("memory_reserve_mib", prefs.getInt("rpc_memory_reserve_mib", 0))
+            .put("effective_memory_reserve_bytes", GuestResourceBudget.reserveBytes(
+                prefs.getInt("rpc_memory_reserve_mib", 0), memory.totalMem, memory.threshold))
             .put("last_recorded_guest_event", last)
         return report.toString(2)
     }

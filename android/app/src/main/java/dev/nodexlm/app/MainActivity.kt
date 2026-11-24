@@ -653,8 +653,25 @@ class MainActivity : Activity() {
         val startHour = field(settings,getString(R.string.start_hour),prefs.getInt("rpc_start_hour",0).toString())
         val endHour = field(settings,getString(R.string.end_hour),prefs.getInt("rpc_end_hour",0).toString())
         val memoryCap = field(settings,getString(R.string.rpc_memory_cap),prefs.getInt("rpc_max_contribution_mib",0).toString())
-        val memoryReserve = field(settings,getString(R.string.rpc_memory_reserve),prefs.getInt("rpc_memory_reserve_mib",1024).toString())
+        val memoryReserve = field(settings,getString(R.string.rpc_memory_reserve),prefs.getInt("rpc_memory_reserve_mib",0).toString())
         val cpuThreads = field(settings,getString(R.string.rpc_cpu_threads),prefs.getInt("rpc_threads",0).toString())
+        val rustTransport = CheckBox(this).apply {
+            text = getString(R.string.rpc_rust_transport)
+            isChecked = BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false)
+        }
+        val efficientCores = CheckBox(this).apply {
+            text = getString(R.string.rpc_efficient_cores)
+            isChecked = prefs.getBoolean("rpc_efficient_cores", false)
+        }
+        val dedicatedGuest = CheckBox(this).apply {
+            text = getString(R.string.rpc_dedicated_guest)
+            isChecked = prefs.getBoolean("rpc_dedicated_guest", false)
+        }
+        if (BuildConfig.RUST_RPC_ENABLED) {
+            settings.addView(rustTransport)
+            settings.addView(efficientCores)
+        }
+        settings.addView(dedicatedGuest)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         }
@@ -667,13 +684,16 @@ class MainActivity : Activity() {
             val threads = cpuThreads.text.toString().toIntOrNull()
             if (min == null || min !in 5..95 || from == null || from !in 0..23 ||
                 until == null || until !in 0..23 || cap == null || cap !in 0..65536 ||
-                reserve == null || reserve !in 1024..65536 || threads == null || threads !in 0..8) {
+                reserve == null || (reserve != 0 && reserve !in 512..65536) || threads == null || threads !in 0..8) {
                 setStatus(getString(R.string.ui_5f20f24e5efa))
             } else {
                 prefs.edit().putBoolean("rpc_only_charging",onlyCharging.isChecked).putInt("rpc_min_battery",min)
                     .putInt("rpc_start_hour",from).putInt("rpc_end_hour",until)
                     .putInt("rpc_max_contribution_mib",cap).putInt("rpc_memory_reserve_mib",reserve)
-                    .putInt("rpc_threads",threads).apply()
+                    .putInt("rpc_threads",threads)
+                    .putBoolean("rpc_rust_transport", BuildConfig.RUST_RPC_ENABLED && rustTransport.isChecked)
+                    .putBoolean("rpc_efficient_cores", efficientCores.isChecked)
+                    .putBoolean("rpc_dedicated_guest", dedicatedGuest.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
         })
@@ -756,8 +776,13 @@ class MainActivity : Activity() {
                 .putExtra(RpcGuestService.EXTRA_NODE,id)
                 .putExtra(RpcGuestService.EXTRA_NAME,prefs.getString("name",Build.MODEL) ?: Build.MODEL)
                 .putExtra(RpcGuestService.EXTRA_MODE,prefs.getString("rpc_mode", "auto") ?: "auto")
+                .putExtra(RpcGuestService.EXTRA_RUST_TRANSPORT, BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false))
+                .putExtra(RpcGuestService.EXTRA_EFFICIENT_CORES, prefs.getBoolean("rpc_efficient_cores", false))
             startForegroundService(intent)
             setStatus(getString(R.string.ui_69873d9d8387))
+            // Foreground RPC service lives in :rpc. Closing this task releases
+            // Activity resources without killing the isolated native worker.
+            if (prefs.getBoolean("rpc_dedicated_guest", false)) finishAndRemoveTask()
         } catch(e:Exception) {setStatus(getString(R.string.rpc_failed,e.message))}
     }
 

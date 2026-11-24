@@ -3,3 +3,5 @@
 
 -keep interface dev.nodexlm.app.NativeEntry$TokenSink { *; }
 -keepclassmembers class * implements dev.nodexlm.app.NativeEntry$TokenSink { public void onToken(byte[]); }
+
+-keep class dev.nodexlm.app.NativeRustRpc { *; }

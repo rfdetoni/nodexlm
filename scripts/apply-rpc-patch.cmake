@@ -24,3 +24,17 @@ if(DEFINED EXTRA_PATCH)
     endif()
   endif()
 endif()
+
+# Android-only cooperative shutdown extension. Apply before CMake configures
+# the fetched source; desktop RPC runtime never receives this patch.
+if(DEFINED ANDROID_SHUTDOWN_PATCH)
+  execute_process(COMMAND git -C "${SOURCE}" apply --check "${ANDROID_SHUTDOWN_PATCH}" RESULT_VARIABLE shutdown_clean)
+  if(shutdown_clean EQUAL 0)
+    execute_process(COMMAND git -C "${SOURCE}" apply "${ANDROID_SHUTDOWN_PATCH}" COMMAND_ERROR_IS_FATAL ANY)
+  else()
+    execute_process(COMMAND git -C "${SOURCE}" apply --reverse --check "${ANDROID_SHUTDOWN_PATCH}" RESULT_VARIABLE shutdown_applied)
+    if(NOT shutdown_applied EQUAL 0)
+      message(FATAL_ERROR "Pinned Android RPC shutdown patch cannot be applied to this source")
+    endif()
+  endif()
+endif()
