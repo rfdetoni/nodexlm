@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,21 +30,26 @@ type idleTunnel struct {
 }
 
 type relay struct {
-	nodeID         string
-	listener       net.Listener
-	waiting        []*idleTunnel
-	ready          chan struct{}
-	closed         chan struct{}
-	mu             sync.Mutex
-	available      int
-	accepted       uint64
-	rejected       uint64
-	timeouts       uint64
-	bytesToGuest   uint64
-	bytesFromGuest uint64
-	lastActivityMS int64
-	peers          map[net.Conn]struct{}
+	nodeID          string
+	listener        net.Listener
+	waiting         []*idleTunnel
+	ready           chan struct{}
+	closed          chan struct{}
+	mu              sync.Mutex
+	available       int
+	accepted        uint64
+	rejected        uint64
+	timeouts        uint64
+	bytesToGuest    atomic.Uint64
+	bytesFromGuest  atomic.Uint64
+	writesToGuest   atomic.Uint64
+	writesFromGuest atomic.Uint64
+	lastActivityMS  atomic.Int64
+	epoch           uint64
+	peers           map[net.Conn]struct{}
 }
+
+var relayEpoch atomic.Uint64
 
 type Hub struct {
 	mu         sync.Mutex
@@ -96,7 +102,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 			http.Error(w, "local RPC relay unavailable", 503)
 			return
 		}
-		item = &relay{nodeID: nodeID, listener: ln, waiting: make([]*idleTunnel, 0, 8), ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
+		item = &relay{nodeID: nodeID, epoch: relayEpoch.Add(1), listener: ln, waiting: make([]*idleTunnel, 0, 8), ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
 		h.nodes[nodeID] = item
 		go item.accept()
 	}
@@ -312,7 +318,7 @@ var rpcCopyBuffers = sync.Pool{
 }
 
 // relayWriter measures successfully forwarded bytes (not planned layer
-// counts). The lock is per buffered write rather than per RPC byte.
+// counts). Atomic counters avoid taking the relay queue mutex on writes.
 type relayWriter struct {
 	io.Writer
 	relay   *relay
@@ -324,20 +330,19 @@ func (w relayWriter) Write(p []byte) (int, error) {
 	if n > 0 {
 		logTransfer := false
 		var sent uint64
-		w.relay.mu.Lock()
 		if w.toGuest {
-			before := w.relay.bytesToGuest
-			w.relay.bytesToGuest += uint64(n)
-			sent = w.relay.bytesToGuest
+			sent = w.relay.bytesToGuest.Add(uint64(n))
+			before := sent - uint64(n)
+			w.relay.writesToGuest.Add(1)
 			// Never log individual model buffers. One event after 1 MiB,
 			// then at 32 MiB boundaries is enough for stalled-load diagnosis.
 			logTransfer = (before < 1<<20 && sent >= 1<<20) ||
 				sent/(32<<20) > before/(32<<20)
 		} else {
-			w.relay.bytesFromGuest += uint64(n)
+			w.relay.bytesFromGuest.Add(uint64(n))
+			w.relay.writesFromGuest.Add(1)
 		}
-		w.relay.lastActivityMS = time.Now().UnixMilli()
-		w.relay.mu.Unlock()
+		w.relay.lastActivityMS.Store(time.Now().UnixMilli())
 		if logTransfer {
 			slog.Debug("RPC bytes forwarded Host to Guest", "guest_id", w.relay.nodeID,
 				"total_bytes", sent, "total_mib", sent>>20)

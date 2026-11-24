@@ -22,19 +22,21 @@ type InferenceSample struct {
 	// rate includes prefill and first-token latency (end_to_end).
 	RateBasis string `json:"rate_basis,omitempty"`
 	// PromptMilliseconds is the native prefill timing, not an invented TTFT.
-	PromptMilliseconds         float64             `json:"prompt_ms,omitempty"`
-	PrefillTokensPerSecond     float64             `json:"prefill_tokens_per_second,omitempty"`
-	DraftTokens                int                 `json:"draft_tokens,omitempty"`
-	DraftAccepted              int                 `json:"draft_accepted,omitempty"`
-	DraftAcceptance            *float64            `json:"draft_acceptance,omitempty"`
-	LoadMilliseconds           float64             `json:"load_ms,omitempty"`
-	FirstOutputMilliseconds    float64             `json:"first_output_ms,omitempty"`
-	OutputChunkP50Milliseconds float64             `json:"output_chunk_p50_ms,omitempty"`
-	OutputChunkP95Milliseconds float64             `json:"output_chunk_p95_ms,omitempty"`
-	Workloads                  []BenchmarkWorkload `json:"workloads,omitempty"`
-	ElapsedMilliseconds        float64             `json:"elapsed_ms,omitempty"`
-	Runs                       int                 `json:"runs,omitempty"`
-	Fingerprint                string              `json:"fingerprint,omitempty"`
+	PromptMilliseconds         float64              `json:"prompt_ms,omitempty"`
+	PrefillTokensPerSecond     float64              `json:"prefill_tokens_per_second,omitempty"`
+	DraftTokens                int                  `json:"draft_tokens,omitempty"`
+	DraftAccepted              int                  `json:"draft_accepted,omitempty"`
+	DraftAcceptance            *float64             `json:"draft_acceptance,omitempty"`
+	LoadMilliseconds           float64              `json:"load_ms,omitempty"`
+	FirstOutputMilliseconds    float64              `json:"first_output_ms,omitempty"`
+	OutputChunkP50Milliseconds float64              `json:"output_chunk_p50_ms,omitempty"`
+	OutputChunkP95Milliseconds float64              `json:"output_chunk_p95_ms,omitempty"`
+	Workloads                  []BenchmarkWorkload  `json:"workloads,omitempty"`
+	ElapsedMilliseconds        float64              `json:"elapsed_ms,omitempty"`
+	Runs                       int                  `json:"runs,omitempty"`
+	Fingerprint                string               `json:"fingerprint,omitempty"`
+	NativeSystemInfo           string               `json:"native_system_info,omitempty"`
+	RPCTraffic                 *InferenceRPCTraffic `json:"rpc_traffic,omitempty"`
 }
 
 // parseInferenceSample is shared by live metrics and controlled benchmarks.
@@ -153,6 +155,7 @@ func (m *Manager) recordInferenceWithLatency(model string, raw []byte, elapsed t
 	m.mu.Lock()
 	// A live distributed result is not evidence of Host-only performance.
 	if m.engine != nil {
+		sample.NativeSystemInfo = m.nativeSystemInfo
 		if len(m.engine.RPCServers) > 0 {
 			sample.Model += "@cluster"
 		} else {

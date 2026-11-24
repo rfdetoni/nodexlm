@@ -185,6 +185,7 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 			return InferenceSample{}, ctx.Err()
 		}
 	}
+	sample.NativeSystemInfo = engine.SystemInfo()
 	sample.LoadMilliseconds = loadMilliseconds
 	sample.Kind = "benchmark"
 	sample.Runs = runs

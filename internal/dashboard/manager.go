@@ -101,6 +101,7 @@ type Manager struct {
 	settings              Settings
 	engine                *local.Managed
 	current               string
+	nativeSystemInfo      string
 	loading               bool
 	unloading             bool
 	loadPhase             string
@@ -184,6 +185,9 @@ func (m *Manager) State() map[string]any {
 		phase = "idle"
 	}
 	state := map[string]any{"backend": local.EffectiveBackend(m.settings.Backend), "model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
+	if m.nativeSystemInfo != "" {
+		state["native_system_info"] = m.nativeSystemInfo
+	}
 	if m.loading {
 		state["started_at"] = m.loadStartedAt.UTC().Format(time.RFC3339)
 		state["elapsed_seconds"] = int(time.Since(m.loadStartedAt).Seconds())
@@ -603,6 +607,7 @@ func (m *Manager) load(ctx context.Context) error {
 		engine.Close()
 		return err
 	}
+	systemInfo := engine.SystemInfo()
 	m.mu.Lock()
 	if ctx.Err() != nil || m.unloading {
 		m.mu.Unlock()
@@ -613,6 +618,7 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
+	m.nativeSystemInfo = systemInfo
 	m.current = s.Model
 	m.mu.Unlock()
 	return nil
@@ -637,6 +643,7 @@ func (m *Manager) Unload() {
 	m.mu.Lock()
 	engine := m.engine
 	m.engine = nil
+	m.nativeSystemInfo = ""
 	m.current = ""
 	m.loadPhase = "idle"
 	m.loadError = ""
