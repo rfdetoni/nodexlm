@@ -659,7 +659,19 @@ class MainActivity : Activity() {
             text = getString(R.string.rpc_rust_transport)
             isChecked = BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false)
         }
-        if (BuildConfig.RUST_RPC_ENABLED) settings.addView(rustTransport)
+        val efficientCores = CheckBox(this).apply {
+            text = getString(R.string.rpc_efficient_cores)
+            isChecked = prefs.getBoolean("rpc_efficient_cores", false)
+        }
+        val dedicatedGuest = CheckBox(this).apply {
+            text = getString(R.string.rpc_dedicated_guest)
+            isChecked = prefs.getBoolean("rpc_dedicated_guest", false)
+        }
+        if (BuildConfig.RUST_RPC_ENABLED) {
+            settings.addView(rustTransport)
+            settings.addView(efficientCores)
+        }
+        settings.addView(dedicatedGuest)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         }
@@ -679,7 +691,9 @@ class MainActivity : Activity() {
                     .putInt("rpc_start_hour",from).putInt("rpc_end_hour",until)
                     .putInt("rpc_max_contribution_mib",cap).putInt("rpc_memory_reserve_mib",reserve)
                     .putInt("rpc_threads",threads)
-                    .putBoolean("rpc_rust_transport", BuildConfig.RUST_RPC_ENABLED && rustTransport.isChecked).apply()
+                    .putBoolean("rpc_rust_transport", BuildConfig.RUST_RPC_ENABLED && rustTransport.isChecked)
+                    .putBoolean("rpc_efficient_cores", efficientCores.isChecked)
+                    .putBoolean("rpc_dedicated_guest", dedicatedGuest.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
         })
@@ -763,8 +777,12 @@ class MainActivity : Activity() {
                 .putExtra(RpcGuestService.EXTRA_NAME,prefs.getString("name",Build.MODEL) ?: Build.MODEL)
                 .putExtra(RpcGuestService.EXTRA_MODE,prefs.getString("rpc_mode", "auto") ?: "auto")
                 .putExtra(RpcGuestService.EXTRA_RUST_TRANSPORT, BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false))
+                .putExtra(RpcGuestService.EXTRA_EFFICIENT_CORES, prefs.getBoolean("rpc_efficient_cores", false))
             startForegroundService(intent)
             setStatus(getString(R.string.ui_69873d9d8387))
+            // Foreground RPC service lives in :rpc. Closing this task releases
+            // Activity resources without killing the isolated native worker.
+            if (prefs.getBoolean("rpc_dedicated_guest", false)) finishAndRemoveTask()
         } catch(e:Exception) {setStatus(getString(R.string.rpc_failed,e.message))}
     }
 

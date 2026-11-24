@@ -57,6 +57,7 @@ class RpcGuestService : Service() {
         const val EXTRA_NAME = "name"
         const val EXTRA_MODE = "mode"
         const val EXTRA_RUST_TRANSPORT = "rust_transport"
+        const val EXTRA_EFFICIENT_CORES = "efficient_cores"
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
 
@@ -179,7 +180,8 @@ class RpcGuestService : Service() {
                 }
                 if (useRust) {
                     check(running.get()) { "Guest stopped" }
-                    val error = NativeRustRpc.start(host, port, node, token, cert, rpcSocket)
+                    val error = NativeRustRpc.start(host, port, node, token, cert, rpcSocket,
+                        intent.getBooleanExtra(EXTRA_EFFICIENT_CORES, false))
                     check(error.isEmpty()) { error }
                     rustStarted = true
                     Log.i(LOG, "Experimental Rust RPC transport selected")

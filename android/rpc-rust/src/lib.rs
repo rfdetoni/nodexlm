@@ -29,6 +29,8 @@ use tokio::{
 };
 use tokio_rustls::TlsConnector;
 
+mod affinity;
+
 const MAX_SLOTS: usize = 8;
 const STANDBY: usize = 2;
 const BUF: usize = 32 * 1024;
@@ -79,13 +81,14 @@ struct Config {
     request: Vec<u8>,
     socket: String,
     server_name: ServerName<'static>,
+    efficient_cores: bool,
     tls: TlsConnector,
 }
 
 fn safe_header(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|b| (33..=126).contains(&b))
 }
-fn config(host: String, port: u16, node: String, token: String, cert: Vec<u8>, socket: String)
+fn config(host: String, port: u16, node: String, token: String, cert: Vec<u8>, socket: String, efficient_cores: bool)
     -> Result<Config, &'static str>
 {
     if !safe_header(&host) || !safe_header(&node) || !safe_header(&token)
@@ -113,7 +116,7 @@ fn config(host: String, port: u16, node: String, token: String, cert: Vec<u8>, s
     // authenticates the exact currently enrolled Host.
     tls.resumption = rustls::client::Resumption::disabled();
     let request = format!("CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nX-Nodex-Node: {node}\r\n\r\n").into_bytes();
-    Ok(Config { host, port, request, socket, server_name, tls: TlsConnector::from(Arc::new(tls)) })
+    Ok(Config { host, port, request, socket, server_name, efficient_cores, tls: TlsConnector::from(Arc::new(tls)) })
 }
 
 struct Control {
@@ -193,16 +196,43 @@ async fn benchmark<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> Result<(), R
     Ok(())
 }
 
+// A single-thread executor can reuse a small bounded pool without mutexes.
+// Only retain two buffers (64 KiB total); larger concurrent claims allocate
+// independently and release excess immediately. No tensor data is logged.
+thread_local! {
+    static RELAY_POOL: std::cell::RefCell<Vec<Vec<u8>>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+struct RelayBuffer(Vec<u8>);
+impl RelayBuffer {
+    fn acquire() -> Self {
+        Self(RELAY_POOL.with(|pool| pool.borrow_mut().pop())
+            .unwrap_or_else(|| vec![0; BUF]))
+    }
+}
+impl Drop for RelayBuffer {
+    fn drop(&mut self) {
+        let mut buffer = std::mem::take(&mut self.0);
+        // Clear data before retaining memory across authenticated sessions.
+        buffer.fill(0);
+        let _ = RELAY_POOL.try_with(|pool| {
+            let mut pool = pool.borrow_mut();
+            if pool.len() < 2 { pool.push(buffer); }
+        });
+    }
+}
+
 // Two bounded transfer buffers are allocated only on claim. Split halves are
 // borrowed, not cloned; no JVM ByteArray, JNI copy or tensor-sized allocation.
 async fn forward<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut r: R, mut w: W)
     -> io::Result<()>
 {
-    let mut buffer = vec![0; BUF];
+    let mut buffer = RelayBuffer::acquire();
     loop {
-        let n = r.read(&mut buffer).await?;
+        let n = r.read(&mut buffer.0).await?;
         if n == 0 { return Ok(()); }
-        w.write_all(&buffer[..n]).await?;
+        w.write_all(&buffer.0[..n]).await?;
         w.flush().await?;
     }
 }
@@ -299,7 +329,7 @@ async fn run(cfg: Arc<Config>, c: Arc<Control>) -> Result<(), &'static str> {
             _ = c.changed.notified() => {},
             result = tasks.join_next() => match result {
                 Some(Ok(Err(e))) => return Err(e),
-                Some(Ok(Ok(()))) if *stop.borrow() => break,
+                Some(Ok(Ok(()))) if *c.stop.borrow() => break,
                 _ => return Err("Rust RPC slot exited unexpectedly"),
             }
         }
@@ -320,6 +350,7 @@ fn start(cfg: Config) -> Result<(), &'static str> {
     let c = Arc::new(Control::new());
     let worker = c.clone();
     std::thread::Builder::new().name("nodexlm-rust-rpc".into()).spawn(move || {
+        if cfg.efficient_cores { affinity::prefer_efficient(); }
         let result = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
             Ok(rt) => rt.block_on(run(Arc::new(cfg), worker.clone())),
             Err(_) => Err("Cannot initialize Rust RPC executor"),
@@ -342,7 +373,7 @@ fn response(env: &mut JNIEnv<'_>, s: &str) -> jstring {
 #[no_mangle]
 pub extern "system" fn Java_dev_nodexlm_app_NativeRustRpc_start(
     mut env: JNIEnv<'_>, _: JObject<'_>, host: JString<'_>, port: jint,
-    node: JString<'_>, token: JString<'_>, cert: JByteArray<'_>, socket: JString<'_>,
+    node: JString<'_>, token: JString<'_>, cert: JByteArray<'_>, socket: JString<'_>, efficient: jboolean,
 ) -> jstring {
     let result = (|| {
         let host = java_string(&mut env, &host)?;
@@ -351,7 +382,7 @@ pub extern "system" fn Java_dev_nodexlm_app_NativeRustRpc_start(
         let socket = java_string(&mut env, &socket)?;
         let cert = env.convert_byte_array(&cert).map_err(|_| "Invalid JNI certificate")?;
         let port = u16::try_from(port).map_err(|_| "Invalid Host port")?;
-        start(config(host, port, node, token, cert, socket)?)
+        start(config(host, port, node, token, cert, socket, efficient != JNI_FALSE)?)
     })();
     response(&mut env, result.err().unwrap_or(""))
 }
@@ -386,6 +417,19 @@ pub extern "system" fn Java_dev_nodexlm_app_NativeRustRpc_failure(mut env: JNIEn
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn relay_pool_retains_at_most_two_clean_buffers() {
+        RELAY_POOL.with(|pool| pool.borrow_mut().clear());
+        let mut buffers: Vec<_> = (0..4).map(|_| RelayBuffer::acquire()).collect();
+        buffers[0].0[0] = 255;
+        drop(buffers);
+        RELAY_POOL.with(|pool| {
+            let pool = pool.borrow();
+            assert_eq!(pool.len(), 2);
+            assert!(pool.iter().all(|b| b.iter().all(|v| *v == 0)));
+        });
+    }
+
     #[test]
     fn pool_is_bounded() {
         assert_eq!(desired_slots(0), 2);

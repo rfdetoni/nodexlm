@@ -50,8 +50,11 @@ and signing/update compatibility pass.
 
 ## Remaining hardware-dependent engineering
 
-Add native GGML shutdown and join before any process unification. Evaluate
-buffer pooling (currently bounded per claimed stream), core affinity, reduced
-ONNX packaging, OpenCL and KV/cache policies only with parity and hardware
-measurements. Do not automatically lower the safety reserve under sustained
+The Rust relay now reuses at most two cleared 32 KiB buffers. Optional
+CPU affinity uses measured CPU capacity within the Android cpuset; unsupported
+or homogeneous devices retain default scheduling. Dedicated Guest mode closes
+the UI task, leaving the foreground :rpc service alive (Android controls
+whether the UI process remains cached). Add native GGML shutdown and join before
+any process unification. Evaluate reduced ONNX packaging, OpenCL and KV/cache
+policies only with parity and hardware measurements. Do not automatically lower the safety reserve under sustained
 memory pressure. No automatic fallback from an authentication failure.
