@@ -28,10 +28,20 @@ jobs:
       - id: native
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || [[ -n "$(git diff --name-only HEAD^ HEAD -- .github/workflows/rpc-platforms.yml scripts/stage-rpc-bundle.py scripts/optimized-rpc-backend-search.patch)" ]]; then
+          # r2 is already immutable. Until its reviewed promotion sets the
+          # next candidate tag, never build optimized binaries under r2.
+          candidate=$(python3 -c 'import json; print(json.load(open("internal/llamaruntime/revision.json"))["rpc_candidate_release"])')
+          if [[ "$candidate" == nodexlm-rpc-b12255-r2 ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || [[ -n "$(git diff --name-only HEAD^ HEAD -- .github/workflows/rpc-platforms.yml scripts/stage-rpc-bundle.py scripts/optimized-rpc-backend-search.patch)" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
+            previous=$(git show HEAD^:internal/llamaruntime/revision.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("rpc_candidate_release",""))')
+            if [[ "$candidate" != "$previous" ]]; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
+            fi
           fi
   build:
     needs: detect
