@@ -78,6 +78,13 @@ func validatePlacementMemory(meta local.GGUFInfo, s Settings, modelBytes, hostBu
 		return errors.New("GGUF weight size exceeds memory planner range")
 	}
 	required := modelBytes * 115 / 100
+	// Prompt cache is Host RAM, not remote weight capacity. Account for its
+	// configured ceiling separately from the active KV and graph allowance.
+	cache := uint64(s.PromptCacheMiB) * clusterplan.MiB
+	if cache > hostBudget || cache > ^uint64(0)-required {
+		return errors.New("prompt cache exceeds Host memory budget")
+	}
+	required += cache
 	genericReserve := total / 4
 	if *estimate > genericReserve {
 		extra := *estimate - genericReserve

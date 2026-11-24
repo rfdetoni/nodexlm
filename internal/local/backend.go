@@ -70,6 +70,7 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 			(m.FlashAttention != "" && m.FlashAttention != "auto") ||
 			(m.KVCacheType != "" && m.KVCacheType != "f16") ||
 			m.BatchSize != 0 || m.UBatchSize != 0 || m.CacheReuseTokens != 0 || m.SpeculativeTokens != 0 ||
+			m.ThreadsBatch != 0 || m.PromptCacheMiB != 0 || m.LoadMode != "" && m.LoadMode != "auto" || m.LazyMode != "" && m.LazyMode != "auto" || m.NUMA != "" ||
 			(m.SpeculativeMode != "" && m.SpeculativeMode != "off") || m.DraftModelPath != "" {
 			return backendLaunchSpec{}, errors.New("mistral.rs does not support the selected llama.cpp MoE, Flash Attention, KV-cache, batch or speculative options; reset them before switching")
 		}

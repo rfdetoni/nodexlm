@@ -99,9 +99,11 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 		}
 	}
 	defer engine.Close()
+	loadStart := time.Now()
 	if err := engine.Load(ctx); err != nil {
 		return InferenceSample{}, err
 	}
+	loadMilliseconds := float64(time.Since(loadStart)) / float64(time.Millisecond)
 	cache := false
 	request := protocol.ChatRequest{Model: model, Messages: []protocol.Message{
 		{Role: "user", Content: "Write a short story about a small robot exploring a quiet forest."},
@@ -136,6 +138,7 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	}
 	// A median resists a single noisy network, thermal or scheduling outlier.
 	sample := medianInferenceSample(measurements)
+	sample.LoadMilliseconds = loadMilliseconds
 	sample.Kind = "benchmark"
 	sample.Runs = runs
 	sample.MeasuredAt = time.Now()

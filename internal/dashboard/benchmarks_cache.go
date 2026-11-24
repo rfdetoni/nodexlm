@@ -30,7 +30,9 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 		Bytes    int64    `json:"bytes"`
 		Modified int64    `json:"modified"`
 		Runtime  string   `json:"runtime"`
-	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version})
+		Bundle   string   `json:"bundle"`
+		Schema   int      `json:"schema"`
+	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version, llamaruntime.BundledRPCRelease(), 2})
 	if err != nil {
 		return ""
 	}

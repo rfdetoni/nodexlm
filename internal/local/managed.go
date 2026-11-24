@@ -35,6 +35,8 @@ type Managed struct {
 	Binary, ModelPath, Alias                     string
 	Backend                                      string
 	Threads, ContextTokens                       int
+	ThreadsBatch, PromptCacheMiB                 int
+	LoadMode, LazyMode, NUMA                     string
 	GPULayers                                    string
 	MoECPU                                       bool
 	MoECPULayers                                 int
@@ -347,6 +349,21 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 
 func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []string {
 	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui", "--jinja"}
+	// One generation is admitted by NodexLM. Avoid upstream auto-four slots
+	// and an implicit 8 GiB prompt cache limit in the pinned runtime.
+	args = append(args, "--parallel", "1", "--cache-ram", strconv.Itoa(m.PromptCacheMiB))
+	if m.ThreadsBatch > 0 {
+		args = append(args, "--threads-batch", strconv.Itoa(m.ThreadsBatch))
+	}
+	if m.LoadMode != "" && m.LoadMode != "auto" {
+		args = append(args, "--load-mode", m.LoadMode)
+	}
+	if m.LazyMode != "" && m.LazyMode != "auto" {
+		args = append(args, "--lazy-mode", m.LazyMode)
+	}
+	if m.NUMA != "" {
+		args = append(args, "--numa", m.NUMA)
+	}
 	if m.FlashAttention != "" && m.FlashAttention != "auto" {
 		args = append(args, "--flash-attn", m.FlashAttention)
 	}

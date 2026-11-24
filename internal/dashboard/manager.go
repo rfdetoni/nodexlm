@@ -34,6 +34,11 @@ type Settings struct {
 	Backend           string  `json:"backend,omitempty"`
 	Model             string  `json:"model"`
 	Threads           int     `json:"threads"`
+	ThreadsBatch      int     `json:"threads_batch,omitempty"`
+	PromptCacheMiB    int     `json:"prompt_cache_mib,omitempty"`
+	LoadMode          string  `json:"load_mode,omitempty"`
+	LazyMode          string  `json:"lazy_mode,omitempty"`
+	NUMA              string  `json:"numa,omitempty"`
 	ContextTokens     int     `json:"context_tokens"`
 	GPULayers         string  `json:"gpu_layers"`
 	HostGPU           string  `json:"host_gpu,omitempty"`
@@ -58,7 +63,8 @@ type Settings struct {
 func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string) *local.Managed {
 	return &local.Managed{
 		Backend: s.Backend, Binary: binary, ModelPath: modelPath, Alias: alias,
-		Threads: s.Threads, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
+		Threads: s.Threads, ThreadsBatch: s.ThreadsBatch, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
+		PromptCacheMiB: s.PromptCacheMiB, LoadMode: s.LoadMode, LazyMode: s.LazyMode, NUMA: s.NUMA,
 		MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB,
 		MoECacheCPUShare: s.MoECacheCPUShare,
 		FlashAttention:   s.FlashAttention, KVCacheType: s.KVCacheType,
@@ -230,6 +236,9 @@ func (m *Manager) validate(s Settings) error {
 		(s.MoECacheCPUShare > 0 && (s.MoECacheMiB == 0 || !s.MoECPU && s.MoECPULayers == 0)) {
 		return errors.New("moe_cache_cpu_share must be 0..1 and requires an enabled MoE cache")
 	}
+	if err := validateInferenceResources(s); err != nil {
+		return err
+	}
 	if s.CacheReuseTokens < 0 || s.CacheReuseTokens > 4096 {
 		return errors.New("cache_reuse_tokens must be 0..4096")
 	}
@@ -296,6 +305,7 @@ func (m *Manager) Update(s Settings) error {
 	// is unchanged. Do not allow stale tokens/s to drive placement decisions.
 	old := m.settings
 	if old.Backend != s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
+		old.ThreadsBatch != s.ThreadsBatch || old.PromptCacheMiB != s.PromptCacheMiB || old.LoadMode != s.LoadMode || old.LazyMode != s.LazyMode || old.NUMA != s.NUMA ||
 		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
 		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB || old.MoECacheCPUShare != s.MoECacheCPUShare ||
 		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
