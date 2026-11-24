@@ -6,6 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
+	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
@@ -48,6 +50,25 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 	if closed {
 		return InferenceSample{}, errors.New("manager closed")
 	}
+	sample, err := m.measureInference(ctx, settings, model, nodeID, extended, provider)
+	if err != nil {
+		return InferenceSample{}, err
+	}
+	key := sample.Model
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sample.Fingerprint != m.benchmarkSignature(m.settings, model) {
+		return InferenceSample{}, errors.New("runtime settings changed during benchmark")
+	}
+	if _, exists := m.samples[key]; !exists {
+		m.pruneSamplesLocked(time.Now())
+	}
+	m.samples[key] = sample
+	return sample, m.persistBenchmarksLocked()
+}
+
+func (m *Manager) measureInference(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest) (InferenceSample, error) {
+	settings.Model = model
 	path, err := modelPath(m.modelDir, model)
 	if err != nil {
 		return InferenceSample{}, err
@@ -55,6 +76,19 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 	size, err := local.ModelSize(path)
 	if err != nil {
 		return InferenceSample{}, err
+	}
+	meta, err := local.InspectGGUF(path)
+	if err != nil {
+		return InferenceSample{}, err
+	}
+	hostBudget, err := m.hostBudget(settings, hardware.Collect("Host", nil))
+	if err != nil {
+		return InferenceSample{}, err
+	}
+	if nodeID == "" {
+		if err = validatePlacementMemory(meta, settings, uint64(size), hostBudget, nil); err != nil {
+			return InferenceSample{}, err
+		}
 	}
 	binary := m.binary
 	if local.EffectiveBackend(settings.Backend) == local.BackendMistralRS {
@@ -90,6 +124,9 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 			if guest.ID == nodeID {
 				if modelExceedsBudget(uint64(size), guest.CapacityBytes) {
 					return InferenceSample{}, errors.New("benchmark model exceeds Guest memory budget")
+				}
+				if err = validatePlacementMemory(meta, settings, uint64(size), hostBudget, []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}); err != nil {
+					return InferenceSample{}, err
 				}
 				engine.RPCServers = []string{guest.Endpoint}
 				engine.RPCLocalLayers = 0
@@ -156,16 +193,5 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 	if sample.Fingerprint == "" {
 		return InferenceSample{}, errors.New("model changed during benchmark")
 	}
-	m.mu.Lock()
-	if sample.Fingerprint != m.benchmarkSignature(m.settings, model) {
-		m.mu.Unlock()
-		return InferenceSample{}, errors.New("runtime settings changed during benchmark")
-	}
-	if _, exists := m.samples[key]; !exists {
-		m.pruneSamplesLocked(time.Now())
-	}
-	m.samples[key] = sample
-	err = m.persistBenchmarksLocked()
-	m.mu.Unlock()
-	return sample, err
+	return sample, nil
 }

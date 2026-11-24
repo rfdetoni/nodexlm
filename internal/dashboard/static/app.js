@@ -709,6 +709,17 @@ $('inferenceBench').addEventListener('click',()=>guard(async()=>{
    await refreshObservations();
   }finally{button.disabled=false}
 }));
+$('autotuneBench').addEventListener('click',()=>guard(async()=>{
+ const button=$('autotuneBench');button.disabled=true;
+ try{
+  const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value});
+  const area=$('autotuneResults');area.replaceChildren();
+  for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s':row.error||'indisponível')));
+  if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')));
+   const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
+  }else area.append(el('p','muted','Nenhum ganho comparável acima do limiar de 5%.'));
+ }finally{button.disabled=false}
+}));
 $('refreshObservations').addEventListener('click',()=>guard(refreshObservations));
 async function refreshObservations(){
  const data=await api('/api/observability');const area=$('observations');area.replaceChildren();

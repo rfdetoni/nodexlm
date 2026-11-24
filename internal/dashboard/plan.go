@@ -48,7 +48,10 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if meta.BlockCount == 0 {
 		return nil, errors.New("GGUF block_count is unavailable")
 	}
-	host := clusterplan.Budget(hardware.Collect("Host", nil))
+	host, err := m.hostBudget(settings, hardware.Collect("Host", nil))
+	if err != nil {
+		return nil, err
+	}
 	nodes := []placement{}
 	localLayers := int(meta.BlockCount)
 	strategy := effectivePlacementStrategy(settings.PlacementStrategy)
