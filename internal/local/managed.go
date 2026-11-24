@@ -29,13 +29,14 @@ import (
 
 // Managed is a lazy local llama-server owner. It keeps GGUF tensors out of
 // the resident NodexLM process and returns RAM to the OS after idle timeout.
-// One active inference at a time in the alpha runtime.
+// Resident runtimes can explicitly opt into bounded parallel slots.
 type Managed struct {
 	mu                                           sync.Mutex
 	Binary, ModelPath, Alias                     string
 	Backend                                      string
 	Threads, ContextTokens                       int
 	ThreadsBatch, PromptCacheMiB                 int
+	ParallelSlots                                int
 	LoadMode, LazyMode, NUMA                     string
 	GPULayers                                    string
 	MoECPU                                       bool
@@ -349,9 +350,19 @@ func (m *Managed) validateMoE(meta GGUFInfo) error {
 
 func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []string {
 	args := []string{"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--model", m.ModelPath, "--alias", m.Alias, "--ctx-size", strconv.Itoa(nctx), "--threads", strconv.Itoa(threads), "--gpu-layers", gpu, "--no-webui", "--jinja"}
-	// One generation is admitted by NodexLM. Avoid upstream auto-four slots
-	// and an implicit 8 GiB prompt cache limit in the pinned runtime.
-	args = append(args, "--parallel", "1", "--cache-ram", strconv.Itoa(m.PromptCacheMiB))
+	// Reserve context per request, not per process.
+	if slots := max(1, m.ParallelSlots); slots > 1 {
+		args = append(args, "--parallel", strconv.Itoa(slots), "--cont-batching", "--no-kvu")
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == "--ctx-size" {
+				args[i+1] = strconv.Itoa(nctx * slots)
+				break
+			}
+		}
+	} else {
+		args = append(args, "--parallel", "1")
+	}
+	args = append(args, "--cache-ram", strconv.Itoa(m.PromptCacheMiB))
 	if m.ThreadsBatch > 0 {
 		args = append(args, "--threads-batch", strconv.Itoa(m.ThreadsBatch))
 	}

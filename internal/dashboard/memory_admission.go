@@ -18,12 +18,13 @@ func estimateKVBytes(meta local.GGUFInfo, s Settings) *uint64 {
 		return nil
 	}
 	width := uint64(meta.EmbeddingLength/meta.HeadCount) * uint64(meta.KVHeadCount)
-	kv := uint64(4) * uint64(s.ContextTokens) * uint64(meta.BlockCount) * width
+	contextTokens := uint64(s.ContextTokens) * uint64(max(1, s.ParallelSlots))
+	kv := uint64(4) * contextTokens * uint64(meta.BlockCount) * width
 	switch s.KVCacheType {
 	case "q8_0":
-		kv = (uint64(2)*uint64(s.ContextTokens)*uint64(meta.BlockCount)*width*34 + 31) / 32
+		kv = (uint64(2)*contextTokens*uint64(meta.BlockCount)*width*34 + 31) / 32
 	case "q4_0":
-		kv = (uint64(2)*uint64(s.ContextTokens)*uint64(meta.BlockCount)*width*18 + 31) / 32
+		kv = (uint64(2)*contextTokens*uint64(meta.BlockCount)*width*18 + 31) / 32
 	}
 	return &kv
 }
@@ -62,7 +63,7 @@ func modelExceedsBudget(modelBytes, budget uint64) bool {
 func validatePlacementMemory(meta local.GGUFInfo, s Settings, modelBytes, hostBudget uint64, guests []clusterplan.Candidate) error {
 	estimate := estimateTransientBytes(meta, s)
 	if estimate == nil {
-		if s.ContextTokens > 4096 || s.BatchSize > 1024 || s.UBatchSize > 1024 {
+		if s.ParallelSlots > 1 || s.PromptCacheMiB > 0 || s.ContextTokens > 4096 || s.BatchSize > 1024 || s.UBatchSize > 1024 {
 			return errors.New("high context/batch requires GGUF KV metadata to validate cluster memory")
 		}
 		return nil

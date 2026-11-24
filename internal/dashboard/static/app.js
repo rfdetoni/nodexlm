@@ -102,7 +102,7 @@ function setDraftModels(items, chosen){
  select.value=items.some(m=>m.name===chosen)?chosen:'';
 }
 function settingsFromForm(model) {
- return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, threads_batch:+$('threadsBatch').value, prompt_cache_mib:+$('promptCacheMiB').value, load_mode:$('loadMode').value, lazy_mode:$('lazyMode').value, numa:$('numaPolicy').value, context_tokens:+$('contextTokens').value,
+ return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, threads_batch:+$('threadsBatch').value, parallel_slots:+$('parallelSlots').value, prompt_cache_mib:+$('promptCacheMiB').value, load_mode:$('loadMode').value, lazy_mode:$('lazyMode').value, numa:$('numaPolicy').value, context_tokens:+$('contextTokens').value,
   gpu_layers:$('gpuLayers').value, host_gpu:$('hostGpu').value, moe_cpu:$('moeCPU').checked,
   distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
   moe_cache_mib:+$('moeCache').value, moe_cache_cpu_share:+$('moeCacheCPUShare').value, flash_attention:$('flashAttention').value,
@@ -385,7 +385,7 @@ async function refresh(){
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
-  for(const [id,v] of Object.entries({threads:s.threads,threadsBatch:s.threads_batch||0,promptCacheMiB:s.prompt_cache_mib||0,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
+  for(const [id,v] of Object.entries({threads:s.threads,threadsBatch:s.threads_batch||0,parallelSlots:s.parallel_slots||1,promptCacheMiB:s.prompt_cache_mib||0,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
   $('runtimeBackend').value=s.backend||'llama.cpp';
   $('hostGpu').value=s.host_gpu||'auto';
   $('loadMode').value=s.load_mode||'auto'; $('lazyMode').value=s.lazy_mode||'auto'; $('numaPolicy').value=s.numa||''; $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'speed'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;

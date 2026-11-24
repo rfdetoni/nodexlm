@@ -35,6 +35,7 @@ type Settings struct {
 	Model             string  `json:"model"`
 	Threads           int     `json:"threads"`
 	ThreadsBatch      int     `json:"threads_batch,omitempty"`
+	ParallelSlots     int     `json:"parallel_slots,omitempty"`
 	PromptCacheMiB    int     `json:"prompt_cache_mib,omitempty"`
 	LoadMode          string  `json:"load_mode,omitempty"`
 	LazyMode          string  `json:"lazy_mode,omitempty"`
@@ -63,7 +64,7 @@ type Settings struct {
 func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string) *local.Managed {
 	return &local.Managed{
 		Backend: s.Backend, Binary: binary, ModelPath: modelPath, Alias: alias,
-		Threads: s.Threads, ThreadsBatch: s.ThreadsBatch, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
+		Threads: s.Threads, ThreadsBatch: s.ThreadsBatch, ParallelSlots: s.ParallelSlots, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
 		PromptCacheMiB: s.PromptCacheMiB, LoadMode: s.LoadMode, LazyMode: s.LazyMode, NUMA: s.NUMA,
 		MoECPU: s.MoECPU, MoECPULayers: s.MoECPULayers, MoECacheMiB: s.MoECacheMiB,
 		MoECacheCPUShare: s.MoECacheCPUShare,
@@ -95,7 +96,7 @@ type Manager struct {
 	generationCount       uint64
 	generationErrors      uint64
 	generationSeconds     float64
-	chatMu                sync.Mutex
+	chatMu                sync.RWMutex
 	admission             chan struct{}
 	dir, modelDir, binary string
 	settings              Settings
@@ -112,7 +113,8 @@ type Manager struct {
 	rpcStatsProvider      func() map[string]rpcmesh.TunnelStats
 	loadCancel            context.CancelFunc
 	loadDone              chan struct{}
-	generationCancel      context.CancelFunc
+	generations           map[uint64]context.CancelFunc
+	generationSequence    uint64
 	download              *Download
 	cancel                context.CancelFunc
 	downloadDone          chan struct{}
@@ -140,6 +142,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err = m.validate(m.settings); err != nil {
 		return nil, fmt.Errorf("runtime settings: %w", err)
 	}
+	m.admission = make(chan struct{}, max(1, m.settings.ParallelSlots))
 	m.loadBenchmarks()
 	m.httpClient = safedownload.Client()
 	return m, nil
@@ -305,7 +308,7 @@ func (m *Manager) Update(s Settings) error {
 	// is unchanged. Do not allow stale tokens/s to drive placement decisions.
 	old := m.settings
 	if old.Backend != s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
-		old.ThreadsBatch != s.ThreadsBatch || old.PromptCacheMiB != s.PromptCacheMiB || old.LoadMode != s.LoadMode || old.LazyMode != s.LazyMode || old.NUMA != s.NUMA ||
+		old.ThreadsBatch != s.ThreadsBatch || old.ParallelSlots != s.ParallelSlots || old.PromptCacheMiB != s.PromptCacheMiB || old.LoadMode != s.LoadMode || old.LazyMode != s.LazyMode || old.NUMA != s.NUMA ||
 		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
 		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB || old.MoECacheCPUShare != s.MoECacheCPUShare ||
 		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
@@ -315,6 +318,7 @@ func (m *Manager) Update(s Settings) error {
 		m.samples = make(map[string]InferenceSample)
 	}
 	m.settings = s
+	m.admission = make(chan struct{}, max(1, s.ParallelSlots))
 	return nil
 }
 func writePrivate(path string, body []byte) error {
@@ -613,13 +617,12 @@ func (m *Manager) Unload() {
 	m.unloading = true
 	cancelLoad := m.loadCancel
 	loadDone := m.loadDone
-	cancelGeneration := m.generationCancel
+	for _, cancel := range m.generations {
+		cancel()
+	}
 	m.mu.Unlock()
 	if cancelLoad != nil {
 		cancelLoad()
-	}
-	if cancelGeneration != nil {
-		cancelGeneration()
 	}
 	if loadDone != nil {
 		<-loadDone

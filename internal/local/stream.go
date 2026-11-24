@@ -90,6 +90,18 @@ func (e *Engine) GenerateStream(ctx context.Context, request protocol.ChatReques
 }
 
 func (m *Managed) withEndpoint(ctx context.Context, generate func(*Engine) error) error {
+	// Dashboard admission bounds parallelism and waits for all cancelled
+	// requests before closing the resident engine. Nonresident CLI remains serial.
+	if m.KeepLoaded && m.ParallelSlots > 1 {
+		m.mu.Lock()
+		err := m.ensure(ctx)
+		endpoint := m.endpoint
+		m.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		return generate(endpoint)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.idleTimer != nil {
