@@ -1,14 +1,15 @@
 {
   "version": "b12255",
   "commit": "940a30ee3b5593e1a66fe0aadc3b731989022552",
-  "rpc_release": "nodexlm-rpc-b12255-r1",
-  "rpc_candidate_release": "nodexlm-rpc-b12255-r2",
+  "rpc_release": "nodexlm-rpc-b12255-r2",
+  "rpc_candidate_release": "nodexlm-rpc-b12255-r3",
   "published": {
-    "darwin/arm64/metal": "2e9e58d3a54e34e65dbe13fa68a1b0a88e4d04b787d754a6badfcde2be09a5b6",
-    "linux/amd64/cpu": "7fd62b38527b873435eed4b1de175f10981f6618848a9cfd3e58d66cd0f4e037",
-    "linux/amd64/vulkan": "b68291729a139048a9ac06e9a1e55032723e2efade93601543caa6ba9a6b881d",
-    "linux/arm64/cpu": "de7bf42431724d75365dc50b898c2af8b51bed985f52f798db5f8a6ad975e20b",
-    "windows/amd64/cpu": "0ebe8b07f76aa0504064b87587b0fc775752324144566075e4b8c546a9ea4c2c"
+    "darwin/arm64/metal": "22421489c7ca602782e00edcbc8d7fbde1c38a53aa87adbde8105c74d99f0cef",
+    "linux/amd64/cpu": "0f340b7723917f03690b617fef627d109ec39b65651448cdc99bc80d6ff927d4",
+    "linux/amd64/vulkan": "f40084dfe4dc054cd1c1a8373ba75ffdccada1933cd13381028e7f7d619ebcb1",
+    "linux/arm64/cpu": "ad5787b6bff971a530967425346f30c066d5c2ec76563cda833bfd1e28f31a33",
+    "windows/amd64/cpu": "101ca088641bfdcbf05e9c171a88d9a90ff0f8b9023578ed5f380805e3676b59"
   },
-  "unix_rpc": true
+  "unix_rpc": true,
+  "parallel_rpc_uploads": true
 }

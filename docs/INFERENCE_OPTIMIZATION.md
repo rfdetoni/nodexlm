@@ -7,9 +7,9 @@ por kernels, alocação real de camadas, KV cache e execução das operações.
 
 Na tela **Configuração de inferência**, habilite a distribuição e escolha:
 
-- **Capacidade (padrão):** mantém a compatibilidade com o comportamento original:
+- **Capacidade:** mantém a compatibilidade com o comportamento original:
   utiliza todos os Guests RPC prontos e divide camadas conforme memória estimada.
-- **Velocidade:** ordena Guests com base no benchmark *real* do mesmo GGUF
+- **Velocidade (padrão):** ordena Guests com base no benchmark *real* do mesmo GGUF
   (quando disponível), RTT e taxa de eco da rede, e usa a menor combinação
   que satisfaz a margem estimada de memória. Guests com links ruins ficam
   atrás, mas continuam elegíveis quando necessários ao modelo.
@@ -40,7 +40,7 @@ do llama-server:
 | Reuso parcial de KV/prompt | 0 (desligado), 1–4096 | `--cache-reuse`, tenta reutilizar trechos em prompts similares; requer prompt caching |
 | Cache MoE calculado na CPU | 0–1 | `--moe-cache-cpu-share` define fração dos misses executada na CPU em vez de carregar expert por PCIe; exige `--moe-cache-mib` e MoE em RAM |
 
-As três novas opções são **opt-in** e foram verificadas contra a CLI da revisão `940a30ee3b5593e1a66fe0aadc3b731989022552` fixada no repositório. Não são kernels do Basalt e não implementam a migração adaptativa de especialistas; aproveitam controles nativos do llama.cpp. No modo mistral.rs, permanecem incompatíveis.
+As opções de ajuste nativo são **opt-in** e foram verificadas contra a CLI da revisão `940a30ee3b5593e1a66fe0aadc3b731989022552` fixada no repositório. Não são kernels do Basalt e não implementam a migração adaptativa de especialistas; aproveitam controles nativos do llama.cpp. No modo mistral.rs, permanecem incompatíveis.
 
 Para uma RTX 2060 de 6 GiB, comece com cache MoE 0 e CPU share 0, reserve VRAM para pesos e KV, e aumente o cache em pequenos passos somente com telemetria livre. Em nós RPC heterogêneos, o cache MoE pode ser dividido entre GPUs e a melhoria não está garantida. O retorno do `/api/plan` é estimativa, não um teste físico.
 
@@ -84,4 +84,8 @@ o conteúdo armazenado no disco dele. O Android não recebeu essa opção.
 
 ## Atualização do motor nativo
 
-A revisão do llama.cpp fica fixada em `internal/llamaruntime/revision.json` e os arquivos oficiais SHA-256 em `internal/llamaruntime/install.go`. Ao mudar de revisão, os pares Host/Guest RPC devem ser recompilados juntos (inclusive o patch Unix) e os novos binários publicados e verificados antes de preencher `published`. Enquanto os novos hashes não forem publicados, `EnsureDistributed` tenta a compilação local da mesma revisão. **Não é permitido reutilizar bundles publicados de revisões antigas**. Android compila sua própria biblioteca C++ na revisão fixada e precisa de testes físicos específicos.
+A revisão do llama.cpp fica fixada em `internal/llamaruntime/revision.json` e os hashes SHA-256 em `internal/llamaruntime/revision.json`. Ao mudar de revisão, os pares Host/Guest RPC devem ser recompilados juntos (inclusive o patch Unix) e os novos binários publicados e verificados antes de preencher `published`. Enquanto os novos hashes não forem publicados, `EnsureDistributed` tenta a compilação local da mesma revisão. **Não é permitido reutilizar bundles publicados de revisões antigas**. Android compila sua própria biblioteca C++ na revisão fixada e precisa de testes físicos específicos.
+
+## Runtime RPC r2
+
+O r2 é o bundle publicado fixado, com os cinco SHA-256 obtidos dos ativos da release e o build 43231952808 aprovado nas cinco plataformas, incluindo E2E Linux com dois Guests. O cache de instalação é separado por tag. Upload paralelo é ativado apenas nos bundles verificados, não representa ganho garantido no decode. O r3 fica reservado para candidatos de kernels especializados; não promover sem CI, hashes e testes de compatibilidade.
