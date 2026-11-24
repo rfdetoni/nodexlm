@@ -62,6 +62,8 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	}
 	m.generations[id] = cancel
 	req.Model = m.current
+	provider := m.rpcStatsProvider
+	nodes := append([]string(nil), m.loadRPCNodes...)
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
@@ -70,6 +72,15 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 		cancel()
 	}()
 	start := time.Now()
+	if len(engine.RPCServers) > 0 && provider != nil && len(nodes) > 0 {
+		baseline := provider()
+		err := generate(generationCtx, engine, req)
+		if err == nil {
+			m.recordRPCTraffic(req.Model, start, nodes, baseline, provider())
+		}
+		m.recordGeneration(time.Since(start), err)
+		return err
+	}
 	err := generate(generationCtx, engine, req)
 	m.recordGeneration(time.Since(start), err)
 	return err

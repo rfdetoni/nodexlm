@@ -3,6 +3,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -62,6 +63,7 @@ type Managed struct {
 	processExit    *nativeProcessExit
 	endpoint       *Engine
 	idleTimer      *time.Timer
+	systemInfo     string
 }
 
 // nativeProcessExit ensures the child is reaped exactly once, even if it exits
@@ -73,8 +75,9 @@ type nativeProcessExit struct {
 
 // nativeLogTail retains only the latest stderr bytes for actionable errors.
 type nativeLogTail struct {
-	mu   sync.Mutex
-	data []byte
+	mu         sync.Mutex
+	data       []byte
+	systemInfo string
 }
 
 func (l *nativeLogTail) Write(p []byte) (int, error) {
@@ -84,12 +87,23 @@ func (l *nativeLogTail) Write(p []byte) (int, error) {
 	const limit = 4096
 	if len(p) >= limit {
 		l.data = append(l.data[:0], p[len(p)-limit:]...)
-		return n, nil
+	} else {
+		if excess := len(l.data) + len(p) - limit; excess > 0 {
+			l.data = append([]byte(nil), l.data[excess:]...)
+		}
+		l.data = append(l.data, p...)
 	}
-	if excess := len(l.data) + len(p) - limit; excess > 0 {
-		l.data = append([]byte(nil), l.data[excess:]...)
+	if l.systemInfo == "" {
+		prefix := []byte("system_info: n_threads = ")
+		if at := bytes.Index(l.data, prefix); at >= 0 {
+			if end := bytes.IndexByte(l.data[at:], '\n'); end > len(prefix) && end <= 2048 {
+				line := strings.TrimSpace(string(l.data[at : at+end]))
+				if strings.IndexFunc(line, func(r rune) bool { return r < 32 || r > 126 }) < 0 {
+					l.systemInfo = line
+				}
+			}
+		}
 	}
-	l.data = append(l.data, p...)
 	return n, nil
 }
 
@@ -97,6 +111,20 @@ func (l *nativeLogTail) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return strings.TrimSpace(string(l.data))
+}
+
+func (l *nativeLogTail) SystemInfo() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.systemInfo
+}
+
+// SystemInfo is startup-reported native capability information, not guessed
+// instruction usage. Empty means the native runtime did not report it.
+func (m *Managed) SystemInfo() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.systemInfo
 }
 
 // Load starts a resident llama-server only when explicitly requested.
@@ -292,6 +320,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 			m.started = cmd
 			m.processExit = exit
 			m.endpoint = endpoint
+			m.systemInfo = stderr.SystemInfo()
 			slog.Info("Native inference model ready", "backend", EffectiveBackend(m.Backend),
 				"elapsed_seconds", int(time.Since(startedAt).Seconds()), "rpc_guests", len(m.RPCServers))
 			return nil
