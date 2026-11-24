@@ -19,7 +19,7 @@ diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
      } else {
          search_paths.push_back(fs::u8path(user_search_path));
      }
-@@ -591,10 +584,6 @@
+@@ -591,9 +584,5 @@
      ggml_backend_load_best("musa",     silent, dir_path);
      ggml_backend_load_best("openvino", silent, dir_path);
      ggml_backend_load_best("cpu",      silent, dir_path);
@@ -30,4 +30,3 @@ diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
 -    }
 +    // Out-of-tree plugins are not covered by the verified bundle manifest.
  }
- 
