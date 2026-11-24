@@ -492,7 +492,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		return "", "", err
 	}
 	build := filepath.Join(stage, "build")
-	flags := []string{"-S", src, "-B", build, "-DGGML_RPC=ON", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=ON", "-DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF", "-DCMAKE_BUILD_TYPE=Release"}
+	flags := []string{"-S", src, "-B", build, "-DGGML_RPC=ON", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=ON", "-DLLAMA_BUILD_SERVER=ON", "-DLLAMA_BUILD_UI=OFF", "-DLLAMA_USE_PREBUILT_UI=OFF", "-DCMAKE_BUILD_TYPE=Release"}
 	switch backend {
 	case "vulkan":
 		flags = append(flags, "-DGGML_VULKAN=ON")
