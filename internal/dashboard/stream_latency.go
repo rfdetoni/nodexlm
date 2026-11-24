@@ -44,7 +44,7 @@ func (l *streamLatency) observe(payload []byte, now time.Time) {
 
 func (l streamLatency) apply(s *InferenceSample) {
 	if !l.first.IsZero() && !l.start.IsZero() {
-		s.FirstOutputMilliseconds = float64(l.first.Sub(l.start))/float64(time.Millisecond)
+		s.FirstOutputMilliseconds = float64(l.first.Sub(l.start)) / float64(time.Millisecond)
 	}
 	if len(l.gaps) > 0 {
 		sort.Float64s(l.gaps)
