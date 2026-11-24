@@ -26,20 +26,11 @@ func (m *Manager) inferenceTimeout(model string) time.Duration {
 	return 4 * time.Minute
 }
 
-// Serialize only the native generation. Admission is cancellable,
-// so a disconnected client cannot hold the next request in a mutex queue.
-func (m *Manager) acquire(ctx context.Context) error {
-	select {
-	case m.admission <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
+// Admission is cancellable and tied to the loaded engine generation.
 func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, generate func(context.Context, *local.Managed, protocol.ChatRequest) error) error {
 	m.mu.Lock()
 	child := m.residents[req.Model]
+	engine, admission := m.engine, m.admission
 	m.mu.Unlock()
 	if child != nil {
 		start := time.Now()
@@ -47,23 +38,37 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 		m.recordGeneration(time.Since(start), err)
 		return err
 	}
-	if err := m.acquire(ctx); err != nil {
-		return err
-	}
-	defer func() { <-m.admission }()
-	m.chatMu.Lock()
-	defer m.chatMu.Unlock()
-	m.mu.Lock()
-	engine := m.engine
-	if engine == nil || m.unloading || req.Model != "" && req.Model != m.current {
-		m.mu.Unlock()
+	if engine == nil {
 		return errors.New("no model loaded")
 	}
+	select {
+	case admission <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-admission }()
+	m.chatMu.RLock()
+	defer m.chatMu.RUnlock()
+	m.mu.Lock()
+	if m.engine != engine || m.unloading || m.closed || req.Model != "" && req.Model != m.current {
+		m.mu.Unlock()
+		return errors.New("model changed or unloaded")
+	}
 	generationCtx, cancel := context.WithCancel(ctx)
-	m.generationCancel = cancel
+	m.generationSequence++
+	id := m.generationSequence
+	if m.generations == nil {
+		m.generations = make(map[uint64]context.CancelFunc)
+	}
+	m.generations[id] = cancel
 	req.Model = m.current
 	m.mu.Unlock()
-	defer func() { m.mu.Lock(); m.generationCancel = nil; m.mu.Unlock(); cancel() }()
+	defer func() {
+		m.mu.Lock()
+		delete(m.generations, id)
+		m.mu.Unlock()
+		cancel()
+	}()
 	start := time.Now()
 	err := generate(generationCtx, engine, req)
 	m.recordGeneration(time.Since(start), err)

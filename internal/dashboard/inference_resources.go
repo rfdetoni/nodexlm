@@ -9,6 +9,12 @@ import (
 // Zero prompt-cache budget intentionally disables the separate native RAM
 // cache. The active sequence KV and ordinary prefix reuse remain available.
 func validateInferenceResources(s Settings) error {
+	if s.ParallelSlots < 0 || s.ParallelSlots > 8 || s.ContextTokens > 262144/max(1, s.ParallelSlots) {
+		return errors.New("parallel_slots must be 0..8 and total context at most 262144")
+	}
+	if s.ParallelSlots > 1 && (s.Distributed || s.SpeculativeMode != "" && s.SpeculativeMode != "off" || local.EffectiveBackend(s.Backend) != local.BackendLlama) {
+		return errors.New("parallel slots currently require local llama.cpp without speculation")
+	}
 	if s.ThreadsBatch < 0 || s.ThreadsBatch > 256 || s.PromptCacheMiB < 0 || s.PromptCacheMiB > 8192 {
 		return errors.New("threads_batch must be 0..256 and prompt_cache_mib must be 0..8192")
 	}
