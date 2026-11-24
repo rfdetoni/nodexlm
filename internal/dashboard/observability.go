@@ -28,6 +28,10 @@ type InferenceSample struct {
 	DraftAccepted int `json:"draft_accepted,omitempty"`
 	DraftAcceptance *float64 `json:"draft_acceptance,omitempty"`
 	LoadMilliseconds float64 `json:"load_ms,omitempty"`
+	FirstOutputMilliseconds float64 `json:"first_output_ms,omitempty"`
+	OutputChunkP50Milliseconds float64 `json:"output_chunk_p50_ms,omitempty"`
+	OutputChunkP95Milliseconds float64 `json:"output_chunk_p95_ms,omitempty"`
+	Workloads []BenchmarkWorkload `json:"workloads,omitempty"`
 	ElapsedMilliseconds float64 `json:"elapsed_ms,omitempty"`
 	Runs                int     `json:"runs,omitempty"`
 	Fingerprint         string  `json:"fingerprint,omitempty"`
@@ -137,10 +141,15 @@ func (m *Manager) pruneSamplesLocked(now time.Time) {
 }
 
 func (m *Manager) recordInference(model string, raw []byte, elapsed time.Duration) {
+	m.recordInferenceWithLatency(model, raw, elapsed, streamLatency{})
+}
+
+func (m *Manager) recordInferenceWithLatency(model string, raw []byte, elapsed time.Duration, latency streamLatency) {
 	sample, ok := parseInferenceSample(model, raw, elapsed)
 	if !ok {
 		return
 	}
+	latency.apply(&sample)
 	m.mu.Lock()
 	// A live distributed result is not evidence of Host-only performance.
 	if m.engine != nil {

@@ -25,6 +25,10 @@ func medianInferenceSample(samples []InferenceSample) InferenceSample {
 // Report decode measurements separately from live end-to-end timings.
 // It must run with resident models unloaded, avoiding an undisclosed eviction.
 func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) (InferenceSample, error) {
+	return m.benchmarkInference(ctx, model, nodeID, false)
+}
+
+func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, extended bool) (InferenceSample, error) {
 	m.poolMu.Lock()
 	defer m.poolMu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
@@ -138,6 +142,10 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 	}
 	// A median resists a single noisy network, thermal or scheduling outlier.
 	sample := medianInferenceSample(measurements)
+	if extended {
+		sample.Workloads = benchmarkWorkloads(ctx, engine, key, request, settings.ContextTokens)
+		if ctx.Err() != nil { return InferenceSample{}, ctx.Err() }
+	}
 	sample.LoadMilliseconds = loadMilliseconds
 	sample.Kind = "benchmark"
 	sample.Runs = runs

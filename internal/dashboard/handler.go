@@ -69,13 +69,16 @@ func (d *Dashboard) Handler() http.Handler {
 		var input struct {
 			Model string `json:"model"`
 			Node  string `json:"node_id"`
+			Extended bool `json:"extended,omitempty"`
 		}
 		if !decode(w, r, &input) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		timeout := 5*time.Minute
+		if input.Extended { timeout = 20*time.Minute }
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
-		sample, err := d.Manager.BenchmarkInference(ctx, input.Model, input.Node)
+		sample, err := d.Manager.benchmarkInference(ctx, input.Model, input.Node, input.Extended)
 		if err != nil {
 			failure(w, 409, err)
 			return

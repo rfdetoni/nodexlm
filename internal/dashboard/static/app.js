@@ -703,7 +703,7 @@ $('inferenceBench').addEventListener('click',()=>guard(async()=>{
  const button=$('inferenceBench');button.disabled=true;
  try{
    const target=$('inferenceBenchTarget').value;
-   const sample=await api('/api/bench/inference','POST',{model:$('modelSelect').value,node_id:target});
+   const sample=await api('/api/bench/inference','POST',{model:$('modelSelect').value,node_id:target,extended:$('extendedBench').checked});
    const basis=sample.rate_basis==='native_decode'?'decode nativo':'média com prefill';
    notice((target?'Guest':'Host')+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+basis);
    await refreshObservations();
@@ -716,7 +716,8 @@ async function refreshObservations(){
    sample.model+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+
    (sample.kind==='benchmark'?'benchmark controlado':'medição ao vivo')+' · '+
    (sample.rate_basis==='native_decode'?'decode nativo':'inclui prefill/TTFT')+
-   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')));
+   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro texto '+(sample.first_output_ms/1000).toFixed(2)+'s':'')));
+ for(const sample of data.inference)for(const workload of sample.workloads||[]){const s=workload.sample;area.append(el('p','muted',workload.profile+': '+(s? s.prompt_tokens+' tokens de prompt · '+s.tokens_per_second.toFixed(1)+' t/s · prefill '+(s.prefill_tokens_per_second||0).toFixed(1)+' t/s · primeiro output '+(s.first_output_ms||0).toFixed(0)+' ms':workload.status)));}
  for(const node of data.nodes){
   const row=el('article','catalog-item');const info=el('div','model-info');info.append(el('strong','',node.node_id.slice(0,12)+'…'),el('p','muted',node.tunnels.connected+' túneis · '+node.reconnect_failures+' falhas de reconexão'));
   const history=node.latency||[];
