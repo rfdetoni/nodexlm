@@ -11,6 +11,7 @@ on:
       - 'internal/llamaruntime/patches/**'
       - '.github/workflows/rpc-platforms.yml'
       - 'scripts/stage-rpc-bundle.py'
+      - 'scripts/optimized-rpc-backend-search.patch'
 permissions:
   contents: read
 concurrency:
@@ -27,7 +28,7 @@ jobs:
       - id: native
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || [[ -n "$(git diff --name-only HEAD^ HEAD -- .github/workflows/rpc-platforms.yml scripts/stage-rpc-bundle.py)" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || [[ -n "$(git diff --name-only HEAD^ HEAD -- .github/workflows/rpc-platforms.yml scripts/stage-rpc-bundle.py scripts/optimized-rpc-backend-search.patch)" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
@@ -70,6 +71,7 @@ jobs:
           test "$(git -C upstream rev-parse HEAD)" = "$commit"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release)
           if [[ "$BACKEND" == vulkan ]]; then options+=(-DGGML_VULKAN=ON); fi
           if [[ "$TARGET_OS" == darwin ]]; then options+=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON); fi
