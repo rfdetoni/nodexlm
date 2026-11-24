@@ -59,7 +59,7 @@ class RpcGuestService : Service() {
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
 
-        private const val TUNNELS = 8
+        private const val MAX_TUNNELS = 8
     }
 
     private lateinit var rpcSocket: String
@@ -74,6 +74,9 @@ class RpcGuestService : Service() {
         Thread(task, "nodexlm-rpc-watchdog").apply { isDaemon = true }
     }.apply { removeOnCancelPolicy = true }
     private val running = AtomicBoolean(false)
+    private val stopSignal = java.util.concurrent.CountDownLatch(1)
+    private val tunnelPool = RpcTunnelBudget(MAX_TUNNELS)
+    @Volatile private var expandTunnels: (() -> Unit)? = null
     private val stopping = AtomicBoolean(false)
     private val draining = AtomicBoolean(false)
     @Volatile private var drainReason = ""
@@ -147,13 +150,14 @@ class RpcGuestService : Service() {
                 awaitNativeRPC()
                 recordGuestEvent("ready")
                 Log.i(LOG, "Native GGML RPC socket ready; requested=$mode, selected=${NativeRpc.selectedBackends()}, threads=$threads")
-                val sslContext = pinnedSSLContext()
+                val cert = PinnedHostTls.certificate(this)
+                val sslContext = PinnedHostTls.context(cert)
                 // Share measured Vulkan heap counters; on mobile GPUs memory can
                 // be shared with RAM and must never be counted twice by the Host.
                 thread(name = "nodexlm-rpc-heartbeat", isDaemon = true) {
                     while (running.get()) {
                         try {
-                            sendHeartbeat(endpoint, node, token, name, mode, sslContext)
+                            sendHeartbeat(endpoint, node, token, name, mode, sslContext, cert)
                             val now = android.os.SystemClock.elapsedRealtime()
                             val previouslyFailed = heartbeatFailed.getAndSet(false)
                             if (previouslyFailed || now - lastHeartbeatLog.get() > 300_000L) {
@@ -169,7 +173,7 @@ class RpcGuestService : Service() {
                         sleepWhileRunning(15_000)
                     }
                 }
-                repeat(TUNNELS) { slot ->
+                fun startTunnel(slot: Int) {
                     thread(name = "nodexlm-rpc-tunnel-$slot", isDaemon = true) {
                         var backoff = 1000L
                         while (running.get()) {
@@ -215,6 +219,12 @@ class RpcGuestService : Service() {
                         }
                     }
                 }
+                // Keep two standby relays; expand up to the Host's existing limit
+                // only when claimed streams require more. Never close a live relay.
+                expandTunnels = {
+                    tunnelPool.grow(claimedNativeRelays.get()).forEach(::startTunnel)
+                }
+                expandTunnels?.invoke()
                 // After startup the detached GGML thread may still exit.
                 // Do not keep publishing heartbeat or reconnecting to a dead worker.
                 while (running.get()) {
@@ -233,7 +243,7 @@ class RpcGuestService : Service() {
                                 "claimed tunnels=${claimedNativeRelays.get()}")
                             // Publish withdrawal immediately, not only at the
                             // next scheduled heartbeat (up to 15s later).
-                            try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
+                            try { sendHeartbeat(endpoint, node, token, name, mode, sslContext, cert) }
                             catch (e: Exception) { Log.w(LOG, "Cannot announce drain to Host", e) }
                         }
                     }
@@ -250,10 +260,11 @@ class RpcGuestService : Service() {
                             thermalRecovery.eligible(nowMs, reason == null, idle)
                         if (recovered && elapsed < 90_000L) {
                             draining.set(false)
+                            expandTunnels?.invoke()
                             drainReason = ""
                             thermalRecovery.reset()
                             recordGuestEvent("ready", "cooled")
-                            try { sendHeartbeat(endpoint, node, token, name, mode, sslContext) }
+                            try { sendHeartbeat(endpoint, node, token, name, mode, sslContext, cert) }
                             catch (e: Exception) { Log.w(LOG, "Cannot announce thermal recovery to Host", e) }
                         } else if (elapsed >= 90_000L ||
                             (drainReason != "thermal" && elapsed >= 5_000L && idle)) {
@@ -359,12 +370,9 @@ class RpcGuestService : Service() {
     }
 
     private fun sleepWhileRunning(duration: Long) {
-        var remaining = duration
-        while (running.get() && remaining > 0) {
-            val step = minOf(remaining, 500L)
-            try { Thread.sleep(step) } catch (_: InterruptedException) { return }
-            remaining -= step
-        }
+        if (!running.get()) return
+        try { stopSignal.await(duration, TimeUnit.MILLISECONDS) }
+        catch (_: InterruptedException) { Thread.currentThread().interrupt() }
     }
 
     private fun awaitNativeRPC() {
@@ -378,22 +386,19 @@ class RpcGuestService : Service() {
         error("Native Android GGML RPC server did not start on loopback")
     }
 
-    private fun pinnedSSLContext(): SSLContext =
-        PinnedHostTls.context(PinnedHostTls.certificate(this))
-
     private fun sendHeartbeat(endpoint: String, node: String, token: String,
-                              name: String, mode: String, ssl: SSLContext) {
+                              name: String, mode: String, ssl: SSLContext, cert: ByteArray) {
         val memory = ActivityManager.MemoryInfo()
         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
         // Address space on ARMv7 is smaller even on devices with more physical RAM.
-        val available = if (Build.SUPPORTED_ABIS.firstOrNull()?.let { Build.SUPPORTED_32_BIT_ABIS.contains(it) } == true) {
+        val available = if (!Process.is64Bit()) {
             minOf(memory.availMem, 2L * 1024 * 1024 * 1024)
         } else memory.availMem
         // Android's low-memory threshold varies by device/ROM. Keep it
         // reserved even when a smaller user reserve was configured.
         val configuredReserve = getSharedPreferences("nodexlm", MODE_PRIVATE)
-            .getInt("rpc_memory_reserve_mib", 1024).coerceIn(1024, 65536).toLong() * 1024L * 1024L
-        val effectiveReserve = maxOf(configuredReserve, memory.threshold)
+            .getInt("rpc_memory_reserve_mib", 0)
+        val effectiveReserve = GuestResourceBudget.reserveBytes(configuredReserve, memory.totalMem, memory.threshold)
         val power = getSystemService(POWER_SERVICE) as PowerManager
         val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
         val percent = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -477,7 +482,10 @@ class RpcGuestService : Service() {
         cpuSampler.sample()?.let { device.put("cpu_usage_percent", it) }
         val connection = java.net.URL(endpoint.trimEnd('/') + "/v1/nodes/heartbeat")
             .openConnection() as HttpsURLConnection
-        PinnedHostTls.configure(connection, this)
+        connection.sslSocketFactory = ssl.socketFactory
+        connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, session ->
+            PinnedHostTls.verify(session, cert)
+        }
         connection.requestMethod = "POST"
         connection.connectTimeout = 7000
         connection.readTimeout = 7000
@@ -598,6 +606,7 @@ class RpcGuestService : Service() {
             check(marker == 1) { "Missing Host RPC relay marker" }
             claimedNativeRelays.incrementAndGet()
             try {
+            if (running.get() && !draining.get()) expandTunnels?.invoke()
             RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_TUNNEL_CLAIMED, slot.toLong())
             Log.i(LOG, "RPC tunnel $slot claimed by Host; opening private native RPC socket")
             val local = android.net.LocalSocket()
@@ -715,6 +724,8 @@ class RpcGuestService : Service() {
         recordGuestEvent(state, reason)
         diagnostics.shutdownNow()
         running.set(false)
+        stopSignal.countDown()
+        expandTunnels = null
         synchronized(localSockets){localSockets.forEach { closeLocalSocket(it) };localSockets.clear()}
         synchronized(sockets) {
             sockets.forEach { try { it.close() } catch (_: Exception) {} }
