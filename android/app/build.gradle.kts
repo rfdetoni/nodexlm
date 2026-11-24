@@ -6,6 +6,9 @@ val rustRpcEnabled = providers.gradleProperty("nodexRustRpc").map { it == "true"
 val kleidiAiEnabled = providers.gradleProperty("nodexKleidiAi").map { it == "true" }.orElse(false).get()
 val rustRpcOutput = layout.buildDirectory.dir("generated/rustRpc/jniLibs")
 val llamaRevision = groovy.json.JsonSlurper().parse(file("../../internal/llamaruntime/revision.json")) as Map<*, *>
+val signingCertSha256 = file("../signing-certificate.sha256").readText().trim().lowercase().also {
+    require(Regex("^[0-9a-f]{64}$").matches(it)) { "Invalid android/signing-certificate.sha256" }
+}
 val releaseKeystore = System.getenv("NODEXLM_ANDROID_KEYSTORE_FILE")
 val releaseStorePassword = System.getenv("NODEXLM_ANDROID_STORE_PASSWORD")
 val releaseKeyAlias = System.getenv("NODEXLM_ANDROID_KEY_ALIAS")
@@ -22,6 +25,7 @@ android {
     defaultConfig {
         buildConfigField("boolean", "RUST_RPC_ENABLED", rustRpcEnabled.toString())
         buildConfigField("String", "LLAMA_VERSION", "\"${llamaRevision["version"]}\"")
+        buildConfigField("String", "PERMANENT_SIGNING_CERT_SHA256", "\"$signingCertSha256\"")
         applicationId = "dev.nodexlm.app"
         minSdk = 29 // Android 10 (API 29) and newer
         targetSdk = 35

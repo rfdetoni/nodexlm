@@ -9,6 +9,7 @@ on:
       - 'android/app/src/main/res/**'
       - 'android/app/src/main/AndroidManifest.xml'
       - 'android/app/build.gradle.kts'
+      - 'android/signing-certificate.sha256'
       - '.github/workflows/android-ui-checks.yml'
       - '.github/workflows/android-apk.yml'
       - '.github/workflows/android-public-download.yml'
@@ -56,23 +57,31 @@ jobs:
             ".github/workflows/android-apk.yml",
             ":app:assembleDebug",
             ":app:assembleRelease",
-            "name: nodexlm-android-debug",
+            "name: nodexlm-android-pr-test-only",
             "name: nodexlm-android-updatable",
             "signing-certificate.sha256",
             "ANDROID_KEYSTORE_BASE64",
             "apksigner",
             "arm64-v8a",
             "armeabi-v7a",
+            "libnodexlm_rpc.so",
           ):
             if marker not in workflow:
               raise SystemExit(f'APK workflow missing required trigger/build contract: {marker}')
+          if workflow.index("Prepare permanent Android signing") > workflow.index("Install pinned Android SDK"):
+            raise SystemExit("Signing preflight must precede expensive SDK setup")
+          if "name: nodexlm-android-debug" in workflow:
+            raise SystemExit("Public unsigned APK artifact must not be produced")
           for marker in (
             'dist/BUILD_INFO.txt',
             'source_commit=',
             'android_workflow_run=',
             'build_variant=',
+            'certificate_sha256=',
             'nodexlm-android-debug',
             'nodexlm-android-updatable',
+            'signing-certificate.sha256',
+            'apksigner',
             "run_branch",
             "run_id <= previous",
             "steps.download.outputs.available == 'true'",
@@ -83,6 +92,6 @@ jobs:
 
       - name: Validate launcher icon contract
         run: python3 scripts/check-android-launcher.py
-      - name: Compile Android resources and Kotlin UI
+      - name: Compile Android resources, Kotlin UI and unit tests
         working-directory: android
-        run: gradle --no-daemon --max-workers=2 :app:processDebugResources :app:compileDebugKotlin
+        run: gradle --no-daemon --max-workers=2 :app:processDebugResources :app:compileDebugKotlin :app:testDebugUnitTest

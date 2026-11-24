@@ -131,9 +131,9 @@ Ajustes em Host/Linux também impedem que um Guest com 0 bytes disponíveis bloq
 
 ## Baixar APK beta de teste
 
-Na aba **Atualizações**, escolha **Baixar APK de teste (beta)**. Essa ação manual consulta apenas a pré-release pública oficial `android-debug` do NodexLM no GitHub, baixa o `NodexLM-android10-plus-debug.apk` para **Downloads** e compara seu tamanho e SHA-256 com o resumo publicado no GitHub. O APK beta não entra no atualizador estável nem é instalado automaticamente.
+Na aba **Atualizações**, escolha **Baixar APK de teste (beta)**. Essa ação manual consulta apenas a pré-release pública oficial `android-debug` do NodexLM no GitHub, baixa o `NodexLM-android10-plus-debug.apk` para **Downloads** e valida tamanho, SHA-256, `versionCode` e certificado de assinatura permanente (`20fe35971bfdd2ef83cfdaf449e19fd5c8828b93f7595f7657a65730cd9cc4ee`). Quando o app já instalado usa a mesma assinatura permanente, o atualizador instala via instalador nativo do Android preservando dados e configurações.
 
-**Atenção:** o artefato de teste pode ter assinatura debug diferente em cada compilação. O Android pode impedir que ele seja instalado sobre o aplicativo existente; desinstalar pode apagar dados locais. O botão **Abrir Downloads** permite acessar o arquivo depois da verificação. O fluxo estável de atualização e sua verificação de certificado continuam independentes.
+**Migração única de builds debug antigos:** artefatos antigos compilados com assinatura `ephemeral-debug` de CI possuem certificado diferente. O Android não permite sobrescrevê-los sem perda de assinatura; faça backup dos dados locais e pareamento, desinstale o build debug antigo uma única vez e instale o APK beta assinado permanentemente. Após essa migração, atualizações beta e estáveis preservam dados e configurações.
 
 Na aba **Modelos**, é possível filtrar candidatos a modelos de decisão GGUF por nome; a compatibilidade com System One só é conhecida após a validação pelo runtime.
 

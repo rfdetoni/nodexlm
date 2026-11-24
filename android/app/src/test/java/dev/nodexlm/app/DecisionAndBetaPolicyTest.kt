@@ -53,4 +53,41 @@ class DecisionAndBetaPolicyTest {
             )
         }
     }
+
+    @Test fun betaBuildInfoAcceptsPermanentReleaseAndRejectsDebug() {
+        val cert = "20fe35971bfdd2ef83cfdaf449e19fd5c8828b93f7595f7657a65730cd9cc4ee"
+        val parsed = BetaArtifactPolicy.parseBuildInfo(
+            """
+            source_commit=0123456789abcdef0123456789abcdef01234567
+            android_workflow_run=12345
+            package=NodexLM-android10-plus-debug.apk
+            build_variant=release
+            signature=permanent
+            version_code=168
+            version_name=0.1.0-ci.168
+            certificate_sha256=${cert.uppercase()}
+            """.trimIndent()
+        )
+        assertEquals(168L, parsed.versionCode)
+        assertEquals("0.1.0-ci.168", parsed.versionName)
+        assertEquals("release", parsed.buildVariant)
+        assertEquals("permanent", parsed.signature)
+        assertEquals(cert, parsed.certificateSha256)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            BetaArtifactPolicy.parseBuildInfo(
+                "build_variant=debug\nsignature=ephemeral-debug\nversion_code=159\n"
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            BetaArtifactPolicy.parseBuildInfo(
+                "build_variant=release\nsignature=ephemeral-debug\nversion_code=160\n"
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            BetaArtifactPolicy.parseBuildInfo(
+                "build_variant=release\nsignature=permanent\nversion_code=0\n"
+            )
+        }
+    }
 }

@@ -72,6 +72,7 @@ class MainActivity : Activity() {
     private lateinit var updatesDownload: Button
     private lateinit var updatesInstall: Button
     private lateinit var updatesBetaDownload: Button
+    private lateinit var updatesBetaInstall: Button
     private lateinit var updatesBetaStatus: TextView
     private lateinit var logsOutput: TextView
     private lateinit var logsCounter: TextView
@@ -440,6 +441,11 @@ class MainActivity : Activity() {
             refreshUpdatesStatus()
         }
         betaCard.addView(updatesBetaDownload)
+        updatesBetaInstall = action(getString(R.string.updates_beta_install)) {
+            updateManager.installBeta()
+            refreshUpdatesStatus()
+        }
+        betaCard.addView(updatesBetaInstall)
         betaCard.addView(action(getString(R.string.updates_beta_open_downloads)) {
             startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
         })
@@ -453,7 +459,14 @@ class MainActivity : Activity() {
             updatesStatus.text = getString(R.string.updates_error, e.javaClass.simpleName)
             return
         }
-        val message = StringBuilder(getString(R.string.updates_current_version, snapshot.currentVersion))
+        val channelLabel = getString(
+            if (snapshot.currentChannel == ReleaseChannel.STABLE) R.string.updates_channel_stable
+            else R.string.updates_channel_beta
+        )
+        val message = StringBuilder(
+            getString(R.string.updates_current_version_detail,
+                snapshot.currentVersion, snapshot.currentVersionCode, channelLabel)
+        )
         message.append("\n")
         if (snapshot.feed == "available" && !snapshot.availableVersion.isNullOrBlank()) {
             message.append(getString(R.string.updates_latest_version, snapshot.availableVersion)).append("\n")
@@ -508,9 +521,16 @@ class MainActivity : Activity() {
         updatesBetaDownload.isEnabled = !snapshot.betaChecking && !snapshot.betaVerifying &&
             snapshot.betaStatus != DownloadManager.STATUS_RUNNING &&
             snapshot.betaStatus != DownloadManager.STATUS_PENDING
+        updatesBetaInstall.isEnabled = snapshot.betaVerified && snapshot.betaInstallable && !snapshot.verifying
         updatesBetaStatus.text = when {
             snapshot.betaChecking -> getString(R.string.updates_beta_checking)
             snapshot.betaVerifying -> getString(R.string.updates_beta_verifying)
+            snapshot.betaVerified && snapshot.betaMigrationRequired -> getString(R.string.updates_beta_migration_required)
+            snapshot.betaVerified && snapshot.betaInstallable -> {
+                val label = snapshot.betaVersionName ?: "#${snapshot.betaVersionCode}"
+                getString(R.string.updates_beta_install_ready, label, snapshot.betaVersionCode)
+            }
+            snapshot.betaVerified && !snapshot.betaError.isNullOrBlank() -> snapshot.betaError
             snapshot.betaVerified -> getString(R.string.updates_beta_ready)
             !snapshot.betaError.isNullOrBlank() -> getString(R.string.updates_beta_failed, snapshot.betaError)
             snapshot.betaStatus == DownloadManager.STATUS_RUNNING && snapshot.betaTotal > 0L -> {
