@@ -46,6 +46,23 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                 RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALLED)
                 context.getSharedPreferences("nodexlm_updates", Context.MODE_PRIVATE).edit()
                     .remove("download_id").remove("prompted_id").apply()
+                BetaApkDownload.clearStaged(context)
+            }
+            PackageInstaller.STATUS_FAILURE_ABORTED -> {
+                RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALL_FAILED)
+                context.getSharedPreferences("nodexlm_updates", Context.MODE_PRIVATE).edit()
+                    .remove("prompted_id").apply()
+                Toast.makeText(context, context.getString(R.string.update_install_cancelled), Toast.LENGTH_SHORT).show()
+            }
+            PackageInstaller.STATUS_FAILURE_CONFLICT,
+            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> {
+                RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.WARN, RuntimeEvent.UPDATE_INSTALL_FAILED)
+                val detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+                    ?: "Installer error $status"
+                Log.e("NodexLMUpdate", "APK installation signature/version conflict: $detail")
+                context.getSharedPreferences("nodexlm_updates", Context.MODE_PRIVATE).edit()
+                    .remove("download_id").remove("prompted_id").apply()
+                Toast.makeText(context, context.getString(R.string.update_migration_required), Toast.LENGTH_LONG).show()
             }
             else -> {
                 RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.WARN, RuntimeEvent.UPDATE_INSTALL_FAILED)
@@ -54,7 +71,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                 Log.e("NodexLMUpdate", "APK installation rejected: $detail")
                 context.getSharedPreferences("nodexlm_updates", Context.MODE_PRIVATE).edit()
                     .remove("download_id").remove("prompted_id").apply()
-                Toast.makeText(context, context.getString(R.string.update_not_installed,detail), Toast.LENGTH_LONG).show()
+                Toast.makeText(context, context.getString(R.string.update_not_installed, detail), Toast.LENGTH_LONG).show()
             }
         }
     }

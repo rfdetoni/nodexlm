@@ -203,9 +203,74 @@ class UpdateManager(private val activity: Activity) {
 
     fun installDownloaded() { tryInstallPending() }
 
+    fun installBeta() {
+        if (!verifying.compareAndSet(false, true)) return
+        val beta = BetaApkDownload.state(activity)
+        val staged = BetaApkDownload.stagedFile(activity)
+        val expectedSha = BetaApkDownload.expectedSha256(activity)
+        if (!beta.verified || !beta.installable || staged == null || expectedSha.isNullOrBlank()) {
+            verifying.set(false)
+            return
+        }
+        RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_VERIFY)
+        notifyChanged()
+        thread(name = "nodexlm-beta-install-verify") {
+            try {
+                val digest = MessageDigest.getInstance("SHA-256")
+                staged.inputStream().buffered().use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        digest.update(buffer, 0, n)
+                    }
+                }
+                val hash = digest.digest().joinToString("") { "%02x".format(it) }
+                require(hash == expectedSha) { activity.getString(R.string.update_sha_failed) }
+                verifyAPKSigner(staged, beta.versionCode)
+                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_VERIFIED)
+                activity.runOnUiThread {
+                    if (!activity.packageManager.canRequestPackageInstalls()) {
+                        AlertDialog.Builder(activity)
+                            .setTitle(activity.getString(R.string.ui_a2334f70f759))
+                            .setMessage(activity.getString(R.string.ui_83c6621ca708))
+                            .setPositiveButton(activity.getString(R.string.ui_4dc25299c9e2)) { _, _ ->
+                                activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:${activity.packageName}")))
+                            }
+                            .setNegativeButton(activity.getString(R.string.ui_b8db71c3cce7), null)
+                            .show()
+                    } else {
+                        thread(name = "nodexlm-beta-install") {
+                            try {
+                                installVerified(staged)
+                                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALL)
+                            } catch (e: Exception) {
+                                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.ERROR, RuntimeEvent.UPDATE_INSTALL_FAILED)
+                                Log.e("NodexLMUpdate", "Beta PackageInstaller session failed", e)
+                                toast(activity.getString(R.string.update_install_failed, e.message))
+                                notifyChanged()
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.ERROR, RuntimeEvent.UPDATE_REJECTED)
+                Log.e("NodexLMUpdate", "Beta update verification failed", e)
+                BetaApkDownload.clearStaged(activity)
+                toast(activity.getString(R.string.update_rejected, e.message))
+            } finally {
+                verifying.set(false)
+                notifyChanged()
+            }
+        }
+    }
+
     data class Status(
         val feed: String,
         val currentVersion: String,
+        val currentVersionCode: Long,
+        val currentChannel: ReleaseChannel,
         val availableVersion: String?,
         val lastSuccess: Long,
         val checking: Boolean,
@@ -221,7 +286,11 @@ class UpdateManager(private val activity: Activity) {
         val betaReceived: Long,
         val betaTotal: Long,
         val betaVerified: Boolean,
-        val betaError: String?
+        val betaError: String?,
+        val betaInstallable: Boolean,
+        val betaMigrationRequired: Boolean,
+        val betaVersionCode: Long,
+        val betaVersionName: String?
     )
 
     fun status(): Status {
@@ -238,11 +307,14 @@ class UpdateManager(private val activity: Activity) {
                 }
             }
         } catch (e: Exception) { Log.w("NodexLMUpdate", "Cannot query DownloadManager", e) }
-        val current = activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "?"
+        val pkgInfo = activity.packageManager.getPackageInfo(activity.packageName, 0)
+        val current = pkgInfo.versionName ?: "?"
         val beta = BetaApkDownload.state(activity)
         return Status(
             prefs.getString("feed_status", "") ?: "",
             current,
+            pkgInfo.longVersionCode,
+            ApkVerificationPolicy.classifyChannel(current),
             prefs.getString("available_name", null),
             prefs.getLong("last_success", 0L),
             checking.get(),
@@ -251,7 +323,8 @@ class UpdateManager(private val activity: Activity) {
             status, downloaded, total,
             id > 0 && id == prefs.getLong("prompted_id", -1L),
             betaChecking.get(), betaVerifying.get(), beta.status,
-            beta.received, beta.total, beta.verified, beta.error
+            beta.received, beta.total, beta.verified, beta.error,
+            beta.installable, beta.migrationRequired, beta.versionCode, beta.versionName
         )
     }
 
@@ -305,7 +378,7 @@ class UpdateManager(private val activity: Activity) {
                 require(hash == prefs.getString("sha256", "")) {
                     activity.getString(R.string.update_sha_failed)
                 }
-                verifyAPKSigner(verified, prefs.getInt("version", -1))
+                verifyAPKSigner(verified, prefs.getInt("version", -1).toLong())
                 RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_VERIFIED)
 
                 // The callback (or its install worker) owns the staging
@@ -331,7 +404,7 @@ class UpdateManager(private val activity: Activity) {
                         notifyChanged()
                         thread(name = "nodexlm-update-install") {
                             try {
-                                installVerified(verified, id)
+                                installVerified(verified)
                                 RuntimeLogs.append(activity, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALL)
                             } catch (e: Exception) {
                                 prefs.edit().remove("prompted_id").apply()
@@ -360,30 +433,43 @@ class UpdateManager(private val activity: Activity) {
         }
     }
 
-    private fun verifyAPKSigner(apk: File, version: Int) {
+    private fun verifyAPKSigner(apk: File, version: Long) {
         @Suppress("DEPRECATION")
         val candidate = activity.packageManager.getPackageArchiveInfo(
             apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
             ?: error(activity.getString(R.string.apk_metadata_invalid))
-        require(candidate.packageName == activity.packageName) { "APK de outro aplicativo" }
-        require(candidate.longVersionCode == version.toLong()) { activity.getString(R.string.apk_version_invalid) }
+        require(candidate.packageName == activity.packageName) {
+            activity.getString(R.string.update_wrong_package)
+        }
         @Suppress("DEPRECATION")
         val installed = activity.packageManager.getPackageInfo(
             activity.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
-        require(candidate.longVersionCode > installed.longVersionCode) { "APK is not newer than installed version" }
+        when (ApkVerificationPolicy.compareVersion(
+            installed.longVersionCode, candidate.longVersionCode, version)) {
+            VersionComparison.EXPECTED_MISMATCH -> error(activity.getString(R.string.apk_version_invalid))
+            VersionComparison.CURRENT, VersionComparison.DOWNGRADE ->
+                error(activity.getString(R.string.update_not_newer))
+            VersionComparison.NEWER -> Unit
+        }
         val currentSigners = installed.signingInfo?.apkContentsSigners
-            ?: error("Current APK signature unavailable")
+            ?.map { ApkVerificationPolicy.sha256Hex(it.toByteArray()) }
+            ?.takeIf { it.isNotEmpty() }
+            ?: error(activity.getString(R.string.update_signature_untrusted))
         val nextSigners = candidate.signingInfo?.apkContentsSigners
-            ?: error("Update APK signature unavailable")
-        require(currentSigners.isNotEmpty() && currentSigners.size == nextSigners.size &&
-            currentSigners.indices.all { i ->
-                currentSigners.any { old ->
-                    MessageDigest.isEqual(old.toByteArray(), nextSigners[i].toByteArray())
-                }
-            }) { "Update APK signing certificate does not match installed application" }
+            ?.map { ApkVerificationPolicy.sha256Hex(it.toByteArray()) }
+            ?.takeIf { it.isNotEmpty() }
+            ?: error(activity.getString(R.string.update_signature_untrusted))
+        when (ApkVerificationPolicy.verifySignatures(
+            currentSigners, nextSigners, BuildConfig.PERMANENT_SIGNING_CERT_SHA256)) {
+            SignatureCompatibility.COMPATIBLE -> Unit
+            SignatureCompatibility.MIGRATION_REQUIRED_FROM_LEGACY_KEY ->
+                error(activity.getString(R.string.update_migration_required))
+            SignatureCompatibility.INCOMPATIBLE_UNTRUSTED ->
+                error(activity.getString(R.string.update_signature_untrusted))
+        }
     }
 
-    private fun installVerified(apk: File, id: Long) {
+    private fun installVerified(apk: File) {
         val installer = activity.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(activity.packageName)
