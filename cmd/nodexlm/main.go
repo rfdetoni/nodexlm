@@ -570,6 +570,7 @@ func guest(args []string) error {
 	debug := f.Bool("debug", false, "log Guest heartbeat, reconnects and native RPC output to a private rotating file")
 	backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
 	bin := f.String("rpc-bin", "", "matching rpc-server executable")
+	threads := f.Int("threads", 0, "Guest CPU threads (0 = physical cores)")
 	address := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	tunnels := f.Int("tunnels", 8, "concurrent secured tunnels (1-8)")
 	rpcCache := f.Bool("rpc-cache", false, "cache model tensors on this Guest disk (opt-in; may contain model weights)")
@@ -579,6 +580,9 @@ func guest(args []string) error {
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected Guest arguments")
+	}
+	if *threads < 0 || *threads > 256 {
+		return errors.New("--threads must be 0..256")
 	}
 	if *debug {
 		stop, err := debuglog.Start(*dir, "guest")
@@ -631,7 +635,7 @@ func guest(args []string) error {
 		fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
 	}
 	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
-	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels)}
+	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels), "--threads", fmt.Sprint(*threads)}
 	if *rpcCache {
 		options = append(options, "--rpc-cache")
 	}
@@ -745,10 +749,7 @@ func node(args []string) error {
 			}
 			cpu := *threads
 			if cpu <= 0 {
-				cpu = runtime.NumCPU() - 1
-				if cpu < 1 {
-					cpu = 1
-				}
+				cpu = hardware.PhysicalCPUCount()
 			}
 			resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
 			if resolveErr != nil {
@@ -931,6 +932,7 @@ func rpcNode(args []string) error {
 	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
+	threads := f.Int("threads", 0, "Guest CPU threads (0 = physical cores)")
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
 	addr := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	slots := f.Int("tunnels", 8, "simultaneous secured RPC tunnels (1-8)")
@@ -938,6 +940,12 @@ func rpcNode(args []string) error {
 	ca := f.String("ca", "", "Host certificate for legacy enrollment")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if *threads < 0 || *threads > 256 {
+		return errors.New("--threads must be 0..256")
+	}
+	if *threads == 0 {
+		*threads = min(256, hardware.PhysicalCPUCount())
 	}
 	if *slots < 1 || *slots > 8 {
 		return errors.New("--tunnels must be between 1 and 8")
@@ -1069,5 +1077,5 @@ func rpcNode(args []string) error {
 			}
 		}
 	}()
-	return rpcmesh.RunNativeGuest(c, cli, executable, *addr, *slots, *rpcCache, *device)
+	return rpcmesh.RunNativeGuestWithThreads(c, cli, executable, *addr, *slots, *rpcCache, *threads, *device)
 }

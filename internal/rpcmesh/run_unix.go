@@ -16,11 +16,14 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/process"
 )
 
-func runUnixGuest(ctx context.Context, client *netclient.Client, executable, address string, slots int, device string, cache bool) error {
+func runUnixGuest(ctx context.Context, client *netclient.Client, executable, address string, slots int, device string, cache bool, threads int) error {
 	if err := ValidateRPCAddress(address); err != nil {
 		return err
 	}
 	args := []string{"--socket", strings.TrimPrefix(address, "unix:")}
+	if threads > 0 {
+		args = append(args, "--threads", fmt.Sprint(threads))
+	}
 	if cache {
 		args = append(args, "--cache")
 	}
