@@ -11,6 +11,8 @@ internal object NativeRpc {
     val VERSION = BuildConfig.LLAMA_VERSION
     init { System.loadLibrary("nodexlm") }
     external fun start(threads: Int, mode: String, socketPath: String): String
+    /** Request socket shutdown and join after backend cleanup; false on timeout. */
+    external fun stopAndJoin(timeoutMs: Int): Boolean
     /** Reports whether the native GGML RPC server thread is still running. */
     external fun isRunning(): Boolean
     /** Selected native devices after backend initialization; not measured throughput. */

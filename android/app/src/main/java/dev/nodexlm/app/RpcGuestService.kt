@@ -46,7 +46,7 @@ import kotlin.concurrent.thread
  * True Android GGML RPC Guest. The Host owns the GGUF and distributes tensors,
  * buffers and compute graphs through the existing authenticated HTTPS relay.
  * No local model is required. Runs in a separate :rpc process because pinned
- * ggml_backend_rpc_start_server() is blocking and has no shutdown API.
+ * native graph or GPU driver failure must not terminate the UI process.
  */
 class RpcGuestService : Service() {
     companion object {
@@ -80,6 +80,7 @@ class RpcGuestService : Service() {
     private val tunnelPool = RpcTunnelBudget(MAX_TUNNELS)
     @Volatile private var expandTunnels: (() -> Unit)? = null
     @Volatile private var rustStarted = false
+    @Volatile private var nativeStarted = false
     private fun activeClaims(): Long = if (rustStarted) NativeRustRpc.claimed() else claimedNativeRelays.get()
     private val stopping = AtomicBoolean(false)
     private val draining = AtomicBoolean(false)
@@ -152,6 +153,7 @@ class RpcGuestService : Service() {
                 rpcSocket=socketFile.absolutePath
                 val message = NativeRpc.start(threads, mode, rpcSocket)
                 check(message.isEmpty()) { message }
+                nativeStarted = true
                 awaitNativeRPC()
                 recordGuestEvent("ready")
                 Log.i(LOG, "Native GGML RPC socket ready; requested=$mode, selected=${NativeRpc.selectedBackends()}, threads=$threads")
@@ -755,10 +757,13 @@ class RpcGuestService : Service() {
         try { if (cpuLock?.isHeld == true) cpuLock?.release() } catch (_: Exception) {}
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
         stopSelf()
-        // The native RPC server has no stop API in pinned llama.cpp. Only this
-        // separate Android process exits; the app's UI and model library survive.
+        // Join after closing transport sockets. The isolated process remains
+        // a bounded fallback for a stalled native graph or Vulkan driver.
         thread(name = "nodexlm-rpc-exit", isDaemon = true) {
-            try { Thread.sleep(250) } catch (_: InterruptedException) {}
+            if (nativeStarted) {
+                val joined = runCatching { NativeRpc.stopAndJoin(1500) }.getOrDefault(false)
+                Log.i(LOG, "Native RPC cooperative shutdown completed=$joined")
+            }
             Process.killProcess(Process.myPid())
         }
     }

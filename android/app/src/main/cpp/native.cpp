@@ -9,6 +9,8 @@
 #include <vector>
 #include <cstring>
 #include <thread>
+#include <chrono>
+#include <condition_variable>
 #include <exception>
 #include <sstream>
 #include <android/log.h>
@@ -21,6 +23,9 @@ std::mutex guard;
 std::atomic<bool> cancelled{false};
 std::once_flag initialized;
 std::atomic<bool> rpcStarted{false};
+std::mutex rpcThreadMutex;
+std::condition_variable rpcFinished;
+std::thread rpcThread;
 // 1 = Vulkan, 2 = CPU. Selected for this RPC server, not measured speed.
 std::atomic<int> activeRPCBackends{0};
 jbyteArray bytes(JNIEnv* env,const std::string& value) {
@@ -208,8 +213,8 @@ Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
     return env->NewStringUTF(s.str().c_str());
 }
 
-// Run in an isolated Android :rpc process. The pinned upstream has no
-// shutdown API; killing this process releases all Vulkan/CPU allocations.
+// Run in an isolated Android :rpc process. Cooperative shutdown is attempted
+// first; process termination remains the fallback for a stuck GPU driver.
 // Mode: auto = ONE device (Vulkan if initialized, otherwise CPU).
 // cpu = CPU only; gpu = Vulkan only; hybrid = Vulkan + CPU (explicit).
 // Exposing both CPU and shared-memory Vulkan on Auto causes GGML to spread
@@ -224,13 +229,18 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
     const std::string mode = utf(env, modeValue);
     if(mode != "auto" && mode != "cpu" && mode != "gpu" && mode != "hybrid")
         return env->NewStringUTF("Invalid RPC backend mode");
+    std::lock_guard<std::mutex> lifecycle(rpcThreadMutex);
     if(rpcStarted.exchange(true)) return env->NewStringUTF("");
+    if(rpcThread.joinable()) rpcThread.join();
+    ggml_backend_rpc_android_reset_stop();
     ggml_backend_load_all();
     ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
     ggml_backend_dev_t gpu = nullptr;
-    for(size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-        auto dev = ggml_backend_dev_get(i);
-        if(dev && isGpu(dev)) { gpu = dev; break; }
+    if (mode != "cpu") {
+        for(size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            auto dev = ggml_backend_dev_get(i);
+            if(dev && isGpu(dev)) { gpu = dev; break; }
+        }
     }
     if(gpu && mode != "cpu") {
         // Device enumeration does not prove that its backend can initialize.
@@ -292,7 +302,7 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
         devices.size(),useGPU?"yes":"no",useCPU?"yes":"no");
     try {
-        std::thread([threads, devices, socketPath] {
+        rpcThread = std::thread([threads, devices, socketPath] {
             try {
                 const std::string address = "unix:" + socketPath;
                 ggml_backend_rpc_start_server(address.c_str(), nullptr,
@@ -303,9 +313,13 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
             } catch(...) {
                 __android_log_print(ANDROID_LOG_ERROR,"NodexLM-RPC","Unknown native RPC error");
             }
-            rpcStarted.store(false);
-            activeRPCBackends.store(0);
-        }).detach();
+            {
+                std::lock_guard<std::mutex> lock(rpcThreadMutex);
+                activeRPCBackends.store(0);
+                rpcStarted.store(false);
+            }
+            rpcFinished.notify_all();
+        });
     } catch(const std::exception& e) {
         rpcStarted.store(false);
         activeRPCBackends.store(0);
@@ -314,8 +328,17 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
     return env->NewStringUTF("");
 }
 
-// The detached native RPC server has no shutdown callback. Expose its
-// lifecycle to the Android foreground service so dead workers stop heartbeats.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_dev_nodexlm_app_NativeRpc_stopAndJoin(JNIEnv*, jobject, jint timeoutMs) {
+    std::unique_lock<std::mutex> lock(rpcThreadMutex);
+    ggml_backend_rpc_android_request_stop();
+    if (!rpcFinished.wait_for(lock, std::chrono::milliseconds(std::clamp<int>(timeoutMs, 0, 5000)),
+                              [] { return !rpcStarted.load(); })) return JNI_FALSE;
+    if (rpcThread.joinable()) rpcThread.join();
+    return JNI_TRUE;
+}
+
+// Expose lifecycle to the foreground service so dead workers stop heartbeats.
 extern "C" JNIEXPORT jboolean JNICALL
 Java_dev_nodexlm_app_NativeRpc_isRunning(JNIEnv*, jobject) {
     return rpcStarted.load() ? JNI_TRUE : JNI_FALSE;

@@ -2,8 +2,8 @@
 
 The first optimization stage retains the pinned GGML RPC wire protocol, native
 CPU/Vulkan kernels, exact enrolled TLS certificate pin and isolated :rpc
-process. Removing process isolation without a native stop/join API would leak
-native allocations or terminate unrelated UI work.
+process. Process isolation remains until the cooperative native stop/join path is
+verified on real devices; a stuck Vulkan graph must not terminate unrelated UI work.
 
 - Start two standby TLS relays and add slots on native claims, bounded by the
   existing eight-slot Host limit. Never cut an active or potentially claimed
@@ -54,7 +54,9 @@ The Rust relay now reuses at most two cleared 32 KiB buffers. Optional
 CPU affinity uses measured CPU capacity within the Android cpuset; unsupported
 or homogeneous devices retain default scheduling. Dedicated Guest mode closes
 the UI task, leaving the foreground :rpc service alive (Android controls
-whether the UI process remains cached). Add native GGML shutdown and join before
-any process unification. Evaluate reduced ONNX packaging, OpenCL and KV/cache
+whether the UI process remains cached). An Android-only pinned GGML patch now requests cooperative socket shutdown,
+releases native backends on every server exit and joins the native thread with
+a bounded timeout. The isolated process remains the fallback; do not unify
+processes until real device tests prove shutdown even with in-flight graphs. Evaluate reduced ONNX packaging, OpenCL and KV/cache
 policies only with parity and hardware measurements. Do not automatically lower the safety reserve under sustained
 memory pressure. No automatic fallback from an authentication failure.

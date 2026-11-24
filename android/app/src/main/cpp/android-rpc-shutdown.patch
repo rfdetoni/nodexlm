@@ -1,0 +1,162 @@
+diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
+--- a/ggml/include/ggml-rpc.h
++++ b/ggml/include/ggml-rpc.h
+@@ -27,7 +27,12 @@
+ GGML_BACKEND_API void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
+                                                     size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices);
+ 
+-GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
++// Android-only cooperative shutdown. Caller resets before starting a new server,
++// requests stop from another thread, then joins before reusing the runtime.
++GGML_BACKEND_API void ggml_backend_rpc_android_reset_stop(void);
++GGML_BACKEND_API void ggml_backend_rpc_android_request_stop(void);
++
++GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
+ GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
+ 
+ #ifdef  __cplusplus
+diff --git a/ggml/src/ggml-rpc/transport.h b/ggml/src/ggml-rpc/transport.h
+--- a/ggml/src/ggml-rpc/transport.h
++++ b/ggml/src/ggml-rpc/transport.h
+@@ -20,7 +20,8 @@
+     // here. No-op on TCP.
+     bool flush();
+ 
+-    socket_ptr accept();
++    socket_ptr accept();
++    void interrupt();
+ 
+     void get_caps(uint8_t * local_caps);
+     void update_caps(const uint8_t * remote_caps);
+diff --git a/ggml/src/ggml-rpc/transport.cpp b/ggml/src/ggml-rpc/transport.cpp
+--- a/ggml/src/ggml-rpc/transport.cpp
++++ b/ggml/src/ggml-rpc/transport.cpp
+@@ -676,7 +676,13 @@
+ 
+ socket_t::socket_t(std::unique_ptr<impl> p) : pimpl(std::move(p)) {}
+ 
+-socket_t::~socket_t() = default;
++socket_t::~socket_t() = default;
++
++void socket_t::interrupt() {
++    // Do not close the descriptor from a different thread: shutdown wakes
++    // blocked accept/recv/send while the owning socket retains its lifetime.
++    ::shutdown(pimpl->fd, SHUT_RDWR);
++}
+ 
+ bool socket_t::send_data(const void * data, size_t size) {
+     return pimpl->send_data(data, size);
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -2985,8 +2985,42 @@
+     }
+ }
+ 
+-void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
+-                                   size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
++// This patch is applied only to the Android build (TCP/AF_UNIX, no RDMA).
++namespace {
++std::mutex android_rpc_socket_mutex;
++std::atomic<bool> android_rpc_stop_requested{false};
++socket_ptr android_rpc_listener;
++socket_ptr android_rpc_client;
++
++struct android_rpc_cleanup {
++    std::vector<ggml_backend_t> & backends;
++    bool transport_initialized = false;
++    ~android_rpc_cleanup() {
++        {
++            std::lock_guard<std::mutex> lock(android_rpc_socket_mutex);
++            android_rpc_client.reset();
++            android_rpc_listener.reset();
++        }
++        if (transport_initialized) rpc_transport_shutdown();
++        for (auto backend : backends) ggml_backend_free(backend);
++    }
++};
++}
++
++void ggml_backend_rpc_android_reset_stop(void) {
++    std::lock_guard<std::mutex> lock(android_rpc_socket_mutex);
++    android_rpc_stop_requested.store(false);
++}
++
++void ggml_backend_rpc_android_request_stop(void) {
++    std::lock_guard<std::mutex> lock(android_rpc_socket_mutex);
++    android_rpc_stop_requested.store(true);
++    if (android_rpc_client) android_rpc_client->interrupt();
++    if (android_rpc_listener) android_rpc_listener->interrupt();
++}
++
++void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
++                                   size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
+     if (n_devices == 0 || devices == nullptr) {
+         LOG_ERROR("Invalid arguments to ggml_backend_rpc_start_server\n");
+         return;
+@@ -2993,6 +3027,7 @@
+     }
+-    std::vector<ggml_backend_t> backends;
+-    LOG_INFO("Starting RPC server v%d.%d.%d\n",
++    std::vector<ggml_backend_t> backends;
++    android_rpc_cleanup cleanup{backends};
++    LOG_INFO("Starting RPC server v%d.%d.%d\n",
+         RPC_PROTO_MAJOR_VERSION,
+         RPC_PROTO_MINOR_VERSION,
+         RPC_PROTO_PATCH_VERSION);
+@@ -3035,25 +3070,36 @@
+         LOG_ERROR("Failed to initialize RPC transport\n");
+         return;
+     }
+-    auto server_socket = socket_t::create_server(host.c_str(), port);
+-    if (server_socket == nullptr) {
+-        LOG_ERROR("Failed to create server socket\n");
+-        return;
+-    }
+-    while (true) {
+-        auto client_socket = server_socket->accept();
+-        if (client_socket == nullptr) {
+-            LOG_ERROR("Failed to accept client connection\n");
+-            return;
+-        }
+-        LOG_INFO("Accepted client connection\n");
+-        rpc_serve_client(backends, cache_dir, client_socket);
+-        LOG_INFO("Client connection closed\n");
+-    }
+-    rpc_transport_shutdown();
+-    for (auto backend : backends) {
+-        ggml_backend_free(backend);
+-    }
++    cleanup.transport_initialized = true;
++    auto server_socket = socket_t::create_server(host.c_str(), port);
++    if (server_socket == nullptr) {
++        LOG_ERROR("Failed to create server socket\n");
++        return;
++    }
++    {
++        std::lock_guard<std::mutex> lock(android_rpc_socket_mutex);
++        if (android_rpc_stop_requested.load()) return;
++        android_rpc_listener = server_socket;
++    }
++    while (!android_rpc_stop_requested.load()) {
++        auto client_socket = server_socket->accept();
++        if (client_socket == nullptr) {
++            if (!android_rpc_stop_requested.load()) LOG_ERROR("Failed to accept client connection\n");
++            return;
++        }
++        {
++            std::lock_guard<std::mutex> lock(android_rpc_socket_mutex);
++            if (android_rpc_stop_requested.load()) return;
++            android_rpc_client = client_socket;
++        }
++        LOG_INFO("Accepted client connection\n");
++        rpc_serve_client(backends, cache_dir, client_socket);
++        {
++            std::lock_guard<std::mutex> lock(android_rpc_socket_mutex);
++            android_rpc_client.reset();
++        }
++        LOG_INFO("Client connection closed\n");
++    }
+ }
+ 
+ static const char * ggml_backend_rpc_device_get_name(ggml_backend_dev_t dev) {
