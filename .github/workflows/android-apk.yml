@@ -56,8 +56,10 @@ jobs:
       - id: native
         shell: bash
         run: |
+          set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            echo "changed=$(python3 scripts/native-revision-changed.py --android-pr)" >> "$GITHUB_OUTPUT"
+            native="$(python3 scripts/native-revision-changed.py --android-pr)"
+            echo "changed=$native" >> "$GITHUB_OUTPUT"
           elif [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" == refs/tags/* ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
