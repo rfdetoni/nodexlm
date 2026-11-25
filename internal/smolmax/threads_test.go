@@ -40,3 +40,17 @@ func TestThreadPolicy(t *testing.T) {
 		t.Fatal("accepted invalid policy")
 	}
 }
+
+func TestGuestThreadsPreserveDefaultsAndExplicitLimit(t *testing.T) {
+	for _, policy := range []string{"", "auto", "performance"} {
+		if n, err := GuestThreads(6, 12, policy); n != 6 || err != nil {
+			t.Fatalf("explicit limit changed: %d %v", n, err)
+		}
+	}
+	if n, err := GuestThreads(0, 12, ""); n != 12 || err != nil {
+		t.Fatalf("default changed: %d %v", n, err)
+	}
+	if _, err := GuestThreads(0, 12, "bad"); err == nil {
+		t.Fatal("invalid policy accepted")
+	}
+}

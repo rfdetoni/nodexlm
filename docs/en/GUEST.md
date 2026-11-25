@@ -17,3 +17,5 @@ Check the Host console for RPC readiness. Heartbeat/enrollment alone do not esta
 `deploy/nodexlm-guest.service` runs under a dedicated account and retains pairing state. Packages install unit files but do not enable or start them automatically. Stop the service before deleting/replacing enrollment data.
 
 Use `--rpc-device CPU` to force the native CPU device even in a GPU-capable bundle. This is useful on VMs/drivers missing required model operations. The macOS CI bundle test uses this CPU fallback because the paravirtual GPU does not support RMS_NORM; it does not establish physical Metal compatibility.
+
+Use `nodexlm guest --thread-policy performance` to opt into the recommended fast-core thread count; default physical-core behavior and explicit `--threads N` are preserved. No worker affinity is changed.

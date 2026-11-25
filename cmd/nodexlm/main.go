@@ -39,6 +39,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
+	"github.com/rfdetoni/nodexlm/internal/smolmax"
 	"github.com/rfdetoni/nodexlm/internal/worker"
 )
 
@@ -571,7 +572,8 @@ func guest(args []string) error {
 	debug := f.Bool("debug", false, "log Guest heartbeat, reconnects and native RPC output to a private rotating file")
 	backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
 	bin := f.String("rpc-bin", "", "matching rpc-server executable")
-	threads := f.Int("threads", 0, "Guest CPU threads (0 = physical cores)")
+	threads := f.Int("threads", 0, "Guest CPU threads (0 = automatic)")
+	threadPolicy := f.String("thread-policy", "", "auto or performance (big cores; manual --threads takes precedence)")
 	address := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	tunnels := f.Int("tunnels", 8, "concurrent secured tunnels (1-8)")
 	rpcCache := f.Bool("rpc-cache", false, "cache model tensors on this Guest disk (opt-in; may contain model weights)")
@@ -584,6 +586,9 @@ func guest(args []string) error {
 	}
 	if *threads < 0 || *threads > 256 {
 		return errors.New("--threads must be 0..256")
+	}
+	if _, err := smolmax.GuestThreads(*threads, hardware.PhysicalCPUCount(), *threadPolicy); err != nil {
+		return err
 	}
 	if *debug {
 		stop, err := debuglog.Start(*dir, "guest")
@@ -636,7 +641,7 @@ func guest(args []string) error {
 		fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
 	}
 	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
-	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels), "--threads", fmt.Sprint(*threads)}
+	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels), "--threads", fmt.Sprint(*threads), "--thread-policy", *threadPolicy}
 	if *rpcCache {
 		options = append(options, "--rpc-cache")
 	}
@@ -933,7 +938,8 @@ func rpcNode(args []string) error {
 	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
-	threads := f.Int("threads", 0, "Guest CPU threads (0 = physical cores)")
+	threads := f.Int("threads", 0, "Guest CPU threads (0 = automatic)")
+	threadPolicy := f.String("thread-policy", "", "auto or performance (big cores; manual --threads takes precedence)")
 	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
 	addr := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	slots := f.Int("tunnels", 8, "simultaneous secured RPC tunnels (1-8)")
@@ -945,9 +951,11 @@ func rpcNode(args []string) error {
 	if *threads < 0 || *threads > 256 {
 		return errors.New("--threads must be 0..256")
 	}
-	if *threads == 0 {
-		*threads = min(256, hardware.PhysicalCPUCount())
+	selectedThreads, err := smolmax.GuestThreads(*threads, hardware.PhysicalCPUCount(), *threadPolicy)
+	if err != nil {
+		return err
 	}
+	*threads = selectedThreads
 	if *slots < 1 || *slots > 8 {
 		return errors.New("--tunnels must be between 1 and 8")
 	}

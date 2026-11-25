@@ -2,6 +2,10 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Política de threads — WP7
+
+- CLI Guest expõe política performance opt-in; Android já seleciona núcleos rápidos em modo automático, interface esclarecida sem mudar default. Afinidade permanece follow-up.
+
 ## Transporte RPC — WP6
 
 - Mediana de três pares após warmup em túneis legados, watcher ocioso sem poll e cache TLS por cliente pareado, sem alteração de protocolo.
