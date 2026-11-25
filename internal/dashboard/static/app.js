@@ -194,8 +194,9 @@ async function loadModelFolder() {
 }
 function renderLoadStatus(status){
  const box=$('loadingStatus'), runtime=status.runtime||{};
- if(!runtime.loading){box.hidden=true;box.replaceChildren();loadingPlan=null;loadingPlanModel='';return;}
+ if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled';if(!box.hidden)box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));return;}
  box.hidden=false;box.replaceChildren(el('strong','', 'Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
+ box.append(action(runtime.phase==='cancelling'?'Cancelando…':'Cancelar carregamento','secondary',async()=>{const state=await api('/api/inference/cancel-load','POST',{});notice(state.phase==='ready'?'O modelo já terminou de carregar.':'Cancelamento solicitado; aguardando encerramento do runtime.');await refresh()},runtime.phase==='cancelling'));
  const activity=el('progress','download-bar');
  activity.setAttribute('aria-label','Carregamento em andamento: progresso real indisponível');
  box.append(activity,el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s · progresso real não informado pelo llama.cpp'));
@@ -378,6 +379,7 @@ async function refresh(){
  $('sideCapacity').textContent=fmt(c.aggregate_budget_bytes);
  $('modelState').textContent=status.runtime.loading
   ? 'Carregando · '+String(status.runtime.phase||'preparando').replace(/_/g,' ')
+  : status.runtime.phase==='cancelled'?'Carregamento cancelado'
   : status.runtime.error ? 'Falha · '+status.runtime.error
   : status.runtime.loaded?'Carregado':'Descarregado';
  const s=status.settings;
@@ -716,6 +718,7 @@ $('autotuneBench').addEventListener('click',()=>guard(async()=>{
  try{
   const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value,node_id:$('inferenceBenchTarget').value});
   const area=$('autotuneResults');area.replaceChildren();
+  if(report.placement_fixed)area.append(el('p','muted','Placement fixado do baseline; candidatos com memória insuficiente são rejeitados.'));
   for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s':row.error||'indisponível')));
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')+' · '+(s.speculative_tokens||0)+' tokens (0 = nativo)'));
    const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);

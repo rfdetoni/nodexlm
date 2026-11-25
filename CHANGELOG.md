@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Correções da auditoria
 
+- FEAT2: cancelamento administrativo do carregamento primário com estado cancelando/cancelado e encerramento do runtime, sem afetar outros trabalhos do pool.
+
 - FIX3: prévia de KV q8_0 reaproveita snapshot de medições da seleção original e isola alteração da admissão de memória.
 
 - FIX2: autotune de cluster fixa placement do baseline e revalida memória/topologia para cada candidato; não compara splits diferentes.

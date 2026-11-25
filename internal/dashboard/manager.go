@@ -116,6 +116,7 @@ type Manager struct {
 	loadRPCBaseline       map[string]rpcmesh.TunnelStats
 	rpcStatsProvider      func() map[string]rpcmesh.TunnelStats
 	loadCancel            context.CancelFunc
+	loadCancelRequested   bool
 	loadDone              chan struct{}
 	generations           map[uint64]context.CancelFunc
 	generationSequence    uint64
@@ -420,27 +421,57 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.loadPhase = "preparing_runtime"
 	m.loadError = ""
 	m.loadCancel = cancel
+	m.loadCancelRequested = false
 	m.loadDone = make(chan struct{})
 	return nil
 }
 
 // Load preserves the synchronous API for callers outside the dashboard.
 func (m *Manager) Load(ctx context.Context) error {
-	if err := m.beginLoad(nil); err != nil {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if err := m.beginLoad(cancel); err != nil {
 		return err
 	}
 	return m.runLoad(ctx)
 }
 
+// CancelLoad affects only the primary load, never the pool's benchmark,
+// autotune, microbenchmark or additional resident operation. Publishing the
+// engine and cancelling are serialized by mu; a completed load is untouched.
+func (m *Manager) CancelLoad() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.loading || m.engine != nil || m.loadCancel == nil {
+		return false
+	}
+	m.loadCancelRequested = true
+	m.loadPhase = "cancelling"
+	m.phaseStartedAt = time.Now()
+	m.loadCancel()
+	return true
+}
+
 func (m *Manager) runLoad(ctx context.Context) error {
 	m.poolMu.Lock()
 	defer m.poolMu.Unlock()
-	err := m.load(ctx)
+	err := ctx.Err()
+	if err == nil {
+		err = m.load(ctx)
+	}
 	m.mu.Lock()
 	duration := time.Since(m.loadStartedAt)
 	m.loading = false
 	m.loadCancel = nil
-	if err != nil {
+	cancelled := err != nil && (m.loadCancelRequested || errors.Is(ctx.Err(), context.Canceled))
+	m.loadCancelRequested = false
+	if cancelled {
+		m.loadPhase = "cancelled"
+		m.loadError = ""
+		m.loadRPCNodes = nil
+		m.loadRPCBaseline = nil
+		m.loadFingerprint = ""
+	} else if err != nil {
 		m.loadPhase = "error"
 		m.loadError = err.Error()
 	} else {
@@ -450,7 +481,9 @@ func (m *Manager) runLoad(ctx context.Context) error {
 	close(m.loadDone)
 	m.loadDone = nil
 	m.mu.Unlock()
-	if err != nil {
+	if cancelled {
+		slog.Info("Model load cancelled", "elapsed_seconds", int(duration.Seconds()))
+	} else if err != nil {
 		slog.Error("Model load failed", "elapsed_seconds", int(duration.Seconds()), "error", err)
 	} else {
 		slog.Info("Model load completed", "elapsed_seconds", int(duration.Seconds()))
@@ -460,8 +493,10 @@ func (m *Manager) runLoad(ctx context.Context) error {
 
 func (m *Manager) setPhase(phase string) {
 	m.mu.Lock()
-	m.loadPhase = phase
-	m.phaseStartedAt = time.Now()
+	if !m.loadCancelRequested {
+		m.loadPhase = phase
+		m.phaseStartedAt = time.Now()
+	}
 	m.mu.Unlock()
 	slog.Info("Model load phase", "phase", phase)
 }

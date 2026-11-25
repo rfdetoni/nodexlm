@@ -259,6 +259,10 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 202, d.Manager.State())
 	}))
+	mux.HandleFunc("POST /api/inference/cancel-load", d.api(func(w http.ResponseWriter, r *http.Request) {
+		d.Manager.CancelLoad()
+		reply(w, 200, d.Manager.State())
+	}))
 	mux.HandleFunc("POST /api/unload", d.api(func(w http.ResponseWriter, r *http.Request) { d.Manager.Unload(); reply(w, 200, d.Manager.State()) }))
 
 	mux.HandleFunc("POST /api/chat", d.api(d.chat))

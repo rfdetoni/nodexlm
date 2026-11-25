@@ -80,3 +80,5 @@ ou credencial. O Host recolhe suas próprias métricas quando consultado.
 
 O contador de `última comunicação` é um heartbeat, não a latência da rede.
 Dispositivos offline não exibem valores antigos como leituras atuais.
+
+Durante o carregamento, **Cancelar carregamento** solicita o encerramento real do processo nativo pela API administrativa. O painel mantém estado cancelando até o cleanup; arquivos GGUF permanecem intactos. Não cancela benchmark/autotune/microbenchmark. Ctrl+C no CLI cancela o contexto do serviço.
