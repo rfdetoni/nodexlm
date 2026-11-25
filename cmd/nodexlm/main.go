@@ -1049,6 +1049,13 @@ func rpcNode(args []string) error {
 		}
 		*device = choice
 	}
+	// Native devices are fixed for the lifetime of this worker. If telemetry
+	// becomes incomplete, report the same topology and let the Host reject
+	// the capacity instead of silently falling back to unknown topology.
+	nativeKinds := nativeDeviceKinds(*device, profile)
+	if strings.Count(*device, "CUDA") > 1 && len(nativeKinds) == 0 {
+		return errors.New("multi-GPU worker requires verified dedicated CUDA topology")
+	}
 	slog.Info("Guest native device selection", "backend", selectedBackend,
 		"rpc_devices", *device, "ram_bytes", profile.AvailableRAMBytes,
 		"dedicated_gpu", guestDedicatedGPU(profile))
@@ -1062,7 +1069,7 @@ func rpcNode(args []string) error {
 			profile.GPUs = nil
 		}
 		if *device != "" {
-			profile.Runtime.RPCDevices = nativeDeviceKinds(*device, profile)
+			profile.Runtime.RPCDevices = nativeKinds
 		}
 		profile.Runtime.Installed = true
 		profile.Runtime.Benchmark = true

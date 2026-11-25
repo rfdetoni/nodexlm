@@ -11,7 +11,7 @@ func TestMultiGPUUsesMinimumIndependentBudget(t *testing.T) {
 		{Vendor: "nvidia", MemoryType: "dedicated", VRAMBytes: 6 * GiB, FreeVRAMBytes: 5 * GiB},
 		{Vendor: "nvidia", MemoryType: "dedicated", VRAMBytes: 12 * GiB, FreeVRAMBytes: 9 * GiB},
 	}}
-	want := 2 * ((5 * GiB - 256 * MiB) * 90 / 100)
+	want := uint64(2 * ((5*GiB - 256*MiB) * 90 / 100))
 	if got := RPCMemory(d); got.GPU != want || got.RAM == 0 {
 		t.Fatalf("unsafe device budgets: %+v", got)
 	}
