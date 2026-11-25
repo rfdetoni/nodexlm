@@ -24,6 +24,29 @@ var publishedRPCBaseURL = "https://github.com/rfdetoni/nodexlm/releases/download
 
 const maxPublishedArchive = int64(400 << 20)
 
+const experimentalCUDARelease = "nodexlm-rpc-v1.0.0-linux-cuda-r4-experimental"
+const experimentalCUDABaseURL = "https://github.com/rfdetoni/nodexlm/releases/download/" + experimentalCUDARelease
+const experimentalCUDADigest = "73d7c5242c6072cb2bcf8973f63f5dd9e7e680350844ba6ed2ddba7b0ef5beef"
+
+func experimentalCUDASelected(backend string) bool {
+	return backend == "cuda" && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" &&
+		os.Getenv("NODEXLM_EXPERIMENTAL_CUDA") == "1" && !nativeTraceBuild()
+}
+
+func pinnedRPCDigest(baseURL, backend string) (string, bool) {
+	switch strings.TrimRight(baseURL, "/") {
+	case publishedRPCBaseURL:
+		return revision.Published[runtime.GOOS+"/"+runtime.GOARCH+"/"+backend], true
+	case experimentalCUDABaseURL:
+		if backend == "cuda" && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+			return experimentalCUDADigest, true
+		}
+		return "", true
+	default:
+		return "", false
+	}
+}
+
 func publishedRPCSupported(backend string) bool {
 	return revision.Published[runtime.GOOS+"/"+runtime.GOARCH+"/"+backend] != ""
 }
@@ -105,7 +128,7 @@ func fetchPublishedRPC(ctx context.Context, home, backend, baseURL string) (stri
 	if err != nil {
 		return "", "", err
 	}
-	if strings.TrimRight(baseURL, "/") == publishedRPCBaseURL && expected != revision.Published[runtime.GOOS+"/"+runtime.GOARCH+"/"+backend] {
+	if pinned, known := pinnedRPCDigest(baseURL, backend); known && (pinned == "" || expected != pinned) {
 		return "", "", errors.New("RPC manifest disagrees with pinned artifact hash")
 	}
 
@@ -142,7 +165,7 @@ func fetchPublishedRPC(ctx context.Context, home, backend, baseURL string) (stri
 	if actual != expected {
 		return "", "", errors.New("RPC runtime archive SHA-256 mismatch")
 	}
-	if strings.TrimRight(baseURL, "/") == publishedRPCBaseURL && actual != revision.Published[runtime.GOOS+"/"+runtime.GOARCH+"/"+backend] {
+	if pinned, known := pinnedRPCDigest(baseURL, backend); known && (pinned == "" || actual != pinned) {
 		return "", "", errors.New("RPC runtime archive disagrees with pinned SHA-256")
 	}
 	if _, err := file.Seek(0, 0); err != nil {
