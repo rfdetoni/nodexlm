@@ -80,7 +80,7 @@ jobs:
           commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
           git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
           test "$(git -C upstream rev-parse HEAD)" = "$commit"
-          for patch in internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/arm32-rpc-wire.patch internal/llamaruntime/patches/parallel-rpc-loader.patch internal/llamaruntime/patches/rpc-command-batching.patch scripts/optimized-rpc-backend-search.patch; do
+          for patch in internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/arm32-rpc-wire.patch internal/llamaruntime/patches/parallel-rpc-loader.patch internal/llamaruntime/patches/rpc-command-batching.patch scripts/optimized-rpc-backend-search.patch internal/llamaruntime/patches/native-token-activity.patch; do
             if [[ "$patch" == */rpc-command-batching.patch && ! -f "$patch" ]]; then continue; fi
             git -C upstream apply --check "$GITHUB_WORKSPACE/$patch"
             git -C upstream apply "$GITHUB_WORKSPACE/$patch"
