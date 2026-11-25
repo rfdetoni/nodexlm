@@ -45,7 +45,7 @@ jobs:
           cmake -S llama-source -B build -DCMAKE_BUILD_TYPE=Release \
             -DGGML_RPC=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
             -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF \
-            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
           cmake --build build --parallel 2 --target llama-server ggml-rpc-server
           test -x build/bin/llama-server
           if test -x build/bin/ggml-rpc-server; then test -x build/bin/ggml-rpc-server; else test -x build/bin/rpc-server; fi
