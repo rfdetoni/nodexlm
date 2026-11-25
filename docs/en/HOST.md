@@ -19,3 +19,5 @@ Optional mixed-cluster planner experiment: set `NODEXLM_RPC_COST_PLACEMENT=1` on
 For remote layers with measured RTT of at least 5 ms, the plan may suggest n-gram speculation without applying it. Explicit autotuning measures draft windows of 4, 8 and 16 tokens on the same workload; comparable topology/basis and at least 25% draft acceptance are required. Pinned ngram-simple uses `--spec-ngram-simple-size-m`; compatibility with RPC is checked by the real E2E, not assumed.
 
 Optional `NODEXLM_AUTO_RPC_MICROBENCH=1` collects bounded native tensor transfer measurements when the model pool is idle. The console can also request device measurements explicitly. These are transfer rates, not tokens/s. A divergent live cluster decode rate is only a re-benchmark advisory.
+
+Autotune uses measured slow/fast links to choose microbatch candidates; prefill recommendations require measured improvement without more than 10% decode regression. The plan may suggest q8_0 KV when estimated admission improves; no settings are changed. Verified native parallel upload also counts selected RPC devices, including hybrid single Guests.

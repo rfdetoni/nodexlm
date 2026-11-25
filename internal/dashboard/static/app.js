@@ -637,7 +637,7 @@ setInterval(pairingTick,1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)return pairingTick()});
 $('previewPlan').addEventListener('click',()=>guard(async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.strategy||'capacity'))); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
- for(const suggestion of plan.suggestions||[])if(suggestion.kind==='speculative_ngram')area.append(el('p','muted',suggestion.reason+' RTT: '+suggestion.round_trip_ms.toFixed(1)+' ms.'));
+ for(const suggestion of plan.suggestions||[])if(suggestion.kind==='speculative_ngram')area.append(el('p','muted',suggestion.reason+' RTT: '+suggestion.round_trip_ms.toFixed(1)+' ms.'));else if(suggestion.kind==='kv_q8_0')area.append(el('p','muted',suggestion.reason));
  for(const node of plan.nodes) {
   const rpcMode=node.rpc_mode==='gpu'?' · GPU prioritária':node.rpc_mode==='gpu+ram'?' · GPU + RAM':node.rpc_mode==='ram'?' · RAM/CPU':'';
   const memory=node.rpc_mode?' · VRAM '+fmt(node.vram_budget_bytes||0)+' / RAM '+fmt(node.ram_budget_bytes||0):'';
@@ -719,7 +719,7 @@ $('autotuneBench').addEventListener('click',()=>guard(async()=>{
   for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s':row.error||'indisponível')));
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')+' · '+(s.speculative_tokens||0)+' tokens (0 = nativo)'));
    const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
-  }else area.append(el('p','muted','Nenhum ganho comparável acima do limiar de 5%.'));
+  }else area.append(el('p','muted','Nenhum ganho comparável de decode ou prefill dentro dos limites.'));
  }finally{button.disabled=false}
 }));
 $('refreshObservations').addEventListener('click',()=>guard(refreshObservations));

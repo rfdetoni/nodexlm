@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
@@ -59,5 +60,25 @@ func TestSpeculativeSuggestionRequiresMeasuredRemoteLayers(t *testing.T) {
 	node.Layers, node.Network = 10, nil
 	if len(speculativeSuggestion([]placement{node})) != 0 {
 		t.Fatal("suggestion without a network measurement")
+	}
+}
+
+func TestPrefillCandidatesMatchMeasuredLink(t *testing.T) {
+	for _, tc := range []struct {
+		link string
+		want []int
+	}{{"slow", []int{128, 256}}, {"fast", []int{2048}}, {"", []int{512, 1024}}} {
+		var got []int
+		for _, row := range tuneCandidates(Settings{Threads: 4}, 8, false, tc.link) {
+			if row.Name == "prefill" {
+				got = append(got, row.Settings.UBatchSize)
+				if row.Settings.BatchSize < row.Settings.UBatchSize {
+					t.Fatal("batch smaller than ubatch")
+				}
+			}
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Fatalf("%s: got %v want %v", tc.link, got, tc.want)
+		}
 	}
 }

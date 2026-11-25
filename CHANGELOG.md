@@ -2,6 +2,10 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Prefill e carregamento — WP4
+
+- Autotune por link, recomendação de prefill com guard de decode, gate de upload por dispositivo RPC confirmado no patch e sugestão opt-in de KV q8_0.
+
 ## Microbenchmark por dispositivo — WP3
 
 - Mede transferências nativas RPC de 8 e 32 MiB por dispositivo com orçamento e cancelamento, cache separado e ranking sem conversão em tokens/s; coleta automática opt-in.

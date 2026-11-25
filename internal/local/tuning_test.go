@@ -70,3 +70,14 @@ func TestMoECacheCPUShareFlagsAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestParallelRPCUploadCountsNativeDevices(t *testing.T) {
+	m := &Managed{RPCServers: []string{"127.0.0.1:1234"}, RPCDeviceNames: []string{"Vulkan0", "RPC0"}}
+	if m.parallelRPCUploadEligible() {
+		t.Fatal("local GPU is not an RPC device")
+	}
+	m.RPCDeviceNames = append(m.RPCDeviceNames, "RPC1")
+	if !m.parallelRPCUploadEligible() {
+		t.Fatal("hybrid Guest should qualify for parallel upload")
+	}
+}
