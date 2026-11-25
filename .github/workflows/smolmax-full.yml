@@ -1,0 +1,71 @@
+name: Smolmax complete v1 ARM64 candidate
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'experiments/smolmax/full-v1.patch'
+      - 'experiments/smolmax/test-full-runtime.py'
+      - 'scripts/build-smolmax-native.sh'
+      - 'scripts/register-smolmax-runtime.py'
+      - '.github/workflows/smolmax-full.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: smolmax-full-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  full-arm64:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Build all three modified tools from the pinned full patch
+        shell: bash
+        run: NODEXLM_BUILD_JOBS=3 bash scripts/build-smolmax-native.sh "$RUNNER_TEMP/smolmax"
+      - name: Fetch reviewed stock runtime and GGUF fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, pathlib, urllib.request
+          rev = json.loads(pathlib.Path("internal/llamaruntime/revision.json").read_text())
+          files = [
+              ("stock.tar.gz", "https://github.com/rfdetoni/nodexlm/releases/download/" + rev["rpc_release"] + "/nodexlm-rpc_" + rev["version"] + "_linux_arm64_cpu.tar.gz", rev["published"]["linux/arm64/cpu"], 400 << 20),
+              ("tiny.gguf", "https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf", "270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d", 16 << 20),
+              ("dense.gguf", "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf", "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db", 512 << 20),
+          ]
+          for name, url, expected, limit in files:
+              digest = hashlib.sha256()
+              with urllib.request.urlopen(url, timeout=90) as source, open(name, "wb") as target:
+                  while data := source.read(1024 * 1024):
+                      digest.update(data)
+                      target.write(data)
+                      if target.tell() > limit:
+                          raise RuntimeError("fixture exceeded size limit: " + name)
+              if digest.hexdigest() != expected:
+                  raise RuntimeError("fixture SHA-256 mismatch: " + name)
+          PY
+          mkdir stock
+          tar --no-same-owner -xzf stock.tar.gz -C stock
+      - name: Verify real inference and nonzero streaming zones
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/smolmax/llama-bench" --help >/dev/null
+          "$RUNNER_TEMP/smolmax/llama-perplexity" --help >/dev/null
+          stock="$(find stock -type f -name llama-server -print -quit)"
+          test -n "$stock"
+          python3 experiments/smolmax/test-full-runtime.py \
+            --candidate "$RUNNER_TEMP/smolmax/llama-server" --baseline "$stock" \
+            --model tiny.gguf --sha256 270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d \
+            --stream-model dense.gguf --stream-sha256 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+      - name: Save exact tested binaries for lab validation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: smolmax-full-v1-linux-arm64
+          path: ${{ runner.temp }}/smolmax/
+          if-no-files-found: error
+          retention-days: 7
