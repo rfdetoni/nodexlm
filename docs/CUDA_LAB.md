@@ -1,0 +1,7 @@
+# CUDA candidate (laboratory only)
+
+The Linux x86-64 CUDA archive is published at the separately named r4 experimental release, built against the same pinned llama.cpp v1.0.0 and RPC10. It does **not** contain the r5 batching patch and is not a production r5 artifact. The published hash is independently pinned in the CLI, and the archive is installed in an isolated directory only when explicitly selected.
+
+Set `NODEXLM_EXPERIMENTAL_CUDA=1` when choosing native CUDA on a Linux x86-64 Host or Guest; the ordinary CPU/Vulkan/Metal and source fallback paths are unchanged. Compatible NVIDIA driver/CUDA runtime libraries must be installed. Unset the flag to return to ordinary runtime selection. The trace-source-build flag takes precedence and never downloads an uninstrumented CUDA candidate.
+
+Windows CUDA remains a distinct candidate until its build and native acceptance succeed. Do not call the Linux candidate a production r5 build. No hardware acceleration or speed improvement has been established by the CPU-only transport test. Verify both real CUDA inference and mixed-device RPC using the documented lab acceptance protocol before promotion. The final r5 CUDA distribution requires matching native patches and new pinned hashes.
