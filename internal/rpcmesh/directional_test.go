@@ -32,7 +32,7 @@ func TestDirectionalCapabilityPreservesLegacyEcho(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		var conn net.Conn = host
 		if supported {
-			conn = &directionalConn{Conn: host}
+			conn = &capabilityConn{Conn: host, directional: true}
 		}
 		sample, err := benchmarkPair(ctx, "test", conn)
 		cancel()

@@ -105,7 +105,7 @@ func benchmarkPair(ctx context.Context, id string, conn net.Conn) (Measurement, 
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	marker := byte(2)
-	if _, ok := conn.(*directionalConn); ok && os.Getenv("NODEXLM_RPC_DIRECTIONAL_BENCH") == "1" {
+	if caps, ok := conn.(*capabilityConn); ok && caps.directional && os.Getenv("NODEXLM_RPC_DIRECTIONAL_BENCH") == "1" {
 		marker = 3
 	}
 	if _, err := conn.Write([]byte{marker}); err != nil {

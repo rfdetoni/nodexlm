@@ -30,23 +30,27 @@ type idleTunnel struct {
 }
 
 type relay struct {
-	nodeID          string
-	listener        net.Listener
-	waiting         []*idleTunnel
-	ready           chan struct{}
-	closed          chan struct{}
-	mu              sync.Mutex
-	available       int
-	accepted        uint64
-	rejected        uint64
-	timeouts        uint64
-	bytesToGuest    atomic.Uint64
-	bytesFromGuest  atomic.Uint64
-	writesToGuest   atomic.Uint64
-	writesFromGuest atomic.Uint64
-	lastActivityMS  atomic.Int64
-	epoch           uint64
-	peers           map[net.Conn]struct{}
+	nodeID                string
+	listener              net.Listener
+	waiting               []*idleTunnel
+	ready                 chan struct{}
+	closed                chan struct{}
+	mu                    sync.Mutex
+	available             int
+	accepted              uint64
+	rejected              uint64
+	timeouts              uint64
+	bytesToGuest          atomic.Uint64
+	bytesFromGuest        atomic.Uint64
+	writesToGuest         atomic.Uint64
+	writesFromGuest       atomic.Uint64
+	lastActivityMS        atomic.Int64
+	framedWireToGuest     atomic.Uint64
+	framedWireFromGuest   atomic.Uint64
+	framedNativeToGuest   atomic.Uint64
+	framedNativeFromGuest atomic.Uint64
+	epoch                 uint64
+	peers                 map[net.Conn]struct{}
 }
 
 var relayEpoch atomic.Uint64
@@ -125,9 +129,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 	}
 	// A capability belongs to this authenticated CONNECT, not to a stale
 	// heartbeat or another tunnel from the same Guest.
-	if r.Header.Get("X-Nodex-RPC-Capabilities") == "directional-v1" {
-		conn = &directionalConn{Conn: conn}
-	}
+	conn = negotiateTunnel(conn, r.Header.Get("X-Nodex-RPC-Capabilities"))
 	item.track(conn)
 	_ = conn.SetDeadline(time.Time{})
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -292,13 +294,18 @@ func (r *relay) accept() {
 				}
 			}
 			// Tell the guest to dial its loopback-only native rpc-server.
-			if _, err := guest.Write([]byte{1}); err != nil {
+			marker := nativeTunnelMarker(guest, os.Getenv("NODEXLM_RPC_COMPRESSION") == "1")
+			if _, err := guest.Write([]byte{marker}); err != nil {
 				upstream.Close()
 				r.finish(guest)
 				return
 			}
 			slog.Debug("RPC native request claimed Guest tunnel", "guest_id", r.nodeID)
-			r.bridge(upstream, guest)
+			stream := guest
+			if marker == compressedNativeMarker {
+				stream = &framedConn{Conn: guest, stats: r}
+			}
+			r.bridge(upstream, stream)
 			r.finish(guest)
 		}()
 	}

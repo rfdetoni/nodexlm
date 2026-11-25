@@ -4,6 +4,7 @@ package rpcmesh
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -21,6 +22,15 @@ import (
 )
 
 func TestEncryptedRPCTunnelTransportsBinary(t *testing.T) {
+	for _, enabled := range []string{"0", "1"} {
+		t.Run("compression="+enabled, func(t *testing.T) {
+			t.Setenv("NODEXLM_RPC_COMPRESSION", enabled)
+			testEncryptedRPCTunnelTransportsBinary(t, enabled == "1")
+		})
+	}
+}
+
+func testEncryptedRPCTunnelTransportsBinary(t *testing.T, compressed bool) {
 	rpc, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +85,7 @@ func TestEncryptedRPCTunnelTransportsBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = remote.SetDeadline(time.Now().Add(3 * time.Second))
-	input := []byte{0, 1, 2, 3, 255, 0, 10, 27, 99}
+	input := append([]byte{0, 1, 2, 3, 255, 0, 10, 27, 99}, bytes.Repeat([]byte{42}, 128<<10)...)
 	if _, err = remote.Write(input); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +103,12 @@ func TestEncryptedRPCTunnelTransportsBinary(t *testing.T) {
 		traffic := hub.Stats()["test"]
 		if traffic.BytesToGuest >= uint64(len(input)) && traffic.BytesFromGuest >= uint64(len(input)) &&
 			traffic.LastActivityMS != 0 {
+			if compressed && (traffic.FramedNativeToGuest != uint64(len(input)) || traffic.FramedNativeFromGuest != uint64(len(input)) || traffic.FramedWireToGuest == 0 || traffic.FramedWireFromGuest == 0) {
+				t.Fatalf("missing compressed tunnel accounting: %+v", traffic)
+			}
+			if !compressed && traffic.FramedWireToGuest != 0 {
+				t.Fatal("legacy tunnel unexpectedly compressed")
+			}
 			break
 		}
 		if time.Now().After(deadline) {

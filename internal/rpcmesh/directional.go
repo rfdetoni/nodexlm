@@ -9,10 +9,6 @@ import (
 	"time"
 )
 
-// Marker 3 is only sent on an authenticated tunnel that advertised support.
-// It keeps the legacy echo pair and appends two separate, bounded transfers.
-type directionalConn struct{ net.Conn }
-
 const directionalSize = 1 << 20
 
 func directionalPayload() []byte {
