@@ -1,0 +1,79 @@
+name: Promote verified RPC r5 artifacts
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/promote-rpc-r5.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    steps:
+      - name: Verify the exact reviewed successful run and download its archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = rfdetoni/nodexlm
+          linux_run=45676896194
+          windows_run=45682915825
+          source=54f595d3c54ad2fe4f5c3dde67adb59230a38999
+          windows_source=294e3d4e02f9ab89bcc3d2999d7020ef46a2ea10
+          test "$(gh api "repos/$GH_REPO/actions/runs/$linux_run" --jq '.head_sha')" = "$source"
+          test "$(gh api "repos/$GH_REPO/actions/runs/$windows_run" --jq '.head_sha')" = "$windows_source"
+          test "$(gh api "repos/$GH_REPO/actions/runs/$windows_run" --jq '.conclusion')" = success
+          for job in 139426778600 139426778725 139426778966 139426779031; do
+            test "$(gh api "repos/$GH_REPO/actions/jobs/$job" --jq '.run_id')" = "$linux_run"
+            test "$(gh api "repos/$GH_REPO/actions/jobs/$job" --jq '.conclusion')" = success
+          done
+          mkdir -p dist
+          gh run download "$linux_run" --pattern 'rpc-linux-*' --dir dist
+          gh run download "$linux_run" --pattern 'rpc-darwin-*' --dir dist
+          gh run download "$windows_run" --pattern 'rpc-windows-*' --dir dist
+          python3 - <<'PY'
+          import hashlib, pathlib, shutil
+          expected = {
+              'darwin_arm64_metal': '18b8bc682c71ba152fe075c29859ce3fe6bdfa6dc8081deb084384713dfb8ef0',
+              'windows_amd64_vulkan': '8baf58ee7e61214551332f49160a82694832cab4b036149b05836e9d7353dc0b',
+              'windows_amd64_cpu': 'aa988203ffd6bd9a61367f07fab5267d028cfed9c9b3dac7edf15d4811837830',
+              'linux_arm64_cpu': '7298e3807c0c55dad311c5591055634ce7f9ac31a964b37cbdccc0d36b5af0b9',
+              'linux_amd64_cpu': '2c3e8ae7419960ec537f2edbc4fcb9b715cc3e6482f69bb73374a589519d79e4',
+              'linux_amd64_vulkan': '9b7c53b741bf267a46ecef09ce92d2502537374fcefd588376def76a85329c43',
+          }
+          root = pathlib.Path('dist')
+          lines = []
+          for target, digest in sorted(expected.items()):
+              name = f'nodexlm-rpc_v1.0.0_{target}.tar.gz'
+              matches = list(root.glob(f'*/{name}'))
+              assert len(matches) == 1, name
+              archive = matches[0]
+              assert archive.stat().st_size <= 400 * 1024 * 1024
+              with archive.open('rb') as stream:
+                  assert hashlib.file_digest(stream, 'sha256').hexdigest() == digest, name
+              shutil.move(archive, root / name)
+              lines.append(f'{digest}  {name}')
+          assert len(list(root.glob('*.tar.gz'))) == 6
+          (root / 'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          for archive in dist/*.tar.gz; do
+            workflow=rpc-platforms.yml
+            case "$archive" in *windows*) workflow=rpc-windows-r5.yml;; esac
+            gh attestation verify "$archive" --repo "$GH_REPO" --signer-workflow "$GH_REPO/.github/workflows/$workflow"
+          done
+          tag=nodexlm-rpc-v1.0.0-r5
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Release already exists; verify existing asset digests instead of overwriting.'
+            mkdir existing
+            gh release download "$tag" --pattern '*.tar.gz' --pattern SHA256SUMS.txt --dir existing
+            cmp dist/SHA256SUMS.txt existing/SHA256SUMS.txt
+            (cd existing && sha256sum -c SHA256SUMS.txt)
+          else
+            gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target "$source" --title 'NodexLM RPC r5 — llama.cpp v1.0.0' --notes 'Six verified candidate bundles from runs 45676896194 (four successful jobs) and 45682915825 (Windows CPU/Vulkan). Identical native patch blobs verified across both source commits. RPC 10 requires updating all Host and Guests together. Headless CI does not certify physical GPU performance.' --prerelease --latest=false
+          fi
