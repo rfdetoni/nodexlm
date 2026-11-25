@@ -123,6 +123,9 @@ def main():
             if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
                 assert 1 <= measurement.get('samples', 0) <= 3, measurement
                 assert measurement['bytes'] == measurement['samples'] * (2 << 20), measurement
+                if os.environ.get('NODEXLM_RPC_DIRECTIONAL_BENCH') == '1':
+                    assert measurement['directional_samples'] == measurement['samples'], measurement
+                    assert measurement['upload_mib_per_second'] > 0 and measurement['download_mib_per_second'] > 0, measurement
                 for node in nodes:
                     sample = json.load(api('/api/bench/rpc-device/'+node['id'],'POST',{}))
                     assert sample['source'] == 'auto', sample

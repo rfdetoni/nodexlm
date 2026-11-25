@@ -72,3 +72,15 @@ func TestAutoGuestNeverCountsSharedVRAMAsExtraRAM(t *testing.T) {
 		t.Fatalf("CUDA shared VRAM incorrectly treated as discrete: %q", got)
 	}
 }
+
+func TestExplicitCUDADeviceChoice(t *testing.T) {
+	profile := protocol.Device{GPUs: []protocol.GPUDevice{{MemoryType: "dedicated", FreeVRAMBytes: 6 << 30}}}
+	if got, err := explicitCUDADeviceChoice([]string{"CUDA0", "CPU"}, profile); err != nil || got != "CUDA0,CPU" {
+		t.Fatalf("CUDA+CPU: %q %v", got, err)
+	}
+	for _, names := range [][]string{{"CPU"}, {"CUDA0", "CUDA1", "CPU"}} {
+		if _, err := explicitCUDADeviceChoice(names, profile); err == nil {
+			t.Fatalf("accepted unavailable or ambiguous CUDA: %v", names)
+		}
+	}
+}
