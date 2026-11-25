@@ -1020,7 +1020,7 @@ index 85e17018c..c54fbc7fd 100644
 +    // GGML_MOE_BIAS=d adds d to the selection score of experts in the pool, so routing prefers what is already in RAM.
 +    // Tokens run in order per layer even in a batch, so per-layer pools see exactly what one-token generation would see.
 +    static const int moe_pool = getenv("GGML_MOE_POOL") ? atoi(getenv("GGML_MOE_POOL")) : 0;
-+    if (moe_pool > 0 && strncmp(dst->name, "ffn_moe_argsort", 15) == 0) {
++    if (getenv("GGML_MOE_SIM") && atoi(getenv("GGML_MOE_SIM")) != 0 && moe_pool > 0 && strncmp(dst->name, "ffn_moe_argsort", 15) == 0) {
 +        static const float moe_bias = getenv("GGML_MOE_BIAS") ? atof(getenv("GGML_MOE_BIAS")) : 0.0f;
 +        static const int moe_used = getenv("GGML_MOE_USED") ? atoi(getenv("GGML_MOE_USED")) : getenv("LLAMA_MOE_USED") ? atoi(getenv("LLAMA_MOE_USED")) : 8;
 +        static std::vector<std::vector<int>> moe_lru(256);
@@ -1193,7 +1193,7 @@ index 85e17018c..c54fbc7fd 100644
 +#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
 +static bool ggml_flash_attn_q8_tv(const ggml_compute_params * params, ggml_tensor * dst) {
 +    static const bool on = getenv("GGML_FA_Q8") == nullptr || atoi(getenv("GGML_FA_Q8")) != 0;
-+    static const float eps = getenv("GGML_FA_EPS") ? (float) atof(getenv("GGML_FA_EPS")) : 1e-4f;
++    static const float eps = getenv("GGML_FA_EPS") ? (float) atof(getenv("GGML_FA_EPS")) : 0.0f;
 +    const ggml_tensor * q = dst->src[0], * k = dst->src[1], * v = dst->src[2], * mask = dst->src[3], * sinks = dst->src[4];
 +    float scale = 1.0f, max_bias = 0.0f, softcap = 0.0f;
 +    memcpy(&scale,    (float *) dst->op_params + 0, sizeof(float));
@@ -3379,7 +3379,7 @@ index 9282ca299..ebafc0323 100644
 +    } else if (cur->type == GGML_TYPE_Q2_0) {
 +        // tvbox: ternary Q2_0 (Ternary-Bonsai) -> base-3 packing with the per-64 scales, 5/6 of the RAM
 +        // (GGML_Q2_0_TERNARY=0 keeps upstream's per-row Q2_0 vec_dot on the mmapped file)
-+        static const bool q20_tv = getenv("GGML_Q2_0_TERNARY") == nullptr || atoi(getenv("GGML_Q2_0_TERNARY")) != 0;
++        static const bool q20_tv = getenv("GGML_Q2_0_TERNARY") != nullptr && atoi(getenv("GGML_Q2_0_TERNARY")) != 0;
 +        if (q20_tv && ggml_cpu_has_neon() && ggml_cpu_has_dotprod() && cur->ne[1] % 8 == 0 && cur->ne[0] % QK_K == 0) {
 +            switch (ggml::cpu::repack::q20c_mode(cur)) {
 +                case 1:  return &q2_0_g128_q8_K_tv;
