@@ -92,3 +92,7 @@ Defina `NODEXLM_RPC_COMPRESSION=1` em ambos os processos. Apenas o CONNECT auten
 Android: a opção experimental de compressão aplica-se ao transporte Java; Rust continua em marker 1, com diagnóstico direcional. O Android anuncia directional-v1 em ambos os transportes. A afinidade opt-in restringe apenas a thread do servidor RPC CPU-only antes da criação de backends, dentro do cpuset permitido e respeitando o número de threads escolhido. Workers descendentes podem herdar a máscara, mas GGML pode sobrescrevê-la; não é garantia de afinidade de cada worker. Nenhuma mudança de padrão ou alegação de ganho físico.
 
 Android: cache limitado e isolado por pareamento/revisão; desligar e reiniciar remove o cache. Compressão Rust implementa o mesmo framing deflate-v1 do Host Go com zlib da plataforma, sem nova dependência Cargo. Validação física de consumo e cache ainda pendente.
+
+### Afinidade estrita dos workers Android (opt-in)
+
+Quando o Guest CPU-only encontra uma topologia heterogênea e consegue restringir o servidor aos núcleos rápidos permitidos pelo sistema, o backend CPU recebe um pool GGML próprio, com `strict_cpu`, máscara limitada ao cpuset e polling desativado. O pool pertence ao ciclo de vida do servidor e é liberado após os backends. Se os símbolos não estiverem disponíveis ou a máscara não comportar todas as threads, mantém-se a afinidade herdada do servidor. O modo GPU/híbrido não é alterado. Medição em aparelhos físicos continua necessária.
