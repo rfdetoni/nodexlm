@@ -143,6 +143,16 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			(hostSpeed == 0 || sample.RateBasis == hostSample.RateBasis) {
 			candidate.Performance.TokensPerSecond = sample.TokensPerSecond
 		}
+		if micro := m.microbenchSample(guest.ID); micro != nil {
+			for _, sample := range micro.Devices {
+				if sample.Bytes == 32<<20 {
+					rate := min(sample.UploadMiBPerSecond, sample.ReadbackMiBPerSecond)
+					if rate > 0 && (candidate.Performance.MicrobenchMiBPerSecond == 0 || rate < candidate.Performance.MicrobenchMiBPerSecond) {
+						candidate.Performance.MicrobenchMiBPerSecond = rate
+					}
+				}
+			}
+		}
 		candidates = append(candidates, candidate)
 	}
 	selectPlacement := clusterplan.SelectWithHostSpeed

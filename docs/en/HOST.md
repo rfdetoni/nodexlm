@@ -17,3 +17,5 @@ Use `--rpc-transport unix` only with patched native binaries on POSIX. Automatic
 Optional mixed-cluster planner experiment: set `NODEXLM_RPC_COST_PLACEMENT=1` on the Host to compare estimated serial decode costs in speed mode. It uses comparable fresh benchmarks and measured RTT, not predicted or measured cluster throughput. The default does not apply this RTT cost model. Capacity mode retains all Guests. Validate with physical A/B before claiming improvements.
 
 For remote layers with measured RTT of at least 5 ms, the plan may suggest n-gram speculation without applying it. Explicit autotuning measures draft windows of 4, 8 and 16 tokens on the same workload; comparable topology/basis and at least 25% draft acceptance are required. Pinned ngram-simple uses `--spec-ngram-simple-size-m`; compatibility with RPC is checked by the real E2E, not assumed.
+
+Optional `NODEXLM_AUTO_RPC_MICROBENCH=1` collects bounded native tensor transfer measurements when the model pool is idle. The console can also request device measurements explicitly. These are transfer rates, not tokens/s. A divergent live cluster decode rate is only a re-benchmark advisory.

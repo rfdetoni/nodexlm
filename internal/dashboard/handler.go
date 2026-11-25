@@ -65,6 +65,14 @@ func (d *Dashboard) Handler() http.Handler {
 	openAI := &compat.Handler{Forward: d.Manager.openAI, Decision: d.decide, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout}
 	inferenceAPI := d.inference(openAI.ServeHTTP)
 	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
+	mux.HandleFunc("POST /api/bench/rpc-device/{id}", d.api(func(w http.ResponseWriter, r *http.Request) {
+		sample, err := d.Manager.MeasureRPCDevice(r.Context(), r.PathValue("id"))
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, sample)
+	}))
 	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Model    string `json:"model"`

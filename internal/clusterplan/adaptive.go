@@ -11,10 +11,11 @@ import (
 
 // Performance is observed telemetry, not a prediction of cluster throughput.
 type Performance struct {
-	TokensPerSecond float64
-	RoundTripMS     float64
-	MiBPerSecond    float64
-	NetworkMeasured bool
+	TokensPerSecond        float64
+	RoundTripMS            float64
+	MiBPerSecond           float64
+	NetworkMeasured        bool
+	MicrobenchMiBPerSecond float64
 }
 
 type Candidate struct {
@@ -75,6 +76,9 @@ func selectWithHostSpeed(blocks uint32, modelBytes, hostBudget uint64, hostSpeed
 				if p.TokensPerSecond > 0 {
 					// Actual inference throughput is stronger evidence than
 					// a network-only heuristic, even on a slower link.
+					return 4
+				}
+				if p.MicrobenchMiBPerSecond > 0 {
 					return 3
 				}
 				if p.NetworkMeasured && (p.RoundTripMS > 15 || p.MiBPerSecond < 25) {
@@ -90,6 +94,9 @@ func selectWithHostSpeed(blocks uint32, modelBytes, hostBudget uint64, hostSpeed
 			}
 			if a.Performance.TokensPerSecond > 0 && b.Performance.TokensPerSecond > 0 && a.Performance.TokensPerSecond != b.Performance.TokensPerSecond {
 				return a.Performance.TokensPerSecond > b.Performance.TokensPerSecond
+			}
+			if a.Performance.MicrobenchMiBPerSecond != b.Performance.MicrobenchMiBPerSecond {
+				return a.Performance.MicrobenchMiBPerSecond > b.Performance.MicrobenchMiBPerSecond
 			}
 			if a.Performance.NetworkMeasured && b.Performance.NetworkMeasured {
 				if a.Performance.RoundTripMS != b.Performance.RoundTripMS {

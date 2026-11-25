@@ -14,8 +14,13 @@ import (
 // A deterministic GGML RPC v9 fixture. The real native server runs on device;
 // this verifies the exact wire format and rejects a silently corrupted tensor.
 func serveProbeRPC(conn net.Conn, corrupt bool) error {
+	return serveSizedProbeRPC(conn, corrupt, false)
+}
+
+func serveSizedProbeRPC(conn net.Conn, corrupt, large bool) error {
 	defer conn.Close()
 	var stored []byte
+	var tensorBytes uint64 = rpcProbeTensorBytes
 	device := uint32(0)
 	buffer := uint64(0)
 	for {
@@ -27,7 +32,7 @@ func serveProbeRPC(conn net.Conn, corrupt bool) error {
 			return err
 		}
 		size := binary.LittleEndian.Uint64(header[1:])
-		if size > 128<<10 {
+		if size > 33<<20 || (!large && size > 128<<10) {
 			return fmt.Errorf("unexpected request size %d", size)
 		}
 		data := make([]byte, size)
@@ -67,13 +72,14 @@ func serveProbeRPC(conn net.Conn, corrupt bool) error {
 				return fmt.Errorf("ALLOC_BUFFER size %d", len(data))
 			}
 			device = binary.LittleEndian.Uint32(data[:4])
-			if device > 1 || binary.LittleEndian.Uint64(data[4:]) != rpcProbeTensorBytes {
+			tensorBytes = binary.LittleEndian.Uint64(data[4:])
+			if device > 1 || (!large && tensorBytes != rpcProbeTensorBytes) || (large && tensorBytes != 8<<20 && tensorBytes != 32<<20) {
 				return errors.New("invalid ALLOC_BUFFER request")
 			}
 			buffer = uint64(0x10000) + uint64(device)*0x10000
 			var info [16]byte
 			binary.LittleEndian.PutUint64(info[:8], buffer)
-			binary.LittleEndian.PutUint64(info[8:], rpcProbeTensorBytes)
+			binary.LittleEndian.PutUint64(info[8:], tensorBytes)
 			if err := response(info[:]); err != nil {
 				return err
 			}
@@ -87,19 +93,19 @@ func serveProbeRPC(conn net.Conn, corrupt bool) error {
 				return err
 			}
 		case 6: // SET_TENSOR (no response)
-			if len(data) != rpcProbeTensorWireSize+9+rpcProbeTensorBytes {
+			if uint64(len(data)) != rpcProbeTensorWireSize+9+tensorBytes {
 				return fmt.Errorf("bad SET_TENSOR wire size: %d", len(data))
 			}
 			if binary.LittleEndian.Uint32(data[8:12]) != 0 ||
 				binary.LittleEndian.Uint64(data[12:20]) != buffer ||
-				binary.LittleEndian.Uint32(data[20:24]) != rpcProbeTensorBytes/4 ||
+				uint64(binary.LittleEndian.Uint32(data[20:24])) != tensorBytes/4 ||
 				binary.LittleEndian.Uint64(data[220:228]) != 0x50000000+uint64(device)*0x10000 {
 				return errors.New("invalid serialized GGML tensor descriptor")
 			}
 			stored = append([]byte(nil), data[rpcProbeTensorWireSize+9:]...)
 		case 8: // GET_TENSOR
 			if len(data) != rpcProbeTensorWireSize+16 ||
-				binary.LittleEndian.Uint64(data[rpcProbeTensorWireSize+8:]) != rpcProbeTensorBytes {
+				binary.LittleEndian.Uint64(data[rpcProbeTensorWireSize+8:]) != tensorBytes {
 				return errors.New("invalid GET_TENSOR request")
 			}
 			if len(stored) == 0 {

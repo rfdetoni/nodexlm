@@ -90,6 +90,9 @@ type Manager struct {
 	residents             map[string]*Manager
 	closed                bool
 	samples               map[string]InferenceSample
+	microbenchAttempts    map[string]time.Time
+	microbenchDrift       int
+	microbenchNode        string
 	generationTokens      uint64
 	generationBuckets     [8]uint64
 	generationCount       uint64

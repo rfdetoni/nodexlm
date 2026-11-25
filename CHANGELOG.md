@@ -2,6 +2,11 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Microbenchmark por dispositivo — WP3
+
+- Mede transferências nativas RPC de 8 e 32 MiB por dispositivo com orçamento e cancelamento, cache separado e ranking sem conversão em tokens/s; coleta automática opt-in.
+- Sinaliza divergência de decode ao vivo para re-medição explícita.
+
 ## Especulação orientada por RTT — WP2
 
 - Prévia sugere n-gram com RTT medido de pelo menos 5 ms em camadas remotas; autotune explícito testa janelas de 4, 8 e 16 tokens, com gates de aceitação e topologia preservados.

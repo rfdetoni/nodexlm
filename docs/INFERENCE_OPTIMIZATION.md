@@ -115,3 +115,7 @@ A revisão do llama.cpp fica fixada em `internal/llamaruntime/revision.json` e o
 ## Runtime RPC r2
 
 O r2 é o bundle publicado fixado, com os cinco SHA-256 obtidos dos ativos da release e o build 43231952808 aprovado nas cinco plataformas, incluindo E2E Linux com dois Guests. O cache de instalação é separado por tag. Upload paralelo é ativado apenas nos bundles verificados, não representa ganho garantido no decode. O r3 fica reservado para candidatos de kernels especializados; não promover sem CI, hashes e testes de compatibilidade.
+
+## Microbenchmark RPC por dispositivo (WP3)
+
+`NODEXLM_AUTO_RPC_MICROBENCH=1` habilita a coleta experimental em registro/heartbeat autenticado, somente sem modelos residentes e sem outro load/benchmark. A ação Medir dispositivos RPC permite medir sob demanda. São 8 e 32 MiB por dispositivo, no máximo dois dispositivos, 160 MiB de payload bidirecional e 30 s. SET_TENSOR é seguido de uma barreira RPC: a taxa inclui a sincronização; GET_TENSOR mede readback com verificação de dados. As medições auto são separadas do benchmark manual; MiB/s nunca vira tokens/s. Três amostras de decode ao vivo divergentes em mais de 30% do benchmark de cluster sinalizam possível necessidade de re-medição, não provam regressão. Nenhum benchmark de inferência é iniciado automaticamente.

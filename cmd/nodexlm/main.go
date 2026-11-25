@@ -292,6 +292,7 @@ func serve(args []string) error {
 		}
 		defer manager.Close()
 		manager.SetRPCStatsProvider(s.RPCStats)
+		s.SetRPCMicrobenchCallbacks(manager.AutoMicrobench, manager.CancelRPCMicrobench)
 		manager.SetRPCProvider(func() []dashboard.RPCGuest {
 			ready := s.RPCIdleNodes()
 			profiles := s.DevicesSnapshot()
