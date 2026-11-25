@@ -46,6 +46,7 @@ jobs:
           set -euo pipefail
           git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
           git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
       - name: Build matched static CPU RPC pair
         shell: bash
         run: |

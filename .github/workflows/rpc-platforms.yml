@@ -103,6 +103,7 @@ jobs:
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/arm32-rpc-wire.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
           git -C upstream apply --check "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DCMAKE_BUILD_TYPE=Release)
@@ -159,6 +160,7 @@ jobs:
           NODEXLM_TEST_DEVICE_MICROBENCH: ${{ matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu' && '1' || '0' }}
           NODEXLM_RPC_DIRECTIONAL_BENCH: '1'
           NODEXLM_PARALLEL_RPC_UPLOAD: '1'
+          NODEXLM_RPC_BATCH_COMMANDS: '1'
           NODEXLM_RPC_DIR: ${{ github.workspace }}/stage
           NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
         run: |

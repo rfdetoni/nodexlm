@@ -1,8 +1,8 @@
 {
   "version": "v1.0.0",
   "commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
-  "rpc_release": "nodexlm-rpc-v1.0.0-r4",
-  "rpc_candidate_release": "nodexlm-rpc-v1.0.0-r4",
+  "rpc_release": "nodexlm-rpc-v1.0.0-r5",
+  "rpc_candidate_release": "nodexlm-rpc-v1.0.0-r5",
   "published": {},
   "unix_rpc": true,
   "parallel_rpc_uploads": true,

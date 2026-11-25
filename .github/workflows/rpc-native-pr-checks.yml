@@ -3,7 +3,7 @@ name: Native RPC loader PR checks
 on:
   pull_request:
     paths:
-      - 'internal/llamaruntime/patches/parallel-rpc-loader.patch'
+      - 'internal/llamaruntime/patches/**'
       - 'internal/llamaruntime/patch.go'
       - '.github/workflows/rpc-runtime.yml'
       - '.github/workflows/rpc-native-pr-checks.yml'
@@ -38,6 +38,7 @@ jobs:
           test "$(git -C llama-source rev-parse HEAD)" = "$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')"
           git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
           git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
       - name: Compile patched native llama-server and worker
         shell: bash
         run: |
