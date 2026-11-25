@@ -376,4 +376,3 @@ func (g *ggufReader) tensorBytes(count uint64, blocks uint32) ([]uint64, uint64)
 	}
 	return layers, other
 }
-
