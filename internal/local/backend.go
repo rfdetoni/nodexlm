@@ -50,6 +50,22 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 			return backendLaunchSpec{}, fmt.Errorf("generate inference credential: %w", err)
 		}
 		args := m.args(port, nctx, threads, gpu, meta.BlockCount)
+		mode := os.Getenv("NODEXLM_SMOLMAX_MODE")
+		if mode == "moe" || mode == "stream" {
+			if os.Getpagesize() != 4096 {
+				return backendLaunchSpec{}, errors.New("Smolmax paging and streaming require 4 KiB OS pages")
+			}
+			if m.ParallelSlots > 1 || (m.SpeculativeMode != "" && m.SpeculativeMode != "off") || m.DraftModelPath != "" {
+				return backendLaunchSpec{}, errors.New("Smolmax paging and streaming currently require one slot without speculative decoding")
+			}
+			if m.LoadMode != "" && m.LoadMode != "auto" {
+				return backendLaunchSpec{}, errors.New("Smolmax paging and streaming require the default mapped model load mode")
+			}
+			if os.Getenv("NODEXLM_SMOLMAX_REPACK_CACHE") == "" {
+				// The pager and stream hooks require quantized tensors still on the model mapping.
+				args = append(args, "--no-repack")
+			}
+		}
 		if meta.PoolingType >= 1 && meta.PoolingType <= 4 {
 			args = append(args, "--embedding")
 		}
