@@ -38,6 +38,7 @@ type inferenceTopology struct {
 	TensorSplit   string         `json:"tensor_split,omitempty"`
 	LocalLayers   int            `json:"rpc_local_layers"`
 	Notice        string         `json:"notice"`
+	rpcOwners     map[string]string
 }
 
 // This snapshot is published only after engine.Load succeeds. Native args are
@@ -58,6 +59,7 @@ func buildInferenceTopology(s Settings, meta local.GGUFInfo, size, hostBudget ui
 		for _, guest := range guests {
 			byID[guest.ID] = guest
 		}
+		out.rpcOwners = nativeRPCOwners(engine.RPCServers, selected, guests)
 		deviceOwner := map[string]int{}
 		rpcIndex := 0
 		var total uint64
@@ -147,6 +149,55 @@ func buildInferenceTopology(s Settings, meta local.GGUFInfo, size, hostBudget ui
 		start += node.Layers
 	}
 	return out
+}
+
+// Bind native local relay endpoints to admitted authenticated Guest identities.
+// Upstream's backend name uses a per-server device index (not the global RPC0
+// placement index). Never attribute by that number alone.
+func nativeRPCOwners(endpoints []string, selected clusterplan.Selection, guests []RPCGuest) map[string]string {
+	if len(endpoints) != len(selected.Guests) {
+		return nil
+	}
+	owners := make(map[string]string, len(endpoints))
+	for i, candidate := range selected.Guests {
+		endpoint := endpoints[i]
+		if endpoint == "" || owners[endpoint] != "" {
+			return nil
+		}
+		matched := false
+		for _, guest := range guests {
+			if guest.ID == candidate.ID && guest.Endpoint == endpoint && guest.ID != "" {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil
+		}
+		owners[endpoint] = candidate.ID
+	}
+	return owners
+}
+
+func attributeNativeTokens(tokens []local.NativeTokenActivity, owners map[string]string) {
+	for i := range tokens {
+		for j := range tokens[i].Splits {
+			split := &tokens[i].Splits[j]
+			name, rest, ok := strings.Cut(split.Backend, "[")
+			endpoint, closed := strings.CutSuffix(rest, "]")
+			if !ok || !closed || !strings.HasPrefix(name, "RPC") {
+				continue
+			}
+			index := strings.TrimPrefix(name, "RPC")
+			if index == "" || strings.IndexFunc(index, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+				continue
+			}
+			// Never expose private socket paths in the dashboard. Unknown
+			// endpoints remain explicitly unattributed, not assigned to Host.
+			split.Backend = name
+			split.NodeID = owners[endpoint]
+		}
+	}
 }
 
 func (m *Manager) InferenceTopology() *inferenceTopology {
@@ -239,6 +290,9 @@ func (m *Manager) InferenceActivity() inferenceActivity {
 	out := inferenceActivity{InFlight: len(m.generations), Phase: "idle", SamplingMS: activitySampling.Milliseconds(), Nodes: []activityNode{}, Notice: "Estimativa por amostragem de tráfego RPC; segmentos por token podem ser mais curtos que a amostragem. Host inferido quando não há delta remoto válido."}
 	if m.engine != nil {
 		out.NativeTokens = m.engine.NativeActivity()
+		if m.loadedTopology != nil {
+			attributeNativeTokens(out.NativeTokens, m.loadedTopology.rpcOwners)
+		}
 	}
 	if out.InFlight == 0 || m.loadedTopology == nil {
 		m.activityWindow = nil
