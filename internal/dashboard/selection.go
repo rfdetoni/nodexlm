@@ -37,11 +37,24 @@ func placementBenchmarks(samples []InferenceSample, fingerprint string, now time
 	return valid
 }
 
+type placementMeasurements struct {
+	samples     []InferenceSample
+	fingerprint string
+	now         time.Time
+}
+
+func (m *Manager) placementMeasurements(s Settings) placementMeasurements {
+	return placementMeasurements{samples: m.InferenceSamples(), fingerprint: m.benchmarkSignature(s, s.Model), now: time.Now()}
+}
+
 // chooseRPC is used both for preview and actual native model loading.
-func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest) (result clusterplan.Selection, resultErr error) {
-	allSamples := m.InferenceSamples()
-	fingerprint := m.benchmarkSignature(s, s.Model)
-	samples := placementBenchmarks(allSamples, fingerprint, time.Now())
+func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest) (clusterplan.Selection, error) {
+	return m.chooseRPCWithMeasurements(s, meta, size, hostBudget, guests, m.placementMeasurements(s))
+}
+
+func (m *Manager) chooseRPCWithMeasurements(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest, measurements placementMeasurements) (result clusterplan.Selection, resultErr error) {
+	allSamples, fingerprint := measurements.samples, measurements.fingerprint
+	samples := placementBenchmarks(allSamples, fingerprint, measurements.now)
 	// A suspect aggregate cluster rate is not a per-node placement rate.
 	for _, sample := range allSamples {
 		if !sample.Suspect || sample.Fingerprint != fingerprint || sample.Kind != "benchmark" {

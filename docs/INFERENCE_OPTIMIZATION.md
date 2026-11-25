@@ -145,3 +145,5 @@ Para a coleta física, mantenha o mesmo GGUF (confira `sha256sum`), configuraç�
 A revisão final rejeita bases de taxa mistas na ausência de benchmark do Host, exige fingerprint da carga e topologia compatíveis para o alerta de divergência, não ignora um link lento medido quando outro ainda não tem amostra e contabiliza os pesos não-blk na prévia do Host. O coletor interrompe sessões com topologia alterada entre rodadas.
 
 No autotune de cluster, o placement nativo do baseline fica fixado (Guests, camadas locais, devices e tensor-split). O relatório informa `placement_fixed`; candidatos revalidam os budgets atuais e a estimativa de memória de cada dispositivo, sem recalcular o split por fingerprint. Topologia desconhecida/legacy continua funcionando na inferência normal, mas não produz recomendação de autotune de cluster sem um baseline explícito.
+
+A sugestão de KV q8_0 usa o mesmo snapshot de benchmarks/fingerprint da seleção original exclusivamente na comparação de memória; não assume que os tokens/s se repetem após quantizar o KV e não aplica a configuração.

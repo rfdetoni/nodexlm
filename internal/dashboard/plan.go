@@ -87,7 +87,8 @@ func (m *Manager) Plan() (map[string]any, error) {
 		if provider != nil {
 			guests = provider()
 		}
-		selection, selectErr := m.chooseRPC(settings, meta, uint64(size), host, guests)
+		measurements := m.placementMeasurements(settings)
+		selection, selectErr := m.chooseRPCWithMeasurements(settings, meta, uint64(size), host, guests, measurements)
 		if selectErr != nil {
 			return nil, selectErr
 		}
@@ -97,7 +98,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 			hostWeight = meta.NonBlockBytes + blockWeight(meta, 0, localLayers)
 		}
 		devices := planRPCDevices(selection, guests, meta, settings, uint64(size))
-		suggestions = append(suggestions, m.kvPlacementSuggestion(settings, meta, uint64(size), host, guests, selection, devices)...)
+		suggestions = append(suggestions, m.kvPlacementSuggestion(settings, meta, uint64(size), host, guests, selection, devices, measurements)...)
 		excluded = selection.Excluded
 		selectionReason = selection.Reason
 		var total uint64
@@ -194,12 +195,14 @@ func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 	return &sample
 }
 
-func (m *Manager) kvPlacementSuggestion(s Settings, meta local.GGUFInfo, size, host uint64, guests []RPCGuest, original clusterplan.Selection, devices RPCDevicePlacement) []planSuggestion {
+func (m *Manager) kvPlacementSuggestion(s Settings, meta local.GGUFInfo, size, host uint64, guests []RPCGuest, original clusterplan.Selection, devices RPCDevicePlacement, measurements placementMeasurements) []planSuggestion {
 	if (s.KVCacheType != "" && s.KVCacheType != "f16") || estimateKVBytes(meta, s) == nil {
 		return nil
 	}
 	s.KVCacheType = "q8_0"
-	alternative, err := m.chooseRPC(s, meta, size, host, guests)
+	// Retain the original controlled rates only for this memory what-if.
+	// Do not persist them or treat them as measured q8_0 throughput.
+	alternative, err := m.chooseRPCWithMeasurements(s, meta, size, host, guests, measurements)
 	if err != nil {
 		return nil
 	}
@@ -213,5 +216,5 @@ func (m *Manager) kvPlacementSuggestion(s Settings, meta local.GGUFInfo, size, h
 	if !improved {
 		return nil
 	}
-	return []planSuggestion{{Kind: "kv_q8_0", Reason: "Estimativa de admissão com KV q8_0 permite reduzir Guests ou usar somente GPU. Teste Flash Attention compatível e qualidade antes de aplicar."}}
+	return []planSuggestion{{Kind: "kv_q8_0", Reason: "Estimativa de admissão com KV q8_0 (mesmas medições de placement) permite reduzir Guests ou usar somente GPU. Teste Flash Attention compatível e qualidade antes de aplicar."}}
 }
