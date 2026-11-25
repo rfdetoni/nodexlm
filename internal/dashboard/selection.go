@@ -164,9 +164,9 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		return selection, err
 	}
 	if err = validatePlacementMemory(meta, s, size, hostBudget, selection.Guests); err == nil {
-		if err = applyLayerBytes(meta, hostBudget, &selection); err != nil {
-			return clusterplan.Selection{}, err
-		}
+		err = applyLayerBytes(meta, s, size, hostBudget, guests, &selection)
+	}
+	if err == nil {
 		selection.Excluded = append(selection.Excluded, unavailable...)
 		if len(unavailable) > 0 {
 			selection.Reason += "; excluded Guests with no allocatable RAM"
@@ -185,17 +185,38 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 	if contextErr := validatePlacementMemory(meta, s, size, hostBudget, full.Guests); contextErr != nil {
 		return clusterplan.Selection{}, contextErr
 	}
-	if err := applyLayerBytes(meta, hostBudget, &full); err != nil {
+	if err := applyLayerBytes(meta, s, size, hostBudget, guests, &full); err != nil {
 		return clusterplan.Selection{}, err
 	}
-	full.Reason = "Context/batch memory requires additional RPC Guests; speed subset rejected"
+	full.Reason += "; memory admission requires additional RPC Guests; speed subset rejected"
 	full.Excluded = append(full.Excluded, unavailable...)
 	return full, nil
 }
 
-func applyLayerBytes(meta local.GGUFInfo, host uint64, selection *clusterplan.Selection) error {
-	if os.Getenv("NODEXLM_GGUF_LAYER_BYTES") != "1" || len(meta.BlockBytes) != int(meta.BlockCount) || len(selection.Guests) == 0 {
+func applyLayerBytes(meta local.GGUFInfo, s Settings, size, host uint64, available []RPCGuest, selection *clusterplan.Selection) error {
+	if os.Getenv("NODEXLM_GGUF_LAYER_BYTES") != "1" || len(meta.BlockBytes) < 2 || len(meta.BlockBytes) != int(meta.BlockCount) || len(selection.Guests) == 0 {
 		return nil
+	}
+	uniform := true
+	for _, weight := range meta.BlockBytes[1:] {
+		if weight != meta.BlockBytes[0] {
+			uniform = false
+			break
+		}
+	}
+	if uniform {
+		return nil
+	}
+	// Without explicit native device ordering, the exact layer split cannot
+	// be expressed safely. Keep the historical legacy placement.
+	byID := make(map[string]RPCGuest, len(available))
+	for _, guest := range available {
+		byID[guest.ID] = guest
+	}
+	for _, chosen := range selection.Guests {
+		if !validRPCDeviceKinds(byID[chosen.ID]) {
+			return nil
+		}
 	}
 	budgets := make([]uint64, len(selection.Guests))
 	for i, guest := range selection.Guests {
@@ -205,8 +226,13 @@ func applyLayerBytes(meta local.GGUFInfo, host uint64, selection *clusterplan.Se
 	if !ok {
 		return errors.New("estimated contiguous GGUF layers do not fit selected node budgets")
 	}
-	selection.LocalLayers = allocation[0]
-	selection.GuestLayers = allocation[1:]
+	candidate := *selection
+	candidate.LocalLayers = allocation[0]
+	candidate.GuestLayers = allocation[1:]
+	if plan := planRPCDevices(candidate, available, meta, s, size); len(plan.Devices) == 0 {
+		return errors.New("estimated GGUF layer split exceeds native device budgets")
+	}
+	*selection = candidate
 	selection.Reason += "; estimated actual GGUF tensor bytes"
 	return nil
 }
