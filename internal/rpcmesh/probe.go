@@ -196,27 +196,40 @@ func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasu
 	binary.LittleEndian.PutUint64(tensor[220:], base)
 	copy(tensor[228:292], "nodexlm-rpc-probe")
 
-	pattern := make([]byte, tensorBytes)
+	// Keep Host-side working memory independent of the native tensor size.
+	pattern := make([]byte, min(tensorBytes, uint32(rpcProbeTensorBytes)))
 	for i := range pattern {
 		pattern[i] = byte(i*97 + 11)
 	}
 	// SET_TENSOR (6) carries rpc_tensor, cache_flag, offset, and raw payload.
-	upload := make([]byte, 0, len(tensor)+9+len(pattern))
+	upload := make([]byte, 0, len(tensor)+9)
 	upload = append(upload, tensor...)
-	upload = append(upload, 0)                  // no disk cache or hashing
-	upload = append(upload, make([]byte, 8)...) // offset 0
-	upload = append(upload, pattern...)
+	upload = append(upload, make([]byte, 9)...) // no cache, offset 0
+	var header [9]byte
+	header[0] = 6
+	binary.LittleEndian.PutUint64(header[1:], uint64(len(upload))+uint64(tensorBytes))
 	started := time.Now()
-	if err := rpcProbeSend(conn, 6, upload); err != nil {
-		return TensorMeasurement{}, fmt.Errorf("SET_TENSOR: %w", err)
+	if err := writeRPCProbe(conn, header[:]); err != nil {
+		return TensorMeasurement{}, fmt.Errorf("SET_TENSOR header: %w", err)
 	}
-	// SET_TENSOR has no reply. A subsequent ordered RPC is a completion fence.
-	if _, err := rpcProbeRoundtrip(conn, 3, pointer[:], 8); err != nil {
-		return TensorMeasurement{}, fmt.Errorf("SET_TENSOR fence: %w", err)
+	if err := writeRPCProbe(conn, upload); err != nil {
+		return TensorMeasurement{}, fmt.Errorf("SET_TENSOR descriptor: %w", err)
+	}
+	for left := tensorBytes; left > 0; {
+		chunk := min(left, uint32(len(pattern)))
+		if err := writeRPCProbe(conn, pattern[:chunk]); err != nil {
+			return TensorMeasurement{}, fmt.Errorf("SET_TENSOR: %w", err)
+		}
+		left -= chunk
+	}
+	// SET_TENSOR has no reply. An ordered RPC fences timed uploads.
+	// The legacy small preflight needs only the GET_TENSOR readback.
+	if tensorBytes > rpcProbeTensorBytes {
+		if _, err := rpcProbeRoundtrip(conn, 3, pointer[:], 8); err != nil {
+			return TensorMeasurement{}, fmt.Errorf("SET_TENSOR fence: %w", err)
+		}
 	}
 	uploadTime := time.Since(started)
-	// GET_TENSOR (8) forces native synchronization and proves bytes reached
-	// the allocated GGML backend buffer, rather than only the TLS tunnel.
 	read := make([]byte, 0, len(tensor)+16)
 	read = append(read, tensor...)
 	read = append(read, make([]byte, 8)...) // offset 0
@@ -224,12 +237,29 @@ func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasu
 	binary.LittleEndian.PutUint64(count[:], uint64(tensorBytes))
 	read = append(read, count[:]...)
 	started = time.Now()
-	actual, err := rpcProbeRoundtrip(conn, 8, read, uint64(tensorBytes))
-	readTime := time.Since(started)
-	if err != nil {
+	if err := rpcProbeSend(conn, 8, read); err != nil {
 		return TensorMeasurement{}, fmt.Errorf("GET_TENSOR: %w", err)
 	}
-	if !bytes.Equal(pattern, actual) {
+	if _, err := io.ReadFull(conn, count[:]); err != nil {
+		return TensorMeasurement{}, fmt.Errorf("GET_TENSOR header: %w", err)
+	}
+	if n := binary.LittleEndian.Uint64(count[:]); n != uint64(tensorBytes) {
+		return TensorMeasurement{}, fmt.Errorf("GET_TENSOR returned %d bytes, expected %d", n, tensorBytes)
+	}
+	actual := make([]byte, len(pattern))
+	corrupted := false
+	for left := tensorBytes; left > 0; {
+		chunk := min(left, uint32(len(actual)))
+		if _, err := io.ReadFull(conn, actual[:chunk]); err != nil {
+			return TensorMeasurement{}, fmt.Errorf("GET_TENSOR readback: %w", err)
+		}
+		if !bytes.Equal(pattern[:chunk], actual[:chunk]) {
+			corrupted = true
+		}
+		left -= chunk
+	}
+	readTime := time.Since(started)
+	if corrupted {
 		return TensorMeasurement{}, errors.New("GET_TENSOR readback mismatch: native RPC tensor data was corrupted")
 	}
 	result := TensorMeasurement{Device: device, Bytes: tensorBytes}
