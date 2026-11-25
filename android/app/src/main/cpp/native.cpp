@@ -14,6 +14,7 @@
 #include <exception>
 #include <sstream>
 #include <fstream>
+#include <dlfcn.h>
 #include <sched.h>
 #include <android/log.h>
 #include "llama.h"
@@ -24,12 +25,87 @@ namespace {
 std::mutex guard;
 std::atomic<bool> cancelled{false};
 std::once_flag initialized;
+std::mutex backendLoadMutex;
+bool backendsLoaded = false;
+std::string backendLibDir;
 std::atomic<bool> rpcStarted{false};
 std::mutex rpcThreadMutex;
 std::condition_variable rpcFinished;
 std::thread rpcThread;
 // 1 = Vulkan, 2 = CPU. Selected for this RPC server, not measured speed.
 std::atomic<int> activeRPCBackends{0};
+
+bool isGpu(ggml_backend_dev_t d) {
+    const auto type = ggml_backend_dev_type(d);
+    return type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU;
+}
+
+void loadBackendsOnce() {
+    std::lock_guard<std::mutex> lock(backendLoadMutex);
+    if (backendsLoaded) return;
+    backendsLoaded = true;
+    if (!backendLibDir.empty()) {
+        ggml_backend_load_all_from_path(backendLibDir.c_str());
+    } else {
+        ggml_backend_load_all();
+    }
+    // With extractNativeLibs=false (useLegacyPackaging=false), .so libraries live
+    // directly inside base.apk!/lib/<abi>/ rather than files in nativeLibraryDir,
+    // so directory enumeration finds nothing. Probe bare library names via Android's
+    // classloader linker namespace and select the highest-scoring ARM64 CPU variant.
+    if (!ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU)) {
+        static constexpr const char* kArm64CpuVariants[] = {
+            "libggml-cpu-android_armv9.2_2.so",
+            "libggml-cpu-android_armv9.2_1.so",
+            "libggml-cpu-android_armv9.0_1.so",
+            "libggml-cpu-android_armv8.6_1.so",
+            "libggml-cpu-android_armv8.2_2.so",
+            "libggml-cpu-android_armv8.2_1.so",
+            "libggml-cpu-android_armv8.0_1.so",
+        };
+        using ScoreFn = int (*)();
+        int bestScore = 0;
+        const char* bestVariant = nullptr;
+        for (const char* name : kArm64CpuVariants) {
+            void* handle = dlopen(name, RTLD_NOW | RTLD_LOCAL);
+            if (!handle) continue;
+            auto scoreFn = reinterpret_cast<ScoreFn>(dlsym(handle, "ggml_backend_score"));
+            const int score = scoreFn ? scoreFn() : 0;
+            dlclose(handle);
+            if (score > bestScore) {
+                bestScore = score;
+                bestVariant = name;
+            }
+        }
+        if (bestVariant) {
+            if (ggml_backend_load(bestVariant)) {
+                __android_log_print(ANDROID_LOG_INFO, "NodexLM-RPC",
+                    "Loaded dynamic CPU backend %s (score=%d)", bestVariant, bestScore);
+            }
+        }
+    }
+    bool hasGpu = false;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        if (isGpu(ggml_backend_dev_get(i))) {
+            hasGpu = true;
+            break;
+        }
+    }
+    if (!hasGpu) {
+        if (ggml_backend_load("libggml-vulkan.so")) {
+            __android_log_print(ANDROID_LOG_INFO, "NodexLM-RPC", "Loaded dynamic Vulkan backend");
+        }
+    }
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        auto dev = ggml_backend_dev_get(i);
+        if (dev) {
+            __android_log_print(ANDROID_LOG_INFO, "NodexLM-RPC",
+                "Registered GGML backend device[%zu]: %s (%s)",
+                i, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
+        }
+    }
+}
+
 jbyteArray bytes(JNIEnv* env,const std::string& value) {
     auto result=env->NewByteArray((jsize)value.size());
     if (result) env->SetByteArrayRegion(result,0,(jsize)value.size(),(const jbyte*)value.data());
@@ -63,23 +139,50 @@ void release() {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_nodexlm_app_NativeEntry_load(JNIEnv* env,jobject,jstring path,jint contextTokens,jint threads) {
+Java_dev_nodexlm_app_NativeEntry_load(JNIEnv* env,jobject,jstring path,jint contextTokens,jint threads,jboolean useGpu) {
     std::lock_guard<std::mutex> lock(guard);
     const std::string file=utf(env,path);
     if(file.empty()) return env->NewStringUTF("model path required");
     release();
     cancelled.store(false);
+    loadBackendsOnce();
     std::call_once(initialized, [] { llama_backend_init(); });
     auto params=llama_model_default_params();
-    params.n_gpu_layers=0; // Android CPU path first; Vulkan backend is a separate opt-in.
+    params.n_gpu_layers=0; // CPU path first; Vulkan GPU is opt-in when faster on the device.
+    if (useGpu == JNI_TRUE) {
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            auto dev = ggml_backend_dev_get(i);
+            if (!dev || !isGpu(dev)) continue;
+            ggml_backend_t probe = nullptr;
+            try {
+                probe = ggml_backend_dev_init(dev, nullptr);
+            } catch (...) {
+                probe = nullptr;
+            }
+            if (probe) {
+                ggml_backend_free(probe);
+                size_t freeBytes = 0, totalBytes = 0;
+                ggml_backend_dev_memory(dev, &freeBytes, &totalBytes);
+                constexpr size_t minVulkanFree = 512ULL * 1024 * 1024;
+                if (totalBytes > 0 && freeBytes >= minVulkanFree) {
+                    params.n_gpu_layers = 999;
+                }
+                break;
+            }
+        }
+    }
     params.load_mode=LLAMA_LOAD_MODE_MMAP;
     model=llama_model_load_from_file(file.c_str(),params);
     if(!model)return env->NewStringUTF("GGUF load failed (memory, format, or path)");
     auto opts=llama_context_default_params();
     opts.n_ctx=std::clamp<int>(contextTokens,512,4096);
     opts.n_batch=std::min<uint32_t>(512,opts.n_ctx);
+    opts.n_ubatch=opts.n_batch;
     opts.n_threads=std::clamp<int>(threads,1,8);
     opts.n_threads_batch=opts.n_threads;
+    opts.flash_attn_type=LLAMA_FLASH_ATTN_TYPE_AUTO;
+    opts.type_k=GGML_TYPE_Q8_0;
+    opts.type_v=GGML_TYPE_Q8_0;
     ctx=llama_init_from_model(model,opts);
     if(!ctx){release();return env->NewStringUTF("Failed to allocate inference context");}
     vocab=llama_model_get_vocab(model);
@@ -128,8 +231,8 @@ Java_dev_nodexlm_app_NativeEntry_generate(JNIEnv* env,jobject,jobjectArray javaR
     tokens.resize(n);
     llama_memory_clear(llama_get_memory(ctx),false);
     // Decode prompt in bounded batches; batch_get_one only valid while tokens live.
-    for (int i=0;i<n;i+=256) {
-        int count=std::min(256,n-i);
+    for (int i=0;i<n;i+=512) {
+        int count=std::min(512,n-i);
         auto batch=llama_batch_get_one(tokens.data()+i,count);
         if(llama_decode(ctx,batch)!=0)return bytes(env,"NODEXLM_ERROR: prompt decode failed");
     }
@@ -177,10 +280,6 @@ Java_dev_nodexlm_app_NativeEntry_cancel(JNIEnv*,jobject) {
 // after the driver/ICD initialized successfully; CPU remains available when
 // a phone lacks a suitable Vulkan implementation.
 namespace {
-static bool isGpu(ggml_backend_dev_t d) {
-    const auto type = ggml_backend_dev_type(d);
-    return type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU;
-}
 static std::string jsonEscaped(const char* value) {
     std::string out;
     for(const unsigned char c : std::string(value ? value : "")) {
@@ -192,11 +291,23 @@ static std::string jsonEscaped(const char* value) {
 }
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_dev_nodexlm_app_NativeRpc_initBackends(JNIEnv *env, jobject, jstring libDirValue) {
+    const std::string dir = utf(env, libDirValue);
+    {
+        std::lock_guard<std::mutex> lock(backendLoadMutex);
+        if (!dir.empty() && backendLibDir.empty()) {
+            backendLibDir = dir;
+        }
+    }
+    loadBackendsOnce();
+}
+
 // The report is informational. Android integrated GPU memory can be shared
 // with system RAM; the Host's memory planner uses a max rather than a sum.
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_nodexlm_app_NativeRpc_inspect(JNIEnv *env, jobject) {
-    ggml_backend_load_all();
+    loadBackendsOnce();
     std::ostringstream s;
     s << "{\"gpus\":[";
     bool first = true;
@@ -259,7 +370,7 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
     if(rpcStarted.exchange(true)) return env->NewStringUTF("");
     if(rpcThread.joinable()) rpcThread.join();
     ggml_backend_rpc_android_reset_stop();
-    ggml_backend_load_all();
+    loadBackendsOnce();
     ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
     ggml_backend_dev_t gpu = nullptr;
     if (mode != "cpu") {

@@ -3,27 +3,29 @@ project(nodexlm LANGUAGES C CXX)
 
 # Explicitly pinned independent inference library. No code from PrivateLM.
 include(FetchContent)
+set(NODEXLM_JNI_OUTPUT_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
-# This is the same verified llama.cpp revision used by the Host RPC runtime.
-# The GGML RPC service runs in its own Android process and listens on loopback.
-set(GGML_RPC ON CACHE BOOL "" FORCE)
 set(GGML_RPC_RDMA OFF CACHE BOOL "" FORCE)
-set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
-# Retain the ARMv8 baseline; KleidiAI selects supported quantized kernels at
-# runtime using native CPU features. Never raise -march for the whole APK.
-option(NODEXLM_KLEIDIAI "Build experimental ARM64 KleidiAI kernels" OFF)
-if(ANDROID_ABI STREQUAL "arm64-v8a" AND NODEXLM_KLEIDIAI)
-    set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
-else()
-    set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
-endif()
-# ARM64 can expose CPU and Vulkan (integrated) GPU to the same RPC endpoint.
-# ARM32 remains CPU-only for compatibility with older Android 10 phones.
+# Retain the ARMv8 baseline; on ARM64, GGML_CPU_ALL_VARIANTS + KleidiAI compile
+# runtime-dispatched dotprod/fp16/i8mm/sve2 kernels without raising the APK baseline.
+option(NODEXLM_KLEIDIAI "Build ARM64 KleidiAI kernels" ON)
 if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
+    set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
+    # Compile ggml-rpc directly into libnodexlm.so so GGML_BACKEND_DL does not
+    # emit ggml-rpc as an un-linkable MODULE library on ARM64.
+    set(GGML_RPC OFF CACHE BOOL "" FORCE)
+    if(NODEXLM_KLEIDIAI)
+        set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
+    else()
+        set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+    endif()
     set(GGML_VULKAN ON CACHE BOOL "" FORCE)
     # The Vulkan shaders use SPIR-V headers from the BUILD host. Android NDK
     # CMake cross-compiling hides host CMake package configs under its sysroot.
@@ -69,15 +71,17 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     set("SPIRV-Headers_DIR" "${NODEXLM_SPIRV_PACKAGE}" CACHE PATH
         "Android-compatible host SPIR-V headers package" FORCE)
 else()
+    # ARMv7 remains statically linked CPU-only for older Android 10 devices.
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+    set(GGML_CPU_ALL_VARIANTS OFF CACHE BOOL "" FORCE)
+    set(GGML_RPC ON CACHE BOOL "" FORCE)
     set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
-endif()
-# ARMv7 cannot execute AArch64-only optimized kernels.
-if(ANDROID_ABI STREQUAL "armeabi-v7a")
     set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
     # Baseline 32-bit ARM lacks the llamafile FP16 Neon intrinsics.
     set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 endif()
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/revision.json" NODEXLM_LLAMA_REVISION)
 string(JSON NODEXLM_LLAMA_COMMIT GET "${NODEXLM_LLAMA_REVISION}" commit)
 FetchContent_Declare(llamacpp
@@ -87,12 +91,57 @@ FetchContent_Declare(llamacpp
     PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/unix-rpc.patch -DEXTRA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/../../../../../internal/llamaruntime/patches/arm32-rpc-wire.patch -DANDROID_SHUTDOWN_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/android-rpc-shutdown.patch -DKLEIDIAI_SHA_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/kleidiai-sha256.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../scripts/apply-rpc-patch.cmake
 )
 FetchContent_MakeAvailable(llamacpp)
+
+if(NODEXLM_JNI_OUTPUT_DIR)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${NODEXLM_JNI_OUTPUT_DIR}")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${NODEXLM_JNI_OUTPUT_DIR}")
+endif()
+
 if(ANDROID_ABI STREQUAL "arm64-v8a" AND TARGET ggml-vulkan)
     target_include_directories(ggml-vulkan BEFORE PRIVATE
         "${NODEXLM_VULKAN_STAGING}" "${NODEXLM_SPIRV_STAGING}")
 endif()
-add_library(nodexlm SHARED native.cpp)
-target_link_libraries(nodexlm PRIVATE llama ggml ggml-rpc log android)
-target_include_directories(nodexlm PRIVATE ${llamacpp_SOURCE_DIR}/ggml/include)
-target_include_directories(nodexlm PRIVATE ${llamacpp_SOURCE_DIR}/include)
+
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    if(NODEXLM_JNI_OUTPUT_DIR)
+        foreach(_nodex_target IN ITEMS
+            ggml-base
+            ggml
+            llama
+            ggml-vulkan
+            ggml-cpu-android_armv8.0_1
+            ggml-cpu-android_armv8.2_1
+            ggml-cpu-android_armv8.2_2
+            ggml-cpu-android_armv8.6_1
+            ggml-cpu-android_armv9.0_1
+            ggml-cpu-android_armv9.2_1
+            ggml-cpu-android_armv9.2_2
+        )
+            if(TARGET ${_nodex_target})
+                set_target_properties(${_nodex_target} PROPERTIES
+                    LIBRARY_OUTPUT_DIRECTORY "${NODEXLM_JNI_OUTPUT_DIR}"
+                    RUNTIME_OUTPUT_DIRECTORY "${NODEXLM_JNI_OUTPUT_DIR}")
+            endif()
+        endforeach()
+    endif()
+    add_library(nodexlm SHARED
+        native.cpp
+        ${llamacpp_SOURCE_DIR}/ggml/src/ggml-rpc/ggml-rpc.cpp
+        ${llamacpp_SOURCE_DIR}/ggml/src/ggml-rpc/log.cpp
+        ${llamacpp_SOURCE_DIR}/ggml/src/ggml-rpc/transport.cpp
+    )
+    target_link_libraries(nodexlm PRIVATE llama ggml ggml-base log android dl)
+    target_include_directories(nodexlm PRIVATE
+        ${llamacpp_SOURCE_DIR}/ggml/include
+        ${llamacpp_SOURCE_DIR}/ggml/src
+        ${llamacpp_SOURCE_DIR}/include
+    )
+else()
+    add_library(nodexlm SHARED native.cpp)
+    target_link_libraries(nodexlm PRIVATE llama ggml ggml-rpc log android)
+    target_include_directories(nodexlm PRIVATE
+        ${llamacpp_SOURCE_DIR}/ggml/include
+        ${llamacpp_SOURCE_DIR}/include
+    )
+endif()
 set_target_properties(nodexlm PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)

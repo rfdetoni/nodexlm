@@ -151,6 +151,7 @@ class RpcGuestService : Service() {
                 val socketFile=File(filesDir,"rpc.sock")
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
                 rpcSocket=socketFile.absolutePath
+                NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
                 val message = NativeRpc.start(threads, mode, rpcSocket)
                 check(message.isEmpty()) { message }
                 nativeStarted = true
@@ -634,6 +635,10 @@ class RpcGuestService : Service() {
             localSockets.add(local)
             try {
                 local.connect(android.net.LocalSocketAddress(rpcSocket,android.net.LocalSocketAddress.Namespace.FILESYSTEM))
+                runCatching {
+                    local.sendBufferSize = 256 * 1024
+                    local.receiveBufferSize = 256 * 1024
+                }
                 RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.HOST_NATIVE_CONNECTED, slot.toLong())
                 Log.i(LOG, "RPC tunnel $slot connected to native GGML RPC server")
                 val toNative = AtomicLong(0)
@@ -657,7 +662,7 @@ class RpcGuestService : Service() {
                         try {
                             val input = local.getInputStream()
                             val output = remote.outputStream
-                            val buffer = ByteArray(32 * 1024)
+                            val buffer = ByteArray(128 * 1024)
                             while (running.get()) {
                                 val n = input.read(buffer)
                                 if (n < 0) break
@@ -677,7 +682,7 @@ class RpcGuestService : Service() {
                     try {
                         val input = remote.inputStream
                         val output = local.getOutputStream()
-                        val buffer = ByteArray(32 * 1024)
+                        val buffer = ByteArray(128 * 1024)
                         while (running.get()) {
                             val n = input.read(buffer)
                             if (n < 0) break

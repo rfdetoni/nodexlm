@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 val rustRpcEnabled = providers.gradleProperty("nodexRustRpc").map { it == "true" }.orElse(false).get()
-val kleidiAiEnabled = providers.gradleProperty("nodexKleidiAi").map { it == "true" }.orElse(false).get()
+val kleidiAiEnabled = providers.gradleProperty("nodexKleidiAi").map { it == "true" }.orElse(true).get()
 val rustRpcOutput = layout.buildDirectory.dir("generated/rustRpc/jniLibs")
 val llamaRevision = groovy.json.JsonSlurper().parse(file("../../internal/llamaruntime/revision.json")) as Map<*, *>
 val signingCertSha256 = file("../signing-certificate.sha256").readText().trim().lowercase().also {

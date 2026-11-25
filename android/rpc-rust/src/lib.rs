@@ -33,7 +33,7 @@ mod affinity;
 
 const MAX_SLOTS: usize = 8;
 const STANDBY: usize = 2;
-const BUF: usize = 32 * 1024;
+const BUF: usize = 128 * 1024;
 
 #[derive(Debug)]
 struct ExactPin {
@@ -197,7 +197,7 @@ async fn benchmark<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> Result<(), R
 }
 
 // A single-thread executor can reuse a small bounded pool without mutexes.
-// Only retain two buffers (64 KiB total); larger concurrent claims allocate
+// Only retain two buffers (256 KiB total); larger concurrent claims allocate
 // independently and release excess immediately. No tensor data is logged.
 thread_local! {
     static RELAY_POOL: std::cell::RefCell<Vec<Vec<u8>>> = const {

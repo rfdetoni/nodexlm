@@ -186,7 +186,13 @@ class ComputeService : Service() {
                             EmbeddedDecisionRuntime.close()
                             nativeTouched.set(true)
                             check(running.get()) { "Worker stopped" }
-                            val init=NativeEntry.load(model!!.absolutePath,2048,maxOf(1,Runtime.getRuntime().availableProcessors()-2))
+                            NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
+                            val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+                            val requestedThreads = prefs.getInt("rpc_threads", 0)
+                            val threads = if (requestedThreads == 0) NativeRpc.recommendedThreads(cores)
+                                          else requestedThreads.coerceIn(1, minOf(8, cores))
+                            val useGpu = prefs.getString("rpc_mode", "auto") == "gpu"
+                            val init=NativeEntry.load(model!!.absolutePath,2048,threads,useGpu)
                             if(init.isNotEmpty())throw IllegalStateException(init)
                             loaded=true
                             RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_MODEL_LOADED)
