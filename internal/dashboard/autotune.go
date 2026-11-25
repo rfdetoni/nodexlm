@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/hardware"
@@ -27,7 +28,7 @@ type TuneReport struct {
 	Recommended *Settings       `json:"recommended,omitempty"`
 }
 
-func tuneCandidates(s Settings, physical int) []TuneCandidate {
+func tuneCandidates(s Settings, physical int, slowRPC bool) []TuneCandidate {
 	physical = min(256, max(1, physical))
 	rows := []TuneCandidate{{Name: "baseline", Settings: s}}
 	add := func(name string, candidate Settings) {
@@ -51,12 +52,34 @@ func tuneCandidates(s Settings, physical int) []TuneCandidate {
 	}
 	// N-gram is measured against the same workload without downloading or
 	// guessing a compatible draft model. Recommendations never silently apply.
-	if s.SpeculativeMode == "" || s.SpeculativeMode == "off" {
+	if slowRPC {
+		for _, tokens := range []int{4, 8, 16} {
+			candidate := s
+			candidate.SpeculativeMode, candidate.DraftModel = "ngram", ""
+			candidate.SpeculativeTokens = tokens
+			candidate.BatchSize = max(s.BatchSize, s.UBatchSize)
+			add("ngram", candidate)
+		}
+	} else if s.SpeculativeMode == "" || s.SpeculativeMode == "off" {
 		candidate := s
 		candidate.SpeculativeMode = "ngram"
 		add("ngram", candidate)
 	}
 	return rows
+}
+
+// A controlled cluster benchmark records selected Guest IDs as a prefix of
+// BenchmarkTopology. Single-node benchmarks record only the Guest ID.
+func (m *Manager) slowBenchmarkRPC(topology string) bool {
+	for _, id := range strings.Split(topology, ":") {
+		if len(id) != 64 {
+			break
+		}
+		if network := m.networkSample(id); network != nil && network.RoundTripMS >= speculativeRTTThresholdMS {
+			return true
+		}
+	}
+	return false
 }
 
 // TuneInference owns the same model pool lock as load/benchmark and uses
@@ -89,10 +112,7 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 		return TuneReport{}, errors.New("invalid model for autotuning")
 	}
 	report := TuneReport{Fingerprint: fingerprint, MeasuredAt: time.Now()}
-	for _, row := range tuneCandidates(s, hardware.PhysicalCPUCount()) {
-		if ctx.Err() != nil {
-			return report, ctx.Err()
-		}
+	measure := func(row TuneCandidate) {
 		sample, err := m.measureInference(ctx, row.Settings, model, node, false, provider)
 		if err != nil {
 			row.Error = err.Error()
@@ -100,6 +120,18 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 			row.Sample = &sample
 		}
 		report.Candidates = append(report.Candidates, row)
+	}
+	if ctx.Err() != nil {
+		return report, ctx.Err()
+	}
+	measure(TuneCandidate{Name: "baseline", Settings: s})
+	first := report.Candidates[0].Sample
+	slowRPC := node != "" && first != nil && m.slowBenchmarkRPC(first.BenchmarkTopology)
+	for _, row := range tuneCandidates(s, hardware.PhysicalCPUCount(), slowRPC)[1:] {
+		if ctx.Err() != nil {
+			return report, ctx.Err()
+		}
+		measure(row)
 	}
 	// Prefer a real decode gain with no material prefill regression, not an
 	// invented aggregate score. Require matching measurement basis.

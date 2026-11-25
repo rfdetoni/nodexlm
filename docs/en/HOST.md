@@ -15,3 +15,5 @@ Administrative commands use loopback port 8787. Guests use TLS port 8443 and dis
 Use `--rpc-transport unix` only with patched native binaries on POSIX. Automatic mode selects private Unix relays for the patched bundle; Windows retains loopback TCP. Remote administration requires an SSH tunnel. See [operations](../OPERATIONS.md) and [security](../../SECURITY.md).
 
 Optional mixed-cluster planner experiment: set `NODEXLM_RPC_COST_PLACEMENT=1` on the Host to compare estimated serial decode costs in speed mode. It uses comparable fresh benchmarks and measured RTT, not predicted or measured cluster throughput. The default does not apply this RTT cost model. Capacity mode retains all Guests. Validate with physical A/B before claiming improvements.
+
+For remote layers with measured RTT of at least 5 ms, the plan may suggest n-gram speculation without applying it. Explicit autotuning measures draft windows of 4, 8 and 16 tokens on the same workload; comparable topology/basis and at least 25% draft acceptance are required. Pinned ngram-simple uses `--spec-ngram-simple-size-m`; compatibility with RPC is checked by the real E2E, not assumed.

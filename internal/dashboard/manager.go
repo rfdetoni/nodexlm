@@ -248,8 +248,8 @@ func (m *Manager) validate(s Settings) error {
 	if s.CacheReuseTokens < 0 || s.CacheReuseTokens > 4096 {
 		return errors.New("cache_reuse_tokens must be 0..4096")
 	}
-	if s.SpeculativeTokens < 0 || s.SpeculativeTokens > 32 || (s.SpeculativeTokens > 0 && s.SpeculativeMode != "draft") {
-		return errors.New("speculative_tokens must be 0..32 and requires draft mode")
+	if s.SpeculativeTokens < 0 || s.SpeculativeTokens > 32 || (s.SpeculativeTokens > 0 && s.SpeculativeMode != "draft" && s.SpeculativeMode != "ngram") {
+		return errors.New("speculative_tokens must be 0..32 and requires draft or ngram mode")
 	}
 	if s.FlashAttention != "" && s.FlashAttention != "auto" && s.FlashAttention != "on" && s.FlashAttention != "off" {
 		return errors.New("flash_attention must be auto, on or off")

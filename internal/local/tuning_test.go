@@ -8,7 +8,7 @@ import (
 func TestNativeTuningFlagsOptIn(t *testing.T) {
 	basic := &Managed{ModelPath: "example.gguf", Alias: "example"}
 	baseline := strings.Join(basic.args(8787, 2048, 4, "auto", 24), " ")
-	for _, option := range []string{"--flash-attn", "--cache-type-k", "--batch-size", "--ubatch-size", "--spec-type", "--moe-cache-cpu-share", "--cache-reuse", "--spec-draft-n-max"} {
+	for _, option := range []string{"--flash-attn", "--cache-type-k", "--batch-size", "--ubatch-size", "--spec-type", "--moe-cache-cpu-share", "--cache-reuse", "--spec-draft-n-max", "--spec-ngram-simple-size-m"} {
 		if strings.Contains(baseline, option) {
 			t.Fatalf("unexpected default native option %s", option)
 		}
@@ -19,6 +19,13 @@ func TestNativeTuningFlagsOptIn(t *testing.T) {
 		if !strings.Contains(got, option) {
 			t.Fatalf("missing native option %s: %s", option, got)
 		}
+	}
+
+	ngram := &Managed{ModelPath: "main.gguf", SpeculativeMode: "ngram", SpeculativeTokens: 8, RPCServers: []string{"127.0.0.1:50052"}}
+	ngramFlags := strings.Join(ngram.args(8787, 2048, 4, "auto", 24), " ")
+	if !strings.Contains(ngramFlags, "--spec-ngram-simple-size-m 8") || !strings.Contains(ngramFlags, "--rpc 127.0.0.1:50052") ||
+		strings.Contains(ngramFlags, "--spec-draft-n-max") {
+		t.Fatalf("wrong ngram/RPC flags: %s", ngramFlags)
 	}
 
 	modelDraft := &Managed{ModelPath: "main.gguf", Alias: "main", SpeculativeMode: "draft", DraftModelPath: "draft.gguf", SpeculativeTokens: 6}

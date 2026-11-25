@@ -2,6 +2,11 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Especulação orientada por RTT — WP2
+
+- Prévia sugere n-gram com RTT medido de pelo menos 5 ms em camadas remotas; autotune explícito testa janelas de 4, 8 e 16 tokens, com gates de aceitação e topologia preservados.
+- Adiciona E2E ngram-simple + RPC no runtime pinado; resultado físico ainda pendente.
+
 ## Planejamento de clusters mistos — WP1
 
 - O planner utiliza somente benchmarks controlados, recentes e de fingerprint e base de taxa compatíveis para ponderar Host e Guests.

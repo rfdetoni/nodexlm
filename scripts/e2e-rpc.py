@@ -165,6 +165,17 @@ def main():
             report=acceptance.collect(base,token,model.name,nodes[0]['id'],2,'ci')
             assert report['physical_acceptance']=='not-established' and len(report['measurements'])==2
             assert all(p['inference']['tokens_per_second']>0 for p in report['measurements'])
+            # Confirm pinned ngram-simple + RPC can actually load and generate.
+            # Failure is explicit: never silently retry without speculation.
+            ngram = {**settings, 'speculative_mode':'ngram','speculative_tokens':8}
+            api('/api/settings','PUT',ngram).close()
+            api('/api/load','POST',{}).close()
+            wait_for(loaded,120)
+            reply=json.load(api('/v1/chat/completions','POST',{'model':model.name,'messages':[{'role':'user','content':'Once upon a time, once upon a time'}],'max_tokens':16},key=env['NODEXLM_API_KEY']))
+            assert reply.get('choices') and reply.get('usage',{}).get('completion_tokens',0)>0,reply
+            api('/api/unload','POST',{}).close()
+            api('/api/settings','PUT',settings).close()
+            print('PASS: pinned ngram-simple + RPC load and generation (not a speed claim)')
             # An inference key must not access administrative resources.
             try:
                 api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])

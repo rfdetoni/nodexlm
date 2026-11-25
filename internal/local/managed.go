@@ -422,6 +422,9 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 
 	if m.SpeculativeMode == "ngram" {
 		args = append(args, "--spec-type", "ngram-simple")
+		if m.SpeculativeTokens > 0 {
+			args = append(args, "--spec-ngram-simple-size-m", strconv.Itoa(m.SpeculativeTokens))
+		}
 	} else if m.SpeculativeMode == "draft" && m.DraftModelPath != "" {
 		// Draft stays on Host CPU to avoid allocating another model on the
 		// active RPC Guest backends. GGML validates vocabulary compatibility.

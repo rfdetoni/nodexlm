@@ -12,6 +12,11 @@ func TestNativeTuningSettingsValidation(t *testing.T) {
 	if err := m.validate(valid); err != nil {
 		t.Fatalf("rejected valid tuning: %v", err)
 	}
+	ngram := base
+	ngram.SpeculativeMode, ngram.SpeculativeTokens = "ngram", 16
+	if err := m.validate(ngram); err != nil {
+		t.Fatalf("rejected valid ngram tuning: %v", err)
+	}
 	tests := []struct {
 		name string
 		edit func(*Settings)
@@ -23,6 +28,7 @@ func TestNativeTuningSettingsValidation(t *testing.T) {
 		{"KV reuse negative", func(s *Settings) { s.CacheReuseTokens = -1 }},
 		{"speculation without draft", func(s *Settings) { s.SpeculativeTokens = 3 }},
 		{"speculation oversized", func(s *Settings) { s.SpeculativeMode = "draft"; s.DraftModel = "draft.gguf"; s.SpeculativeTokens = 33 }},
+		{"ngram oversized", func(s *Settings) { s.SpeculativeMode = "ngram"; s.SpeculativeTokens = 33 }},
 		{"invalid host gpu", func(s *Settings) { s.HostGPU = "cuda" }},
 	}
 	for _, tt := range tests {

@@ -47,7 +47,7 @@ do llama-server:
 | Batch lógico | 0 (nativo), 1–8192 | Aumenta demanda de memória |
 | Microbatch | 0 (nativo), 1–4096 | Quando ambos definidos, microbatch não pode exceder batch |
 | Especulação | off, ngram, draft | `ngram` usa lookup de tokens; `draft` carrega um GGUF diferente na CPU do Host, com `--spec-type draft-simple` |
-| Tokens por draft | 0 (nativo), 1–32 | `--spec-draft-n-max`, somente com draft; janelas grandes podem aumentar latência e consumo |
+| Tokens por draft | 0 (nativo), 1–32 | `--spec-draft-n-max` para draft GGUF ou `--spec-ngram-simple-size-m` para n-gram; janelas grandes podem aumentar latência e consumo |
 | Reuso parcial de KV/prompt | 0 (desligado), 1–4096 | `--cache-reuse`, tenta reutilizar trechos em prompts similares; requer prompt caching |
 | Cache MoE calculado na CPU | 0–1 | `--moe-cache-cpu-share` define fração dos misses executada na CPU em vez de carregar expert por PCIe; exige `--moe-cache-mib` e MoE em RAM |
 
@@ -61,6 +61,21 @@ deve ser registrado separadamente para **prefill**, **decode**, latência do
 primeiro token e carregamento; os benchmarks atuais ainda não cobrem
 todos esses valores por nó. Um modelo pode não suportar as opções solicitadas;
 nesse caso a inicialização falhará explicitamente.
+
+## Sugestão de n-gram para links RPC
+
+A prévia oferece uma sugestão estruturada quando um Guest com camadas
+remotas tem RTT recente medido de pelo menos 5 ms. Nenhuma configuração é
+alterada. O autotuning explicitamente solicitado mede candidatos de 4, 8 e
+16 tokens usando o mesmo workload e exige mesma base, topologia e aceitação
+de pelo menos 25%. A ideia é verificar vários tokens draft em um forward,
+amortizando round-trips; o ganho depende da taxa real de aceitação.
+
+O flag n-gram correto na revisão fixada é
+`--spec-ngram-simple-size-m` (não `--spec-draft-n-max`, que pertence ao
+draft GGUF). O E2E `scripts/e2e-rpc.py` verifica carregamento e geração
+combinando n-gram e RPC; resultado ainda precisa ser observado no bundle
+b12255/r3. Se incompatível, o load falha explicitamente, sem fallback silencioso.
 
 ## Cache nativo de tensores RPC — opt-in
 
