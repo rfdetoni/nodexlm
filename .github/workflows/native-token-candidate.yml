@@ -1,0 +1,36 @@
+name: Native token activity candidate
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'experiments/native-token/**'
+      - '.github/workflows/native-token-candidate.yml'
+permissions:
+  contents: read
+concurrency:
+  group: native-token-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux-cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Compile only the pinned CPU native server
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin https://github.com/ggml-org/llama.cpp.git
+          git -C upstream fetch --depth=1 origin b1b770d90d94cad9e9ea5b993bdbc383a522fb28
+          git -C upstream checkout --detach FETCH_HEAD
+          git -C upstream apply --check "$GITHUB_WORKSPACE/experiments/native-token/activity.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/experiments/native-token/activity.patch"
+          cmake -S upstream -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_RPC=OFF -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_CURL=OFF
+          cmake --build build --parallel 3 --target llama-server
+      - name: Verify real native output and graph trace
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -o tiny.gguf
+          echo '270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d  tiny.gguf' | sha256sum -c -
+          python3 experiments/native-token/test-activity.py build/bin/llama-server tiny.gguf

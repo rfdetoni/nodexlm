@@ -1,0 +1,5 @@
+# Native token activity diagnostic candidate (P2)
+
+Pinned llama.cpp v1.0.0, opt-in via NODEXLM_NATIVE_TOKEN_TRACE=1. Native accepted token events identify task, slot and ordinal, never prompt, vocabulary token ID or text. Native scheduler events identify actual successfully submitted graph splits, backend and node count, correlated by an explicit thread-local batch identifier. No additional synchronization or RPC wire changes. Batch identifiers are process-local; logs can include native backend names and are diagnostic/private.
+
+Only one-slot, one-input, non-speculative, non-first generation tokens are marked attributable. Prefill and speculative/multiple-slot work is not attributed to individual output tokens. Submission counts are not hardware utilization or device compute time; the trace must not be presented as such. Callback-evaluation graph splits are excluded. The experiment is not applied to active release binaries or Android and does not feed the Web UI. Initial acceptance is local CPU native inference; distributed RPC device mapping and physical verification, bounded ingestion and dashboard integration remain required before enabling by default.
