@@ -73,6 +73,8 @@ func run(args []string) error {
 		return webToken(args[1:])
 	case "coordinator":
 		return serve(args[1:])
+	case "handoff":
+		return handoff(args[1:])
 	case "host":
 		return serve(append([]string{"--pair", "--addr", "0.0.0.0:8443"}, args[1:]...))
 	case "join":
@@ -110,6 +112,8 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm doctor [--json]            # diagnose local configuration and runtime
   nodexlm bench --node NODE_ID       # benchmark an idle authenticated Guest tunnel
   nodexlm cert --hosts 127.0.0.1,localhost,192.168.1.10
+  nodexlm handoff manifest --source /path/model.gguf # export trusted GGUF hashes
+  nodexlm handoff stage --source /mnt/old/model.gguf --manifest handoff.json --target /path/new-host
   nodexlm host                       # HTTPS host + LAN discovery + Web UI on localhost:8787
   nodexlm host --debug               # private rotating debug logs under NODEXLM_HOME/logs
   nodexlm host --web-addr off        # headless without the Web UI
