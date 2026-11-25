@@ -827,6 +827,7 @@ func chat(args []string) error {
 	ca := f.String("ca", "", "certificate")
 	model := f.String("model", "", "model")
 	prompt := f.String("prompt", "", "prompt")
+	document := f.String("document", "", "optional local UTF-8 text document (max 64 KiB)")
 	target := f.String("node", "", "optional target node id")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -834,11 +835,13 @@ func chat(args []string) error {
 	if *model == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
 	}
+	content, err := documentPrompt(*prompt, *document)
+	if err != nil { return err }
 	cli, err := admin(*server, *ca)
 	if err != nil {
 		return err
 	}
-	request := protocol.ChatRequest{Model: *model, Messages: []protocol.Message{{Role: "user", Content: *prompt}}, MaxTokens: 512, TargetNode: *target}
+	request := protocol.ChatRequest{Model: *model, Messages: []protocol.Message{{Role: "user", Content: content}}, MaxTokens: 512, TargetNode: *target}
 	c, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	var out struct {
