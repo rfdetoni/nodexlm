@@ -26,6 +26,8 @@ type Microbenchmark struct {
 // Microbench uses the authenticated private relay, with at most two native
 // devices (the supported CPU/GPU topology), 160 MiB wire payload and 30 s.
 func Microbench(ctx context.Context, endpoint string) (Microbenchmark, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	result := Microbenchmark{Source: "auto"}
 	_, err := withRPCProbe(ctx, endpoint, 30*time.Second, func(conn net.Conn, count uint32) error {
 		if count > 2 {

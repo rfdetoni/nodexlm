@@ -106,6 +106,9 @@ func (m *Manager) MeasureRPCDevice(ctx context.Context, id string) (rpcmesh.Micr
 	if err != nil {
 		return result, err
 	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return result, err
