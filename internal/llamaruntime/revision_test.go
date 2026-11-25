@@ -8,11 +8,14 @@ import (
 )
 
 func TestRuntimeRevisionContract(t *testing.T) {
-	if len(SourceCommit) != 40 || len(Version) < 2 || !strings.HasPrefix(Version, "b") {
+	if len(SourceCommit) != 40 || len(Version) < 2 || !(strings.HasPrefix(Version, "b") || strings.HasPrefix(Version, "v")) {
 		t.Fatal("invalid runtime revision")
 	}
 	if _, err := hex.DecodeString(SourceCommit); err != nil {
 		t.Fatal(err)
+	}
+	if major, minor := RPCProtocolVersion(); major != 10 || minor != 0 {
+		t.Fatalf("unexpected native RPC version %d.%d", major, minor)
 	}
 	for target, digest := range revision.Published {
 		if len(digest) != 64 {
