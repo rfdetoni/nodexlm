@@ -25,6 +25,9 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 		return ""
 	}
 	s.Model, s.Distributed, s.PlacementStrategy = "", false, ""
+	if s.PrimaryNode == "auto" {
+		s.PrimaryNode = ""
+	}
 	value, err := json.Marshal(struct {
 		Options  Settings `json:"options"`
 		Bytes    int64    `json:"bytes"`

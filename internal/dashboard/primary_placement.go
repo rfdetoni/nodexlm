@@ -21,9 +21,6 @@ func choosePrimary(s Settings, meta local.GGUFInfo, size, host uint64, available
 	if n < 1 || n > 4096 || size == 0 || size > ^uint64(0)/8192 || len(available) > 128 {
 		return fail("invalid primary placement size or topology")
 	}
-	if s.GPULayers != "auto" && s.GPULayers != "all" && s.GPULayers != "" {
-		return fail("nó principal explícito exige camadas GPU auto/all para preservar o split")
-	}
 	hostPrimary := s.PrimaryNode == "host"
 	ordered := make([]RPCGuest, 0, len(available))
 	seen := map[string]bool{}
@@ -45,11 +42,8 @@ func choosePrimary(s Settings, meta local.GGUFInfo, size, host uint64, available
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
-		if a.ID == s.PrimaryNode {
-			return true
-		}
-		if b.ID == s.PrimaryNode {
-			return false
+		if (a.ID == s.PrimaryNode) != (b.ID == s.PrimaryNode) {
+			return a.ID == s.PrimaryNode
 		}
 		return a.ID < b.ID
 	})

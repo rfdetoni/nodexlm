@@ -43,9 +43,9 @@ function renderTopology(activity=null){
  area.replaceChildren();
  if(!topology?.loaded){area.append(el('p','muted','Nenhum modelo carregado.'));return;}
  area.append(el('p','',topology.model+' · '+topology.blocks+' blocos'+(topology.aggregated?' · slots agregados':'')),el('p','muted',topology.notice));
- const bar=el('div','loaded-split');bar.setAttribute('role','img');bar.setAttribute('aria-label','Participação estimada das camadas por nó');
+ const bar=document.createElementNS('http://www.w3.org/2000/svg','svg');bar.setAttribute('class','loaded-split');bar.setAttribute('viewBox','0 0 1000 24');bar.setAttribute('role','img');bar.setAttribute('aria-label','Participação estimada das camadas por nó');let offset=0;
  for(const node of topology.nodes){
-  if(node.layers>0){const segment=el('progress','split-segment'+(node.node_id==='host'?' host-segment':''));segment.max=Math.max(1,topology.blocks);segment.value=node.layers;segment.setAttribute('aria-label',node.name+': '+node.layers+' camadas');bar.append(segment);}
+  if(node.layers>0){const segment=document.createElementNS('http://www.w3.org/2000/svg','rect');const width=1000*node.layers/Math.max(1,topology.blocks);segment.setAttribute('x',String(offset));segment.setAttribute('width',String(width));segment.setAttribute('height','24');segment.setAttribute('class',node.node_id==='host'?'split-host':'split-guest');const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=node.name+': '+node.layers+' camadas';segment.append(title);bar.append(segment);offset+=width;}
   const live=activity?.nodes?.find(n=>n.node_id===node.node_id);
   const active=node.node_id==='host'?activity?.host_inferred:live?.active;
   const range=node.first_block>=0?'blk.'+node.first_block+'–'+node.last_block:'sem blocos';
@@ -806,7 +806,7 @@ async function refreshObservations(){
    (sample.kind==='benchmark'?'benchmark controlado':'medição ao vivo')+' · '+
    (sample.rate_basis==='native_decode'?'decode nativo':'inclui prefill/TTFT')+
    ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro texto '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
- for(const sample of data.inference)if(sample.suspect)area.append(el('p','muted',sample.model+': desempenho ao vivo divergiu; descarregue o modelo e repita o benchmark controlado.'));
+ for(const sample of data.inference)if(sample.suspect){const note=el('p','muted');note.append(el('strong','','Medição suspeita: '),document.createTextNode(sample.model+' — descarregue o modelo e repita o benchmark controlado. '));const button=el('button','','Ir para re-medição');button.addEventListener('click',()=>activateConsoleView('inference'));note.append(button);area.append(note);}
  for(const sample of data.inference)if(sample.native_system_info)area.append(el('p','muted',sample.native_system_info));
  for(const sample of data.inference)for(const workload of sample.workloads||[]){const s=workload.sample;area.append(el('p','muted',workload.profile+': '+(s? s.prompt_tokens+' tokens de prompt · '+s.tokens_per_second.toFixed(1)+' t/s · prefill '+(s.prefill_tokens_per_second||0).toFixed(1)+' t/s · primeiro output '+(s.first_output_ms||0).toFixed(0)+' ms':workload.status)));}
  for(const node of data.nodes){

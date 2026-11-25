@@ -37,3 +37,16 @@ func TestExplicitPrimaryPlacement(t *testing.T) {
 		t.Fatalf("limited primary: %+v %v", r, err)
 	}
 }
+
+func TestExplicitPrimaryLegacyAndAuto(t *testing.T) {
+	meta := local.GGUFInfo{BlockCount: 8}
+	guests := []RPCGuest{{ID: "legacy", CapacityBytes: 1000}}
+	s := Settings{PrimaryNode: "legacy", Distributed: true, GPULayers: "auto", ContextTokens: 256}
+	r, err := choosePrimary(s, meta, 800, 1000, guests)
+	if err != nil || len(r.Guests) != 1 || r.LocalLayers != 4 {
+		t.Fatalf("legacy proportional placement: %+v %v", r, err)
+	}
+	if explicitPrimary("") || explicitPrimary("auto") {
+		t.Fatal("automatic settings must use existing planner")
+	}
+}
