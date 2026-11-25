@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -21,8 +22,13 @@ var rpcBatchPatch []byte
 //go:embed patches/arm32-rpc-wire.patch
 var fixedRPCWirePatch []byte
 
+//go:embed patches/native-token-activity.patch
+var nativeTokenPatch []byte
+
+func nativeTraceBuild() bool { return os.Getenv("NODEXLM_NATIVE_TOKEN_TRACE") == "1" }
+
 func applyRPCPatch(ctx context.Context, source string) error {
-	for _, patch := range []struct {
+	patches := []struct {
 		name string
 		data []byte
 	}{
@@ -30,7 +36,14 @@ func applyRPCPatch(ctx context.Context, source string) error {
 		{name: "fixed-width RPC wire framing", data: fixedRPCWirePatch},
 		{name: "parallel tensor upload", data: parallelRPCPatch},
 		{name: "bounded RPC command batching", data: rpcBatchPatch},
-	} {
+	}
+	if nativeTraceBuild() {
+		patches = append(patches, struct {
+			name string
+			data []byte
+		}{name: "native token activity", data: nativeTokenPatch})
+	}
+	for _, patch := range patches {
 		cmd := exec.CommandContext(ctx, "git", "-C", source, "apply", "-")
 		cmd.Stdin = bytes.NewReader(patch.data)
 		out, err := cmd.CombinedOutput()
