@@ -1,0 +1,68 @@
+name: Promote verified RPC r4 artifacts
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/promote-rpc-r4.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    steps:
+      - name: Verify the exact reviewed successful run and download its archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = rfdetoni/nodexlm
+          run=45673217491
+          source=ed422b43b31ae07a71e923224d9623722a75d5f5
+          test "$(gh api "repos/$GH_REPO/actions/runs/$run" --jq '.head_sha')" = "$source"
+          test "$(gh api "repos/$GH_REPO/actions/runs/$run" --jq '.conclusion')" = success
+          mkdir -p dist
+          gh run download "$run" --pattern 'rpc-*' --dir dist
+          python3 - <<'PY'
+          import hashlib, pathlib, shutil
+          expected = {
+              'darwin_arm64_metal': '89f5de3f10f5b96007a92a45f3569744c3deae0415d2d8ab37664850627e90a5',
+              'windows_amd64_vulkan': '88a93f9bbc86fcf611614e12fb83cd5079284cae1f510a6efecef20f89c4c228',
+              'windows_amd64_cpu': 'a73186ecb4f4e6bbc0e0828c869d7965536a7cb1e3e669093084a62d044e9cf6',
+              'linux_arm64_cpu': 'f7e92b68daef15828b01fa07765e8099799560fa06dec80b673b862bbee3c02f',
+              'linux_amd64_cpu': '10824f8584cf0e55506fc38d6ee00e8ec9430f45de8190103bd01ed3ef448261',
+              'linux_amd64_vulkan': 'e8802dd39d4649fdf3a9d555a5e0a03dbfb45ea132580af3cfd07d2981396769',
+          }
+          root = pathlib.Path('dist')
+          lines = []
+          for target, digest in sorted(expected.items()):
+              name = f'nodexlm-rpc_v1.0.0_{target}.tar.gz'
+              matches = list(root.glob(f'*/{name}'))
+              assert len(matches) == 1, name
+              archive = matches[0]
+              assert archive.stat().st_size <= 400 * 1024 * 1024
+              with archive.open('rb') as stream:
+                  assert hashlib.file_digest(stream, 'sha256').hexdigest() == digest, name
+              shutil.move(archive, root / name)
+              lines.append(f'{digest}  {name}')
+          assert len(list(root.glob('*.tar.gz'))) == 6
+          (root / 'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          for archive in dist/*.tar.gz; do
+            gh attestation verify "$archive" --repo "$GH_REPO" --signer-workflow "$GH_REPO/.github/workflows/rpc-platforms.yml"
+          done
+          tag=nodexlm-rpc-v1.0.0-r4
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Release already exists; verify existing asset digests instead of overwriting.'
+            mkdir existing
+            gh release download "$tag" --pattern '*.tar.gz' --pattern SHA256SUMS.txt --dir existing
+            cmp dist/SHA256SUMS.txt existing/SHA256SUMS.txt
+            (cd existing && sha256sum -c SHA256SUMS.txt)
+          else
+            gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target "$source" --title 'NodexLM RPC r4 — llama.cpp v1.0.0' --notes 'Six verified candidate bundles from run 45673217491, commit ed422b43b31ae07a71e923224d9623722a75d5f5. RPC 10 requires updating all Host and Guests together. Headless CI does not certify physical GPU performance.' --prerelease --latest=false
+          fi
