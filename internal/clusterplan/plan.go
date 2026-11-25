@@ -347,7 +347,7 @@ func LayerAllocation(weights []uint64, nonBlock, host uint64, guests []uint64, p
 		return nil, false
 	}
 	fits := func(weight, budget uint64) bool { return weight*115/100 <= budget }
-	bestDistance := len(weights)+1
+	bestDistance := len(weights) + 1
 	var best []int
 	for local := 0; local <= len(weights)-len(guests); local++ {
 		if !fits(nonBlock+prefix[local], host) {
@@ -358,20 +358,20 @@ func LayerAllocation(weights []uint64, nonBlock, host uint64, guests []uint64, p
 		start := local
 		for i, budget := range guests {
 			end := start
-			limit := len(weights)-len(guests)+i+1
+			limit := len(weights) - len(guests) + i + 1
 			for end < limit && fits(prefix[end+1]-prefix[start], budget) {
 				end++
 			}
 			if end == start {
 				break
 			}
-			assignment[i+1] = end-start
+			assignment[i+1] = end - start
 			start = end
 		}
 		if start != len(weights) {
 			continue
 		}
-		distance := local-preferred
+		distance := local - preferred
 		if distance < 0 {
 			distance = -distance
 		}
