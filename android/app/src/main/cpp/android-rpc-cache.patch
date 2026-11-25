@@ -1,7 +1,7 @@
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -1797,23 +1797,70 @@
+@@ -1797,21 +1797,68 @@
          }
      }
  
@@ -87,8 +87,6 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 +        return true;
 +    }
  
-     // a buffer of the tensor size would be allocated and page faulted for every tensor, which is slow
-     const size_t chunk_size = 16*1024*1024;
 @@ -1893,25 +1940,31 @@
      return true;
  }
