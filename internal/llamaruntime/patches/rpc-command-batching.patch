@@ -1,7 +1,10 @@
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -22,3 +22,4 @@
+@@ -19,9 +19,10 @@
+ #include <mutex>
+ #include <unordered_map>
+ #include <unordered_set>
 -#include <cstring>
 -#include <fstream>
 -#include <filesystem>
@@ -9,7 +12,13 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 +#include <cstdlib>
 +#include <fstream>
 +#include <filesystem>
-@@ -674,16 +674,77 @@
+ #include <algorithm>
+ #include <atomic>
+ 
+@@ -671,22 +672,83 @@
+     return true;
+ }
+ 
 -void rpc_dispatcher::work() {
 -    auto last_cmd = std::chrono::steady_clock::now();
 -    while (running) {
@@ -103,3 +112,6 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 +            }
 +        }
 +        if (msg_ptr->cmd != RPC_CMD_NONE) {
+             LOG_DBG2("[%s] %s (in: %s, out: %s)\n", __func__, rpc_cmd_name(msg_ptr->cmd),
+                      rpc_log_format_size(msg_ptr->input_size).c_str(), rpc_log_format_size(msg_ptr->output_size).c_str());
+             const bool trace = rpc_log_debug_level() >= 3;
