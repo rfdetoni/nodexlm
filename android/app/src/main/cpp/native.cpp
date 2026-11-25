@@ -358,26 +358,26 @@ Java_dev_nodexlm_app_NativeRpc_recommendedThreads(JNIEnv*, jobject, jint logical
     return std::clamp<int>(performance, 1, std::min<int>(6, std::max<int>(1, logical)));
 }
 
-// Restrict only the CPU-only server thread before it constructs its native
-// backends. Descendant threads inherit the mask unless GGML overrides it.
+// Restrict the CPU-only server to permitted fast cores. The RPC patch
+// attaches a strict GGML worker pool to that same mask when supported.
 // Never expand beyond the OS cpuset or bind Vulkan/driver threads.
-static void preferPerformanceRPCThreads(int threads) {
+static bool preferPerformanceRPCThreads(int threads) {
     cpu_set_t allowed, fast;
     CPU_ZERO(&allowed);
     CPU_ZERO(&fast);
-    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) return;
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) return false;
     std::vector<std::pair<int, unsigned long>> capacities;
     for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
         if (!CPU_ISSET(cpu, &allowed)) continue;
         unsigned long capacity = 0;
         std::ifstream in("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpu_capacity");
-        if (!(in >> capacity) || capacity == 0 || capacity > 1000000) return;
+        if (!(in >> capacity) || capacity == 0 || capacity > 1000000) return false;
         capacities.emplace_back(cpu, capacity);
     }
-    if (capacities.size() < 2) return;
+    if (capacities.size() < 2) return false;
     const auto range = std::minmax_element(capacities.begin(), capacities.end(),
         [](const auto &a, const auto &b) { return a.second < b.second; });
-    if (range.first->second * 100 >= range.second->second * 80) return;
+    if (range.first->second * 100 >= range.second->second * 80) return false;
     int count = 0;
     for (const auto &entry : capacities) {
         if (entry.second * 100 >= range.second->second * 80) {
@@ -386,10 +386,11 @@ static void preferPerformanceRPCThreads(int threads) {
         }
     }
     // Respect explicit thread counts rather than oversubscribing a cluster.
-    if (count < threads) return;
+    if (count < threads) return false;
     const int result = sched_setaffinity(0, sizeof(fast), &fast);
     __android_log_print(result == 0 ? ANDROID_LOG_INFO : ANDROID_LOG_WARN,
         "NodexLM-RPC", "CPU RPC server affinity: requested %d fast cores; result=%d", count, result);
+    return result == 0;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -478,7 +479,8 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
     try {
         rpcThread = std::thread([threads, devices, socketPath, performanceAffinity, useCPU, useGPU, cachePath] {
             try {
-                if (performanceAffinity && useCPU && !useGPU) preferPerformanceRPCThreads(threads);
+                const bool strict = performanceAffinity && useCPU && !useGPU && preferPerformanceRPCThreads(threads);
+                ggml_backend_rpc_android_set_strict_affinity(strict);
                 const std::string address = "unix:" + socketPath;
                 ggml_backend_rpc_start_server(address.c_str(), cachePath.empty() ? nullptr : cachePath.c_str(),
                     static_cast<size_t>(threads), devices.size(),

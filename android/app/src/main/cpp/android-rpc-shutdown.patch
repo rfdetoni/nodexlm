@@ -1,7 +1,7 @@
 diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
 --- a/ggml/include/ggml-rpc.h
 +++ b/ggml/include/ggml-rpc.h
-@@ -32,8 +32,13 @@
+@@ -32,8 +32,14 @@
          size_t n_threads,
          size_t n_devices,
          ggml_backend_dev_t * devices);
@@ -11,6 +11,7 @@ diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
 +// requests stop from another thread, then joins before reusing the runtime.
 +GGML_BACKEND_API void ggml_backend_rpc_android_reset_stop(void);
 +GGML_BACKEND_API void ggml_backend_rpc_android_request_stop(void);
++GGML_BACKEND_API void ggml_backend_rpc_android_set_strict_affinity(bool enabled);
 +
 +GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
  GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
@@ -50,7 +51,15 @@ diff --git a/ggml/src/ggml-rpc/transport.cpp b/ggml/src/ggml-rpc/transport.cpp
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -1766,7 +1766,10 @@
+@@ -20,6 +20,7 @@
+ #include <filesystem>
+ #include <algorithm>
+ #include <atomic>
++#include <sched.h>
+ 
+ namespace fs = std::filesystem;
+ 
+@@ -1766,7 +1767,10 @@
      const rpc_tensor * in_tensor = (const rpc_tensor *)header;
      memcpy(&cache_flag, header + sizeof(rpc_tensor), sizeof(cache_flag));
      memcpy(&offset,     header + sizeof(rpc_tensor) + sizeof(cache_flag), sizeof(offset));
@@ -62,7 +71,7 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
  
      struct ggml_init_params params {
          /*.mem_size   =*/ ggml_tensor_overhead(),
-@@ -1816,7 +1819,9 @@
+@@ -1816,7 +1820,9 @@
      }
  
      // a buffer of the tensor size would be allocated and page faulted for every tensor, which is slow
@@ -73,7 +82,7 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
      if (set_tensor_buf.size() < std::min(size, chunk_size)) {
          set_tensor_buf.resize(std::min(size, chunk_size));
      }
-@@ -2985,8 +2990,42 @@
+@@ -2985,8 +2991,50 @@
      }
  }
  
@@ -85,10 +94,13 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 +std::atomic<bool> android_rpc_stop_requested{false};
 +socket_ptr android_rpc_listener;
 +socket_ptr android_rpc_client;
++thread_local bool android_rpc_strict_affinity = false;
 +
 +struct android_rpc_cleanup {
 +    std::vector<ggml_backend_t> & backends;
 +    bool transport_initialized = false;
++    ggml_threadpool_t cpu_pool = nullptr;
++    void (*free_pool)(ggml_threadpool_t) = nullptr;
 +    ~android_rpc_cleanup() {
 +        {
 +            std::lock_guard<std::mutex> lock(android_rpc_socket_mutex);
@@ -97,6 +109,7 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 +        }
 +        if (transport_initialized) rpc_transport_shutdown();
 +        for (auto backend : backends) ggml_backend_free(backend);
++        if (cpu_pool && free_pool) free_pool(cpu_pool);
 +    }
 +};
 +}
@@ -113,12 +126,16 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 +    if (android_rpc_listener) android_rpc_listener->interrupt();
 +}
 +
++void ggml_backend_rpc_android_set_strict_affinity(bool enabled) {
++    android_rpc_strict_affinity = enabled;
++}
++
 +void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
 +                                   size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
      if (n_devices == 0 || devices == nullptr) {
          LOG_ERROR("Invalid arguments to ggml_backend_rpc_start_server\n");
          return;
-@@ -2993,6 +3032,7 @@
+@@ -2993,6 +3041,7 @@
      }
 -    std::vector<ggml_backend_t> backends;
 -    LOG_INFO("Starting RPC server v%d.%d.%d\n",
@@ -128,7 +145,44 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
          RPC_PROTO_MAJOR_VERSION,
          RPC_PROTO_MINOR_VERSION,
          RPC_PROTO_PATCH_VERSION);
-@@ -3035,25 +3075,36 @@
+@@ -3019,7 +3068,36 @@
+             }
+         }
++        // Own an explicit GGML thread pool only for a CPU-only Guest whose
++        // server thread has already restricted itself to allowed fast cores.
++        if (android_rpc_strict_affinity && n_devices == 1 && reg &&
++                ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
++            using new_pool_fn = ggml_threadpool_t (*)(struct ggml_threadpool_params *);
++            using free_pool_fn = void (*)(ggml_threadpool_t);
++            using attach_pool_fn = void (*)(ggml_backend_t, ggml_threadpool_t);
++            auto make = reinterpret_cast<new_pool_fn>(ggml_backend_reg_get_proc_address(reg, "ggml_threadpool_new"));
++            auto release = reinterpret_cast<free_pool_fn>(ggml_backend_reg_get_proc_address(reg, "ggml_threadpool_free"));
++            auto attach = reinterpret_cast<attach_pool_fn>(ggml_backend_reg_get_proc_address(reg, "ggml_backend_cpu_set_threadpool"));
++            cpu_set_t allowed;
++            CPU_ZERO(&allowed);
++            if (make && release && attach && n_threads <= GGML_MAX_N_THREADS &&
++                    sched_getaffinity(0, sizeof(allowed), &allowed) == 0) {
++                auto params = ggml_threadpool_params_default(static_cast<int>(n_threads));
++                size_t count = 0;
++                for (int cpu = 0; cpu < std::min(CPU_SETSIZE, GGML_MAX_N_THREADS); ++cpu) {
++                    params.cpumask[cpu] = CPU_ISSET(cpu, &allowed);
++                    count += params.cpumask[cpu] ? 1 : 0;
++                }
++                if (count >= n_threads) {
++                    params.strict_cpu = true;
++                    params.poll = 0;
++                    cleanup.cpu_pool = make(&params);
++                    cleanup.free_pool = release;
++                    if (cleanup.cpu_pool) attach(backend, cleanup.cpu_pool);
++                }
++            }
++        }
+     }
+ 
+     std::string host;
+     int port;
+     if (!parse_endpoint(endpoint, host, port)) {
+@@ -3035,25 +3113,36 @@
          LOG_ERROR("Failed to initialize RPC transport\n");
          return;
      }
