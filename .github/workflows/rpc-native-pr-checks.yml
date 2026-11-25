@@ -1,18 +1,13 @@
 name: Native RPC loader PR checks
 
 on:
-  pull_request:
-    paths:
-      - 'internal/llamaruntime/patches/parallel-rpc-loader.patch'
-      - 'internal/llamaruntime/patch.go'
-      - '.github/workflows/rpc-runtime.yml'
-      - '.github/workflows/rpc-native-pr-checks.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: nodexlm-native-rpc-pr-${{ github.event.pull_request.number }}
+  group: nodexlm-native-rpc-pr-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

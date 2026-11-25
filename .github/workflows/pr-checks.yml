@@ -29,14 +29,34 @@ jobs:
     name: Go tests, race and vet
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      windows: ${{ steps.scope.outputs.windows }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 2
+      - id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]] || ! git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+            printf 'windows=true\nnative=true\n' >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed-files"
+            for scope in windows native; do
+              case "$scope" in
+                windows) pattern='^(internal/config/|go\.(mod|sum)$|\.github/workflows/pr-checks\.yml$)' ;;
+                native) pattern='^(internal/llamaruntime/(revision\.json|patch\.go|patches/)|scripts/optimized-rpc-backend-search\.patch$|\.github/workflows/pr-checks\.yml$)' ;;
+              esac
+              if grep -Eq "$pattern" "$RUNNER_TEMP/changed-files"; then value=true; else value=false; fi
+              echo "$scope=$value" >> "$GITHUB_OUTPUT"
+            done
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - name: Formatting
         shell: bash
         run: |
@@ -51,9 +71,25 @@ jobs:
       - run: sh scripts/test-install.sh
       - run: go build -o nodexlm ./cmd/nodexlm && python3 scripts/smoke.py
       - run: go vet ./...
+      - name: Verify pinned upstream and exact patch application
+        if: steps.scope.outputs.native == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')
+          commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
+          git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
+          test "$(git -C upstream rev-parse HEAD)" = "$commit"
+          for patch in internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/arm32-rpc-wire.patch internal/llamaruntime/patches/parallel-rpc-loader.patch internal/llamaruntime/patches/rpc-command-batching.patch scripts/optimized-rpc-backend-search.patch; do
+            if [[ "$patch" == */rpc-command-batching.patch && ! -f "$patch" ]]; then continue; fi
+            git -C upstream apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C upstream apply "$GITHUB_WORKSPACE/$patch"
+          done
 
   windows-config:
     name: Windows secrets restart regression
+    needs: go
+    if: needs.go.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -63,25 +99,5 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - run: go test ./internal/config -run 'TestEnsureSecretsPersistsAcrossRestarts|TestReadSecretsRejectsLooseUnixPermissions' -count=1
-
-  native-patch:
-    name: Native patch preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with: {persist-credentials: false}
-      - name: Verify pinned upstream and exact patch application
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')
-          commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
-          git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
-          test "$(git -C upstream rev-parse HEAD)" = "$commit"
-          for patch in internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/parallel-rpc-loader.patch scripts/optimized-rpc-backend-search.patch; do
-            git -C upstream apply --check "$GITHUB_WORKSPACE/$patch"
-            git -C upstream apply "$GITHUB_WORKSPACE/$patch"
-          done

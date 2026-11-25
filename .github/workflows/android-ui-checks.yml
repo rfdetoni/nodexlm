@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'android/app/src/main/java/**/*.kt'
+      - 'android/app/src/test/**'
       - 'android/app/src/main/res/**'
       - 'android/app/src/main/AndroidManifest.xml'
       - 'android/app/build.gradle.kts'
@@ -30,16 +31,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 2
+      - id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          skip=false
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]] && git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/android-changes"
+            if grep -Eq '^(android/app/src/main/cpp/|android/rpc-rust/|android/([^/]+/)*build\.gradle\.kts$|android/settings\.gradle\.kts$|android/gradle\.properties$|internal/llamaruntime/(revision\.json|patches/(unix-rpc|arm32-rpc-wire)\.patch)$|scripts/(apply-rpc-patch\.cmake|verify-android-pages\.sh|fetch-android-tokenizer\.py)$|\.github/workflows/android-apk\.yml$)' "$RUNNER_TEMP/android-changes"; then skip=true; fi
+          fi
+          echo "full_apk=$skip" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        if: steps.scope.outputs.full_apk != 'true'
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v4
+        if: steps.scope.outputs.full_apk != 'true'
         with:
           packages: 'platform-tools'
       - name: Install SDK for Kotlin UI/resources
+        if: steps.scope.outputs.full_apk != 'true'
         run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
+        if: steps.scope.outputs.full_apk != 'true'
         with:
           gradle-version: '8.11.1'
           cache-read-only: true
@@ -93,5 +109,6 @@ jobs:
       - name: Validate launcher icon contract
         run: python3 scripts/check-android-launcher.py
       - name: Compile Android resources, Kotlin UI and unit tests
+        if: steps.scope.outputs.full_apk != 'true'
         working-directory: android
         run: gradle --no-daemon --max-workers=2 :app:processDebugResources :app:compileDebugKotlin :app:testDebugUnitTest

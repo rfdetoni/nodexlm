@@ -3,13 +3,19 @@ name: Security checks
 on:
   push:
     branches: [main]
+    paths: ['**/*.go', 'go.mod', 'go.sum', 'android/**', '.github/workflows/**', 'scripts/**', 'internal/llamaruntime/**']
   pull_request:
+    paths: ['**/*.go', 'go.mod', 'go.sum', 'android/**', '.github/workflows/**', 'scripts/**', 'internal/llamaruntime/**']
   workflow_dispatch:
   schedule:
     - cron: '17 5 * * 1'
 
 permissions:
   contents: read
+
+concurrency:
+  group: nodexlm-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   go-security:
@@ -26,5 +32,6 @@ jobs:
       - name: Check dependencies for known vulnerabilities
         run: |
           go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-      - name: Static analysis
+      - name: Static analysis (scheduled or requested)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: go vet ./...
