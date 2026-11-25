@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os/exec"
 	"runtime"
@@ -142,4 +143,29 @@ func autoRPCDeviceChoice(available []string, profile protocol.Device) string {
 	// An explicit Vulkan/iGPU Guest can still use the native backend's
 	// normal accelerator selection without claiming additive memory.
 	return ""
+}
+
+// Explicit CUDA must never silently start a CPU-only worker. Dedicated RAM
+// remains additive only with known, single-GPU telemetry.
+func explicitCUDADeviceChoice(available []string, profile protocol.Device) (string, error) {
+	var gpu string
+	cpu := false
+	for _, name := range available {
+		if name == "CPU" {
+			cpu = true
+		}
+		if strings.HasPrefix(name, "CUDA") {
+			if gpu != "" {
+				return "", errors.New("multiple CUDA devices: specify --rpc-device explicitly or restrict CUDA_VISIBLE_DEVICES")
+			}
+			gpu = name
+		}
+	}
+	if gpu == "" {
+		return "", errors.New("CUDA backend selected but no native CUDA device initialized")
+	}
+	if cpu && guestDedicatedGPU(profile) && len(profile.GPUs) == 1 {
+		return gpu + ",CPU", nil
+	}
+	return gpu, nil
 }

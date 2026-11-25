@@ -123,6 +123,11 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 		item.decrement()
 		return
 	}
+	// A capability belongs to this authenticated CONNECT, not to a stale
+	// heartbeat or another tunnel from the same Guest.
+	if r.Header.Get("X-Nodex-RPC-Capabilities") == "directional-v1" {
+		conn = &directionalConn{Conn: conn}
+	}
 	item.track(conn)
 	_ = conn.SetDeadline(time.Time{})
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))

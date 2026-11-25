@@ -21,3 +21,6 @@ Use `--rpc-device CPU` to force the native CPU device even in a GPU-capable bund
 Use `nodexlm guest --thread-policy performance` to opt into the recommended fast-core thread count; default physical-core behavior and explicit `--threads N` are preserved. On homogeneous CPUs or without reliable topology telemetry, the Guest performance policy also uses physical cores (capped at 256). No worker affinity is changed.
 
 Network echo uses one idle TLS tunnel per pair (one warmup and one to three measured pairs). Four idle tunnels are recommended; a single slot must reconnect after warmup. Each pair has a five-second limit within a fifteen-second overall budget. Sample count is reported; zero spread with one sample does not establish stability.
+
+
+Experimental CUDA: `nodexlm guest --backend cuda` selects an initialized CUDA device, never silently falls back to CPU. Linux can compile the pinned matching pair with a compatible installed CUDA toolkit, CMake and compiler; first build may be expensive. On other systems use `--rpc-bin` with a matching native binary. For multiple GPUs, select explicitly with `--rpc-device` or `CUDA_VISIBLE_DEVICES`; automatic per-card placement and published CUDA bundles are not yet certified. Default backend selection is unchanged.

@@ -2,6 +2,12 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Runtime experimental
+
+- Benchmark direcional negociado por conexão (Go/Rust), opt-in, com mediana de upload/download independentes e fallback legado.
+
+- CUDA explícito no Host e Guest, fallback de compilação Linux e descoberta nativa; binários CUDA publicados e validação física ainda pendentes.
+
 ## Correções da auditoria
 
 - Aceitação de cluster: série de benchmarks com placement fixado, revalidação por rodada e baseline de rede compartilhado; evita comparar splits recalculados a partir de RAM livre variável.

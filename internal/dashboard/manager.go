@@ -274,8 +274,8 @@ func (m *Manager) validate(s Settings) error {
 		(s.BatchSize > 0 && s.UBatchSize > s.BatchSize) {
 		return errors.New("invalid batch_size or ubatch_size")
 	}
-	if s.HostGPU != "" && s.HostGPU != "auto" && s.HostGPU != "cpu" && s.HostGPU != "vulkan" && s.HostGPU != "metal" {
-		return errors.New("host_gpu must be auto, cpu, vulkan or metal")
+	if s.HostGPU != "" && s.HostGPU != "auto" && s.HostGPU != "cpu" && s.HostGPU != "vulkan" && s.HostGPU != "metal" && s.HostGPU != "cuda" {
+		return errors.New("host_gpu must be auto, cpu, vulkan, metal or cuda")
 	}
 	if s.SpeculativeMode != "" && s.SpeculativeMode != "off" && s.SpeculativeMode != "ngram" && s.SpeculativeMode != "draft" {
 		return errors.New("speculative_mode must be off, ngram or draft")
@@ -634,6 +634,8 @@ func (m *Manager) load(ctx context.Context) error {
 		resolved = ""
 	} else if usingRPC && (m.binary == "" || m.binary == "llama-server") {
 		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, effectiveHostRuntimeBackend(s.HostGPU))
+	} else if (m.binary == "" || m.binary == "llama-server") && s.HostGPU == "cuda" {
+		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, "cuda")
 	} else if (m.binary == "" || m.binary == "llama-server") && (s.HostGPU == "vulkan" || s.HostGPU == "metal") {
 		resolved, _, err = llamaruntime.Ensure(ctx, m.dir, s.HostGPU)
 	} else {
@@ -641,6 +643,9 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	if err != nil {
 		return err
+	}
+	if s.HostGPU == "cuda" && s.GPULayers != "0" && discoverHostGPU(ctx, resolved, "cuda") == "" {
+		return errors.New("explicit CUDA requires exactly one initialized native CUDA device; use CUDA_VISIBLE_DEVICES to select it")
 	}
 	if usingRPC && !llamaruntime.SupportsRPC(ctx, resolved) {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")

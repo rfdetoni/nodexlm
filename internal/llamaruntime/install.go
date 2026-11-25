@@ -52,8 +52,8 @@ func Backend(requested string) (string, error) {
 		// GPU backend. A visible GPU does not establish that drivers work.
 		return "cpu", nil
 	}
-	if requested != "cpu" && requested != "vulkan" && requested != "metal" {
-		return "", fmt.Errorf("backend %q unsupported; use auto, cpu, vulkan or metal", requested)
+	if requested != "cpu" && requested != "vulkan" && requested != "metal" && requested != "cuda" {
+		return "", fmt.Errorf("backend %q unsupported; use auto, cpu, vulkan, metal or cuda", requested)
 	}
 	return requested, nil
 }
@@ -462,6 +462,9 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		}
 		return "", "", errors.New("RPC runtime requires CMake and a C/C++ compiler to build the pinned llama.cpp release (Ubuntu/Debian: sudo apt install -y git cmake build-essential)")
 	}
+	if backend == "cuda" && runtime.GOOS != "linux" {
+		return "", "", errors.New("automatic CUDA source build is currently supported on Linux; use a matching custom RPC binary on other systems")
+	}
 	if _, err := exec.LookPath("c++"); err != nil {
 		return "", "", errors.New("RPC source build requires a C++ compiler (Ubuntu/Debian: sudo apt install -y build-essential)")
 	}
@@ -505,6 +508,8 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		flags = append(flags, "-DGGML_VULKAN=ON")
 	case "metal":
 		flags = append(flags, "-DGGML_METAL=ON")
+	case "cuda":
+		flags = append(flags, "-DGGML_CUDA=ON", "-DGGML_NATIVE=OFF", "-DLLAMA_CURL=OFF")
 	}
 	slog.Info("Configuring native RPC source fallback", "backend", backend)
 	configure := exec.CommandContext(ctx, "cmake", flags...)

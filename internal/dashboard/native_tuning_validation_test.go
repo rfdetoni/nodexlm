@@ -12,6 +12,11 @@ func TestNativeTuningSettingsValidation(t *testing.T) {
 	if err := m.validate(valid); err != nil {
 		t.Fatalf("rejected valid tuning: %v", err)
 	}
+	cuda := base
+	cuda.HostGPU = "cuda"
+	if err := m.validate(cuda); err != nil {
+		t.Fatalf("rejected explicit CUDA: %v", err)
+	}
 	ngram := base
 	ngram.SpeculativeMode, ngram.SpeculativeTokens = "ngram", 16
 	if err := m.validate(ngram); err != nil {
@@ -29,7 +34,7 @@ func TestNativeTuningSettingsValidation(t *testing.T) {
 		{"speculation without draft", func(s *Settings) { s.SpeculativeTokens = 3 }},
 		{"speculation oversized", func(s *Settings) { s.SpeculativeMode = "draft"; s.DraftModel = "draft.gguf"; s.SpeculativeTokens = 33 }},
 		{"ngram oversized", func(s *Settings) { s.SpeculativeMode = "ngram"; s.SpeculativeTokens = 33 }},
-		{"invalid host gpu", func(s *Settings) { s.HostGPU = "cuda" }},
+		{"invalid host gpu", func(s *Settings) { s.HostGPU = "invalid" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

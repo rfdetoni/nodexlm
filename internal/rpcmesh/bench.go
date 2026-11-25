@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"slices"
 	"time"
 )
@@ -19,6 +20,10 @@ type Measurement struct {
 	MiBPerSecond           float64   `json:"mib_per_second"`
 	Bytes                  int       `json:"bytes"`
 	Samples                int       `json:"samples,omitempty"`
+	UploadMiBPerSecond     float64   `json:"upload_mib_per_second,omitempty"`
+	DownloadMiBPerSecond   float64   `json:"download_mib_per_second,omitempty"`
+	DirectionalSamples     int       `json:"directional_samples,omitempty"`
+	DirectionalBytes       int       `json:"directional_bytes,omitempty"`
 	RTTSpreadMS            float64   `json:"rtt_spread_ms,omitempty"`
 	EchoSpreadMiBPerSecond float64   `json:"echo_spread_mib_per_second,omitempty"`
 }
@@ -36,7 +41,7 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 	defer cancel()
 	// Each legacy marker-2 session accepts exactly two exchanges.
 	// Use fresh authenticated tunnels for warmup and each measured pair.
-	var rtt, rates []float64
+	var rtt, rates, uploads, downloads []float64
 	var last Measurement
 	// Leave existing busy sessions alone. With just one idle slot, wait
 	// for its normal authenticated replacement after warmup.
@@ -66,6 +71,10 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 		if i > 0 {
 			rtt = append(rtt, sample.RoundTripMS)
 			rates = append(rates, sample.MiBPerSecond)
+			if sample.DirectionalSamples > 0 {
+				uploads = append(uploads, sample.UploadMiBPerSecond)
+				downloads = append(downloads, sample.DownloadMiBPerSecond)
+			}
 			last = sample
 		}
 	}
@@ -74,6 +83,13 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 	last.RoundTripMS, last.MiBPerSecond = medianSorted(rtt), medianSorted(rates)
 	last.RTTSpreadMS, last.EchoSpreadMiBPerSecond = rtt[len(rtt)-1]-rtt[0], rates[len(rates)-1]-rates[0]
 	last.Samples, last.Bytes = len(rtt), len(rtt)*(2<<20)
+	last.UploadMiBPerSecond, last.DownloadMiBPerSecond = 0, 0
+	last.DirectionalSamples, last.DirectionalBytes = len(uploads), len(uploads)*(2<<20)
+	if len(uploads) > 0 {
+		slices.Sort(uploads)
+		slices.Sort(downloads)
+		last.UploadMiBPerSecond, last.DownloadMiBPerSecond = medianSorted(uploads), medianSorted(downloads)
+	}
 	return last, nil
 }
 
@@ -88,7 +104,11 @@ func benchmarkPair(ctx context.Context, id string, conn net.Conn) (Measurement, 
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
-	if _, err := conn.Write([]byte{2}); err != nil {
+	marker := byte(2)
+	if _, ok := conn.(*directionalConn); ok && os.Getenv("NODEXLM_RPC_DIRECTIONAL_BENCH") == "1" {
+		marker = 3
+	}
+	if _, err := conn.Write([]byte{marker}); err != nil {
 		return Measurement{}, err
 	}
 	exchange := func(size int) (time.Duration, error) {
@@ -126,7 +146,16 @@ func benchmarkPair(ctx context.Context, id string, conn net.Conn) (Measurement, 
 	if err != nil {
 		return Measurement{}, err
 	}
-	return Measurement{NodeID: id, MeasuredAt: time.Now(), RoundTripMS: float64(ping) / float64(time.Millisecond), MiBPerSecond: 2 / elapsed.Seconds(), Bytes: 2 << 20}, nil
+	sample := Measurement{NodeID: id, MeasuredAt: time.Now(), RoundTripMS: float64(ping) / float64(time.Millisecond), MiBPerSecond: 2 / elapsed.Seconds(), Bytes: 2 << 20}
+	if marker == 3 {
+		upload, download, err := directionalHost(conn)
+		if err != nil {
+			return Measurement{}, err
+		}
+		sample.UploadMiBPerSecond, sample.DownloadMiBPerSecond = upload, download
+		sample.DirectionalSamples, sample.DirectionalBytes = 1, 2<<20
+	}
+	return sample, nil
 }
 
 func echoBenchmark(input io.Reader, output io.Writer) error {

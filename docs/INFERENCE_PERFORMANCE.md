@@ -82,3 +82,5 @@ sozinha sempre que houver capacidade suficiente.
 
 
 O benchmark de rede usa um túnel TLS ocioso por par marker-2 (warmup + 1–3 pares medidos); recomenda-se quatro túneis ociosos. Com apenas um, aguarda a reconexão autenticada para medir o segundo par. Cada par tem limite de 5 s, operação inteira de 15 s. `samples` informa a quantidade real; dispersão zero com uma amostra não demonstra estabilidade. Não mede tokens/s.
+
+`NODEXLM_RPC_DIRECTIONAL_BENCH=1` no Host habilita medições separadas de 1 MiB em cada direção após o par legado, somente em túneis que anunciaram `directional-v1` no CONNECT autenticado. A taxa de eco permanece comparável; taxas direcionais incluem latência de confirmação. O limite de 5 s por par e 15 s total permanece. Guests legados continuam marker 2. Não representa tokens/s nem throughput de GPU.

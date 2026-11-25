@@ -238,7 +238,7 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 
 func effectiveHostRuntimeBackend(hostGPU string) string {
 	switch hostGPU {
-	case "vulkan", "cpu", "metal":
+	case "vulkan", "cpu", "metal", "cuda":
 		return hostGPU
 	default:
 		return "auto"
@@ -247,7 +247,7 @@ func effectiveHostRuntimeBackend(hostGPU string) string {
 
 // discoverHostGPU uses the resolved llama-server registry rather than guessed names.
 func discoverHostGPU(ctx context.Context, binary, backend string) string {
-	if backend != "vulkan" && backend != "metal" {
+	if backend != "vulkan" && backend != "metal" && backend != "cuda" {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -262,7 +262,7 @@ func discoverHostGPU(ctx context.Context, binary, backend string) string {
 }
 
 func parseHostGPU(output, backend string) string {
-	if backend != "vulkan" && backend != "metal" {
+	if backend != "vulkan" && backend != "metal" && backend != "cuda" {
 		return ""
 	}
 	inList := false
@@ -301,7 +301,7 @@ func parseHostGPU(output, backend string) string {
 
 // withHostGPU prepends only a confirmed native device, preserving split math.
 func withHostGPU(plan RPCDevicePlacement, localLayers int, blocks uint32, backend, device, gpuLayers string) (RPCDevicePlacement, int) {
-	if (backend != "vulkan" && backend != "metal") || device == "" || gpuLayers == "0" || localLayers <= 0 || int(blocks) <= localLayers || len(plan.Devices) == 0 {
+	if (backend != "vulkan" && backend != "metal" && backend != "cuda") || device == "" || gpuLayers == "0" || localLayers <= 0 || int(blocks) <= localLayers || len(plan.Devices) == 0 {
 		return plan, localLayers
 	}
 	remoteLayers := uint64(int(blocks) - localLayers)

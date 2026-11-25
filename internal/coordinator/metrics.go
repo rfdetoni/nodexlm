@@ -44,6 +44,9 @@ func (s *Server) WriteMetrics(w http.ResponseWriter) {
 		if len(node.Latency) > 0 {
 			last := node.Latency[len(node.Latency)-1]
 			fmt.Fprintf(w, "nodexlm_rpc_rtt_milliseconds{node_id=%q} %g\nnodexlm_rpc_echo_mib_per_second{node_id=%q} %g\n", node.NodeID, last.RoundTripMS, node.NodeID, last.MiBPerSecond)
+			if last.DirectionalSamples > 0 {
+				fmt.Fprintf(w, "nodexlm_rpc_upload_mib_per_second{node_id=%q} %g\nnodexlm_rpc_download_mib_per_second{node_id=%q} %g\n", node.NodeID, last.UploadMiBPerSecond, node.NodeID, last.DownloadMiBPerSecond)
+			}
 		}
 	}
 
