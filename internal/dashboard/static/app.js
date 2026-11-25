@@ -463,7 +463,7 @@ async function refresh(){
  primary.replaceChildren();
  for(const [value,label] of [['','Automático'],['host','Host']]){const option=el('option','',label);option.value=value;primary.append(option);}
  for(const node of nodes){if(node.status!=='online'||!node.runtime?.rpc_ready||!cluster.rpc_guests?.[node.id])continue;const option=el('option','',node.name||node.id);option.value=node.id;primary.append(option);}
- if(selectedPrimary&&![...primary.options].some(o=>o.value===selectedPrimary)){const option=el('option','','Guest indisponível: '+selectedPrimary);option.value=selectedPrimary;primary.append(option);}
+ if(selectedPrimary&&![...primary.children].some(o=>o.value===selectedPrimary)){const option=el('option','','Guest indisponível: '+selectedPrimary);option.value=selectedPrimary;primary.append(option);}
  primary.value=selectedPrimary;primary.dataset.initialized='yes';
  const benchTarget=$('inferenceBenchTarget'), selectedTarget=benchTarget.value;
  benchTarget.replaceChildren();

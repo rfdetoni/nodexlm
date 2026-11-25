@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 class Element {
-  constructor(tag) {this.tag=tag;this.children=[];this.handlers={};this.style={};this.value='';this.checked=false;this.hidden=false;this.disabled=false;this._text='';}
+  constructor(tag) {this.tag=tag;this.children=[];this.handlers={};this.style={};this.dataset={};this.value='';this.checked=false;this.hidden=false;this.disabled=false;this._text='';}
   set textContent(value) {this._text=String(value);this.children=[];}
   get textContent() {return this._text+this.children.map(c=>c.textContent).join('');}
   append(...elements) {this.children.push(...elements);}
@@ -43,6 +43,7 @@ const fetch=async (url,options)=>{
     const codes=['ABCD2345','EFGH6789','JKMN2345','PQRS2345'];
     return response({code:codes[(pairingCalls-1)%codes.length],expires_in:'10m',expires_in_ms:600000});
   }
+  if(url==='/api/inference/topology')return response({loaded:false,nodes:[]});
   if(url==='/api/models')return response(locals);
   if(url==='/api/resident-models')return response(loaded?[settings.model]:[]);
   if(url==='/v1/nodes')return response([]);
