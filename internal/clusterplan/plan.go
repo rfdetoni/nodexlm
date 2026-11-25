@@ -98,19 +98,56 @@ func exposedRPCMemory(d protocol.Device) RPCDeviceMemory {
 	return result
 }
 
+// DedicatedCUDADevices requires an exact set of discrete NVIDIA cards.
+// Never use shared heaps or partial driver telemetry for additive capacity.
+func DedicatedCUDADevices(d protocol.Device, count int) bool {
+	if count < 2 || count > 16 || len(d.GPUs) != count || (d.Platform != "linux" && d.Platform != "windows") {
+		return false
+	}
+	for _, gpu := range d.GPUs {
+		if gpu.Vendor != "nvidia" || gpu.MemoryType != "dedicated" || gpu.VRAMBytes == 0 || gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes {
+			return false
+		}
+	}
+	return true
+}
+
 // RPCMemory returns the budget for the known native device topology.
 // Legacy/Android clients without device kinds retain the conservative max
 // RAM/VRAM calculation; they do not claim hybrid capacity.
 func RPCMemory(d protocol.Device) RPCDeviceMemory {
 	budget := exposedRPCMemory(d)
 	var hasCPU, hasGPU bool
+	gpuCount := 0
 	for _, kind := range d.Runtime.RPCDevices {
 		switch kind {
 		case "cpu":
 			hasCPU = true
 		case "gpu":
 			hasGPU = true
+			gpuCount++
 		default:
+			return RPCDeviceMemory{}
+		}
+	}
+	if gpuCount > 1 {
+		// No device-order guess: every CUDA card gets at most the smallest
+		// measured dedicated pool. The preflight independently checks each
+		// native device before loading. Missing/mixed telemetry fails closed.
+		if !DedicatedCUDADevices(d, gpuCount) {
+			return RPCDeviceMemory{}
+		}
+		var minimum uint64 = ^uint64(0)
+		for _, gpu := range d.GPUs {
+			free := min(gpu.FreeVRAMBytes, gpu.VRAMBytes)
+			usable := uint64(0)
+			if free > 256*MiB {
+				usable = (free - 256*MiB) * 90 / 100
+			}
+			minimum = min(minimum, usable)
+		}
+		budget.GPU = minimum * uint64(gpuCount)
+		if budget.GPU == 0 {
 			return RPCDeviceMemory{}
 		}
 	}

@@ -168,3 +168,21 @@ func TestCUDAHostRequiresConfirmedDevice(t *testing.T) {
 		t.Fatal("ambiguous native CUDA devices")
 	}
 }
+
+func TestMultiGPUPlacementUsesSeparateConservativeBudgets(t *testing.T) {
+	const gib = uint64(1 << 30)
+	guest := RPCGuest{ID: "multi", CapacityBytes: 16 * gib, RPCDeviceKinds: []string{"gpu", "gpu", "cpu"}, GPUBudgetBytes: 8 * gib, RAMBudgetBytes: 8 * gib}
+	selection := clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}
+	meta := local.GGUFInfo{BlockCount: 10}
+	plan := planRPCDevices(selection, []RPCGuest{guest}, meta, Settings{}, 6*gib)
+	if plan.DeviceArg() != "RPC0,RPC1" || plan.Modes[guest.ID] != "gpu" || len(plan.Split) != 2 || plan.Split[0]+plan.Split[1] != 10 {
+		t.Fatalf("multi GPU split: %+v", plan)
+	}
+	plan = planRPCDevices(selection, []RPCGuest{guest}, meta, Settings{}, 10*gib)
+	if plan.DeviceArg() != "RPC0,RPC1,RPC2" || plan.Modes[guest.ID] != "gpu+ram" {
+		t.Fatalf("multi GPU + RAM split: %+v", plan)
+	}
+	if plan := planRPCDevices(selection, []RPCGuest{guest}, meta, Settings{}, 20*gib); len(plan.Devices) != 0 {
+		t.Fatalf("unsafe multi-GPU split: %+v", plan)
+	}
+}

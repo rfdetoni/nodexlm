@@ -106,13 +106,8 @@ func choosePrimary(s Settings, meta local.GGUFInfo, size, host uint64, available
 	}
 	guestEnd := func(g RPCGuest, start int) int {
 		end := start
-		if g.RPCDeviceKinds[0] == "gpu" {
-			end = maxEnd(start, g.GPUBudgetBytes)
-			if len(g.RPCDeviceKinds) == 2 {
-				end = maxEnd(end, g.RAMBudgetBytes)
-			}
-		} else {
-			end = maxEnd(start, g.RAMBudgetBytes)
+		for _, kind := range g.RPCDeviceKinds {
+			end = maxEnd(end, rpcDeviceBudget(g, kind))
 		}
 		end = min(end, maxEnd(start, g.CapacityBytes))
 		return end

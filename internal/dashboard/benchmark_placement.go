@@ -43,10 +43,7 @@ func (p *benchmarkPlacement) validate(guests []RPCGuest, meta local.GGUFInfo, s 
 		}
 		selected = append(selected, clusterplan.Candidate{ID: guest.ID, CapacityBytes: guest.CapacityBytes})
 		for _, kind := range guest.RPCDeviceKinds {
-			budget := guest.RAMBudgetBytes
-			if kind == "gpu" {
-				budget = guest.GPUBudgetBytes
-			}
+			budget := rpcDeviceBudget(guest, kind)
 			budgets[fmt.Sprintf("RPC%d", rpcIndex)] = budget
 			rpcIndex++
 		}
