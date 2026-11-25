@@ -13,3 +13,5 @@ Text generation supports SSE, cancellation, sampling controls and prefix-cache r
 Administrative commands use loopback port 8787. Guests use TLS port 8443 and discovery UDP 46465. DNS-SD advertises `_nodexlm._tcp.local` and `nodexlm.local` on supported private IPv4 networks; UDP discovery remains the fallback. Multiple Hosts cannot safely share the same mDNS alias; explicit addresses still work.
 
 Use `--rpc-transport unix` only with patched native binaries on POSIX. Automatic mode selects private Unix relays for the patched bundle; Windows retains loopback TCP. Remote administration requires an SSH tunnel. See [operations](../OPERATIONS.md) and [security](../../SECURITY.md).
+
+Optional mixed-cluster planner experiment: set `NODEXLM_RPC_COST_PLACEMENT=1` on the Host to compare estimated serial decode costs in speed mode. It uses comparable fresh benchmarks and measured RTT, not predicted or measured cluster throughput. The default does not apply this RTT cost model. Capacity mode retains all Guests. Validate with physical A/B before claiming improvements.

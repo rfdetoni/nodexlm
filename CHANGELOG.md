@@ -5,7 +5,7 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 ## Planejamento de clusters mistos — WP1
 
 - O planner utiliza somente benchmarks controlados, recentes e de fingerprint e base de taxa compatíveis para ponderar Host e Guests.
-- No modo velocidade, compara subconjuntos por custo serial estimado com penalidade de RTT e limites de memória; ganhos exigem A/B físico.
+- Com opt-in `NODEXLM_RPC_COST_PLACEMENT=1` no modo velocidade, compara subconjuntos por custo serial estimado com penalidade de RTT e limites de memória; ganhos exigem A/B físico.
 
 ## Atualização do llama.cpp e inferência adaptativa — 2026-11-10
 

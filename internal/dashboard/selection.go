@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
@@ -144,7 +145,11 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		}
 		candidates = append(candidates, candidate)
 	}
-	selection, err := clusterplan.SelectWithHostSpeed(meta.BlockCount, size, hostBudget, hostSpeed, candidates, strategy)
+	selectPlacement := clusterplan.SelectWithHostSpeed
+	if strategy == "speed" && os.Getenv("NODEXLM_RPC_COST_PLACEMENT") == "1" {
+		selectPlacement = clusterplan.SelectWithHostSpeedAndRTT
+	}
+	selection, err := selectPlacement(meta.BlockCount, size, hostBudget, hostSpeed, candidates, strategy)
 	if err != nil {
 		return selection, err
 	}

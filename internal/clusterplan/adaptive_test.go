@@ -95,14 +95,18 @@ func TestSelectWithHostSpeedWeightsLayersWithinMemoryBounds(t *testing.T) {
 func TestEstimatedPlacementAvoidsHighRTTGuest(t *testing.T) {
 	const gib = uint64(1 << 30)
 	nodes := []Candidate{
-		{ID: "fast-compute-slow-link", CapacityBytes: 6*gib, Performance: Performance{TokensPerSecond: 30, RoundTripMS: 100, NetworkMeasured: true}},
-		{ID: "fast-link", CapacityBytes: 6*gib, Performance: Performance{TokensPerSecond: 20, RoundTripMS: 1, NetworkMeasured: true}},
+		{ID: "fast-compute-slow-link", CapacityBytes: 6 * gib, Performance: Performance{TokensPerSecond: 30, RoundTripMS: 100, NetworkMeasured: true}},
+		{ID: "fast-link", CapacityBytes: 6 * gib, Performance: Performance{TokensPerSecond: 20, RoundTripMS: 1, NetworkMeasured: true}},
 	}
-	got, err := SelectWithHostSpeed(40, 8*gib, 6*gib, 15, nodes, "speed")
+	got, err := SelectWithHostSpeedAndRTT(40, 8*gib, 6*gib, 15, nodes, "speed")
 	if err != nil || len(got.Guests) != 1 || got.Guests[0].ID != "fast-link" || len(got.Excluded) != 1 {
 		t.Fatalf("high RTT link was not excluded: %+v %v", got, err)
 	}
-	legacy, err := SelectWithHostSpeed(40, 8*gib, 6*gib, 0, nodes, "speed")
+	defaultPlan, err := SelectWithHostSpeed(40, 8*gib, 6*gib, 15, nodes, "speed")
+	if err != nil || defaultPlan.Guests[0].ID != "fast-compute-slow-link" {
+		t.Fatalf("RTT cost applied without explicit opt-in: %+v %v", defaultPlan, err)
+	}
+	legacy, err := SelectWithHostSpeedAndRTT(40, 8*gib, 6*gib, 0, nodes, "speed")
 	if err != nil || legacy.LocalLayers != 20 || legacy.Guests[0].ID != "fast-compute-slow-link" {
 		t.Fatalf("unmeasured Host changed legacy selection: %+v %v", legacy, err)
 	}

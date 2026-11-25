@@ -38,9 +38,17 @@ func Select(blocks uint32, modelBytes, hostBudget uint64, candidates []Candidate
 }
 
 // SelectWithHostSpeed chooses the RPC subset and adjusts local vs remote layer
-// counts using comparable throughput supplied by the caller. Speed mode may
-// also compare estimated serial decode costs when RTT measurements are known.
+// counts using comparable throughput supplied by the caller.
 func SelectWithHostSpeed(blocks uint32, modelBytes, hostBudget uint64, hostSpeed float64, candidates []Candidate, mode string) (Selection, error) {
+	return selectWithHostSpeed(blocks, modelBytes, hostBudget, hostSpeed, candidates, mode, false)
+}
+
+// SelectWithHostSpeedAndRTT explicitly opts into estimated serial decode cost.
+func SelectWithHostSpeedAndRTT(blocks uint32, modelBytes, hostBudget uint64, hostSpeed float64, candidates []Candidate, mode string) (Selection, error) {
+	return selectWithHostSpeed(blocks, modelBytes, hostBudget, hostSpeed, candidates, mode, true)
+}
+
+func selectWithHostSpeed(blocks uint32, modelBytes, hostBudget uint64, hostSpeed float64, candidates []Candidate, mode string, estimateRTT bool) (Selection, error) {
 	if mode != "" && mode != "capacity" && mode != "speed" {
 		return Selection{}, errors.New("invalid placement strategy")
 	}
@@ -144,7 +152,7 @@ func SelectWithHostSpeed(blocks uint32, modelBytes, hostBudget uint64, hostSpeed
 	// The legacy memory/speed split remains the fallback for missing RTT or
 	// incompatible measurements. Capacity mode never drops Guests.
 	costEstimated := false
-	if mode == "speed" {
+	if mode == "speed" && estimateRTT {
 		if local, cost, ok := estimatedPlacement(blocks, modelBytes, hostBudget, hostSpeed, selected); ok {
 			layers, costEstimated = local, true
 			best := selected
