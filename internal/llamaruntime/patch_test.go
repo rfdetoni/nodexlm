@@ -64,3 +64,18 @@ func TestNativeTraceAndExperimentalCUDACaches(t *testing.T) {
 		t.Fatal("experimental CUDA must not overwrite normal runtime")
 	}
 }
+
+func TestSmolmaxSingleRowCacheIsolation(t *testing.T) {
+	t.Setenv("NODEXLM_NATIVE_TOKEN_TRACE", "")
+	t.Setenv("NODEXLM_SMOLMAX_SINGLE_ROW", "")
+	home := t.TempDir()
+	base := distributedDir(home, "cpu")
+	t.Setenv("NODEXLM_SMOLMAX_SINGLE_ROW", "1")
+	want := runtime.GOOS == "linux" && runtime.GOARCH == "arm64"
+	if smolmaxSingleRowBuild("cpu") != want || smolmaxSingleRowBuild("cuda") {
+		t.Fatal("unexpected Smolmax build selection")
+	}
+	if (distributedDir(home, "cpu") != base) != want {
+		t.Fatal("Smolmax cache selection mismatch")
+	}
+}
