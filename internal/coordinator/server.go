@@ -37,6 +37,7 @@ type nodeState struct {
 	signal       chan struct{}
 	active       string
 	decisionSeen time.Time
+	decisionEWMA time.Duration
 }
 
 type Server struct {
@@ -481,7 +482,13 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		j.Status = "completed"
 	}
 	if j.Kind == "decision" && j.Status == "completed" && j.Started != nil {
-		series := append(s.decisionTimings[id], now.Sub(*j.Started))
+		elapsed := now.Sub(*j.Started)
+		if n.decisionEWMA == 0 {
+			n.decisionEWMA = elapsed
+		} else {
+			n.decisionEWMA = time.Duration(0.7*float64(n.decisionEWMA) + 0.3*float64(elapsed))
+		}
+		series := append(s.decisionTimings[id], elapsed)
 		if len(series) > 64 {
 			series = series[len(series)-64:]
 		}

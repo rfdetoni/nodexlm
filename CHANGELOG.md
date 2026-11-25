@@ -2,6 +2,10 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Decision workers — WP8
+
+- Ranking opt-in com EWMA, p95, in-flight e prioridade de nós ociosos; preserva penalidades térmicas/bateria e leases.
+
 ## Política de threads — WP7
 
 - CLI Guest expõe política performance opt-in; Android já seleciona núcleos rápidos em modo automático, interface esclarecida sem mudar default. Afinidade permanece follow-up.

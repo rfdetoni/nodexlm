@@ -25,3 +25,5 @@ Autotune uses measured slow/fast links to choose microbatch candidates; prefill 
 Optional `NODEXLM_GGUF_LAYER_BYTES=1` uses known GGUF tensor descriptors to estimate nonuniform contiguous layer placement, with memory headroom and Host non-block weights. Unknown types/shards retain the uniform fallback. Native placement still requires validation.
 
 Network measurements use a discarded warmup and three legacy echo pairs on separate authenticated tunnels, with median and spread. Idle watchers block until claim or disconnect; TLS resumption is scoped to the paired client and retains certificate verification.
+
+Optional `NODEXLM_DECISION_ADAPTIVE=1` prioritizes idle decision workers and incorporates EWMA/p95 latency, existing thermal/battery penalties and in-flight jobs; admission rechecks under lock. Existing leases and failover remain unchanged.

@@ -106,3 +106,7 @@ No APK, abra **Processamento → Worker de decisão**, informe o nome exato do m
 ### Android — ONNX integrado
 
 O APK contém ONNX Runtime e tokenizador Hugging Face para bundles **Laya** (`laya-markers-v1`). Importe localmente o modelo, o tokenizador e a calibração em **Processamento → Worker de decisão → Importar arquivos do modelo ONNX**. Nenhum servidor Ollaya separado é necessário para executar Laya. O modo HTTP loopback continua opcional para outros executores. [Guia de ONNX no APK](ANDROID_EMBEDDED_DECISIONS.md).
+
+## Roteamento adaptativo opt-in (WP8)
+
+`NODEXLM_DECISION_ADAPTIVE=1` prioriza workers sem jobs ativos/pendentes e incorpora p95, EWMA de latência (α=0,3), além das penalidades térmicas e de bateria já existentes. Admissão verifica novamente sob lock para evitar concorrência com worker recém-ocupado. Leases, failover, expiração de capacidade e default anteriores são preservados. EWMA e in-flight são observações locais, não estimativas de throughput.
