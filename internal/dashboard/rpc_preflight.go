@@ -16,7 +16,7 @@ import (
 // is insufficient: the actual GGML buffer allocation, SET_TENSOR and
 // GET_TENSOR roundtrip must also work before attempting a multi-GB upload.
 // Probes are concurrent across nodes and serial per native device.
-func preflightRPCGuests(ctx context.Context, selected []clusterplan.Candidate, endpoints []string) error {
+func preflightRPCGuests(ctx context.Context, selected []clusterplan.Candidate, endpoints []string, available ...RPCGuest) error {
 	if len(selected) != len(endpoints) {
 		return fmt.Errorf("RPC preflight requires one authenticated relay per selected Guest")
 	}
@@ -28,7 +28,19 @@ func preflightRPCGuests(ctx context.Context, selected []clusterplan.Candidate, e
 			defer wg.Done()
 			checkCtx, cancel := context.WithTimeout(ctx, 22*time.Second)
 			defer cancel()
-			count, err := rpcmesh.ProbeTensorUpload(checkCtx, endpoint)
+			var expected []uint64
+			for _, guest := range available {
+				if guest.ID == selected[i].ID && rpcGPUCount(guest) > 1 {
+					for _, kind := range guest.RPCDeviceKinds {
+						budget := uint64(0)
+						if kind == "gpu" {
+							budget = rpcDeviceBudget(guest, kind)
+						}
+						expected = append(expected, budget)
+					}
+				}
+			}
+			count, err := rpcmesh.ProbeTensorUpload(checkCtx, endpoint, expected...)
 			if err != nil {
 				errs[i] = fmt.Errorf("Guest %.12s failed native GGML RPC handshake or 64-KiB tensor upload/readback (device allocate, set, get): %w", selected[i].ID, err)
 				slog.Warn("Guest native RPC preflight failed", "guest_id", selected[i].ID, "error", err)

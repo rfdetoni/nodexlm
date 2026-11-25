@@ -591,7 +591,7 @@ func (m *Manager) load(ctx context.Context) error {
 		m.mu.Unlock()
 		if len(rpcEndpoints) > 0 {
 			m.setPhase("verifying_rpc_guests")
-			if err := preflightRPCGuests(ctx, selection.Guests, rpcEndpoints); err != nil {
+			if err := preflightRPCGuests(ctx, selection.Guests, rpcEndpoints, guests...); err != nil {
 				return err
 			}
 			// HELLO and DEVICE_COUNT are not model tensor uploads. Reset the

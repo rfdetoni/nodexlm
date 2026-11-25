@@ -14,6 +14,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Runtime experimental
 
+- CUDA multi-GPU experimental: seleção de todas as placas dedicadas com telemetria NVIDIA completa, orçamento por placa limitado ao mínimo medido, split de camadas por dispositivo e verificação RPC de contagem/memória. Não presume ordem nvidia-smi = GGML. Testes físicos pendentes.
+
 - Compressão lossless opt-in de transporte RPC (Go), negociada por túnel, frames limitados e fallback incompressível/legado. Métricas distinguem payload nativo e bytes de framing; validação Android e A/B físicos ainda pendentes.
 
 - Benchmark direcional negociado por conexão (Go/Rust), opt-in, com mediana de upload/download independentes e fallback legado.

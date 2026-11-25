@@ -33,8 +33,33 @@ func ProbeHello(ctx context.Context, endpoint string) (uint32, error) {
 // tensor is uploaded through SET_TENSOR and read back through GET_TENSOR.
 // This detects ARMv7 framing bugs and broken Android Vulkan/CPU data paths
 // before the Host attempts multi-gigabyte model weight allocations.
-func ProbeTensorUpload(ctx context.Context, endpoint string) (uint32, error) {
-	return probeNativeRPC(ctx, endpoint, true)
+func ProbeTensorUpload(ctx context.Context, endpoint string, expectedGPUFree ...uint64) (uint32, error) {
+	if len(expectedGPUFree) == 0 {
+		return probeNativeRPC(ctx, endpoint, true)
+	}
+	return withRPCProbe(ctx, endpoint, 20*time.Second, func(conn net.Conn, count uint32) error {
+		if int(count) != len(expectedGPUFree) {
+			return fmt.Errorf("native device count %d does not match planned %d", count, len(expectedGPUFree))
+		}
+		for device, required := range expectedGPUFree {
+			if required != 0 {
+				var req [4]byte
+				binary.LittleEndian.PutUint32(req[:], uint32(device))
+				response, err := rpcProbeRoundtrip(conn, 11, req[:], 16)
+				if err != nil {
+					return err
+				}
+				free, total := binary.LittleEndian.Uint64(response[:8]), binary.LittleEndian.Uint64(response[8:])
+				if free < required || free > total {
+					return fmt.Errorf("native GPU %d free memory below admitted budget", device)
+				}
+			}
+			if err := probeNativeTensor(conn, uint32(device)); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
+	})
 }
 
 func probeNativeRPC(ctx context.Context, endpoint string, verifyTensor bool) (uint32, error) {

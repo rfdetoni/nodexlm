@@ -84,3 +84,22 @@ func TestExplicitCUDADeviceChoice(t *testing.T) {
 		}
 	}
 }
+
+func TestExplicitCUDAMultipleDedicatedCards(t *testing.T) {
+	profile := protocol.Device{Platform: "linux", GPUs: []protocol.GPUDevice{
+		{Vendor: "nvidia", MemoryType: "dedicated", VRAMBytes: 6 << 30, FreeVRAMBytes: 5 << 30},
+		{Vendor: "nvidia", MemoryType: "dedicated", VRAMBytes: 12 << 30, FreeVRAMBytes: 9 << 30},
+	}}
+	names := []string{"CUDA0", "CUDA1", "CPU"}
+	choice, err := explicitCUDADeviceChoice(names, profile)
+	if err != nil || choice != "CUDA0,CUDA1,CPU" {
+		t.Fatalf("CUDA multi-device selection: %s %v", choice, err)
+	}
+	if got := nativeDeviceKinds(choice, profile); !reflect.DeepEqual(got, []string{"gpu", "gpu", "cpu"}) {
+		t.Fatalf("native device order: %v", got)
+	}
+	profile.GPUs[1].MemoryType = "shared"
+	if _, err := explicitCUDADeviceChoice(names, profile); err == nil {
+		t.Fatal("shared memory must not become a dedicated device")
+	}
+}
