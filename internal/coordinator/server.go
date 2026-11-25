@@ -213,20 +213,25 @@ func validDevice(d protocol.Device) bool {
 	return true
 }
 
-// Only one GPU and one CPU are automatically mapped to native RPC indices.
-// Malformed or unsupported topology must not become an artificial memory
-// budget in a Host's cluster planner.
+// At most 16 GPU devices followed by one CPU, matching the native worker.
 func validRPCDeviceTopology(kinds []string) bool {
-	switch len(kinds) {
-	case 0:
-		return true
-	case 1:
-		return kinds[0] == "cpu" || kinds[0] == "gpu"
-	case 2:
-		return kinds[0] == "gpu" && kinds[1] == "cpu"
-	default:
+	if len(kinds) > 17 {
 		return false
 	}
+	gpus := 0
+	for i, kind := range kinds {
+		switch kind {
+		case "gpu":
+			gpus++
+		case "cpu":
+			if i != len(kinds)-1 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return gpus <= 16
 }
 
 func validMobileTelemetry(d protocol.Device) bool {

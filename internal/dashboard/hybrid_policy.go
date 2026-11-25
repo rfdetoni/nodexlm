@@ -37,29 +37,48 @@ func (p RPCDevicePlacement) TensorSplitArg() string {
 	return strings.Join(parts, ",")
 }
 
+func rpcGPUCount(guest RPCGuest) int {
+	n := 0
+	for _, kind := range guest.RPCDeviceKinds {
+		if kind == "gpu" {
+			n++
+		}
+	}
+	return n
+}
+
+func rpcDeviceBudget(guest RPCGuest, kind string) uint64 {
+	if kind == "cpu" {
+		return guest.RAMBudgetBytes
+	}
+	if n := rpcGPUCount(guest); kind == "gpu" && n > 0 {
+		return guest.GPUBudgetBytes / uint64(n)
+	}
+	return 0
+}
+
 func validRPCDeviceKinds(guest RPCGuest) bool {
 	kinds := guest.RPCDeviceKinds
-	if len(kinds) == 0 || len(kinds) > 2 {
+	if len(kinds) == 0 || len(kinds) > 17 || rpcGPUCount(guest) > 16 {
 		return false
 	}
 	for i, kind := range kinds {
-		if kind != "cpu" && kind != "gpu" {
+		if kind != "cpu" && kind != "gpu" || kind == "cpu" && i != len(kinds)-1 || rpcDeviceBudget(guest, kind) == 0 {
 			return false
 		}
-		if i == 1 && (kinds[0] != "gpu" || kind != "cpu") {
-			return false
-		}
-	}
-	if kinds[0] == "gpu" && guest.GPUBudgetBytes == 0 {
-		return false
-	}
-	if kinds[0] == "cpu" && guest.RAMBudgetBytes == 0 {
-		return false
-	}
-	if len(kinds) == 2 && guest.RAMBudgetBytes == 0 {
-		return false
 	}
 	return true
+}
+
+func selectedMultiGPU(selection clusterplan.Selection, available []RPCGuest) bool {
+	for _, chosen := range selection.Guests {
+		for _, guest := range available {
+			if chosen.ID == guest.ID && rpcGPUCount(guest) > 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // planRPCDevices chooses a GPU-only device when it can safely carry the
@@ -101,6 +120,7 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 	if remoteLayers <= 0 {
 		return RPCDevicePlacement{}
 	}
+	multi := selectedMultiGPU(selection, available)
 	remainingLayers := remoteLayers
 	remainingBudget := totalBudget
 	rpcIndex := 0
@@ -126,7 +146,7 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 			return RPCDevicePlacement{}
 		}
 		weight := modelBytes * uint64(layers) / uint64(meta.BlockCount)
-		if detailed {
+		if detailed || multi {
 			// Use real per-layer weights plus context, with the same 115% margin.
 			fits := func(offset, count int, budget uint64) bool {
 				w := estimatedBlockWeight(meta, modelBytes, offset, count)
@@ -146,39 +166,34 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 				}
 				return need <= budget
 			}
-			first := "RPC" + fmt.Sprint(rpcIndex)
-			switch {
-			case guest.RPCDeviceKinds[0] == "cpu":
-				if !fits(start, layers, guest.RAMBudgetBytes) {
-					return RPCDevicePlacement{}
+			left, offset := layers, start
+			gpuUsed, cpuUsed := false, false
+			for i, kind := range guest.RPCDeviceKinds {
+				budget := rpcDeviceBudget(guest, kind)
+				count := 0
+				for count < left && fits(offset, count+1, budget) {
+					count++
 				}
-				result.Devices = append(result.Devices, first)
-				result.Split = append(result.Split, uint64(layers))
-				result.Modes[guest.ID] = "ram"
-			case fits(start, layers, guest.GPUBudgetBytes):
-				result.Devices = append(result.Devices, first)
-				result.Split = append(result.Split, uint64(layers))
-				result.Modes[guest.ID] = "gpu"
-			case len(guest.RPCDeviceKinds) == 2:
-				gpuLayers := 0
-				for gpuLayers < layers-1 && fits(start, gpuLayers+1, guest.GPUBudgetBytes) {
-					gpuLayers++
+				if count == 0 {
+					continue
 				}
-				if !fits(start+gpuLayers, layers-gpuLayers, guest.RAMBudgetBytes) {
-					return RPCDevicePlacement{}
-				}
-				if gpuLayers > 0 {
-					result.Devices = append(result.Devices, first)
-					result.Split = append(result.Split, uint64(gpuLayers))
-				}
-				result.Devices = append(result.Devices, "RPC"+fmt.Sprint(rpcIndex+1))
-				result.Split = append(result.Split, uint64(layers-gpuLayers))
-				result.Modes[guest.ID] = "ram"
-				if gpuLayers > 0 {
-					result.Modes[guest.ID] = "gpu+ram"
-				}
-			default:
+				result.Devices = append(result.Devices, "RPC"+fmt.Sprint(rpcIndex+i))
+				result.Split = append(result.Split, uint64(count))
+				gpuUsed = gpuUsed || kind == "gpu"
+				cpuUsed = cpuUsed || kind == "cpu"
+				offset += count
+				left -= count
+			}
+			if left != 0 || layers == 0 {
 				return RPCDevicePlacement{}
+			}
+			switch {
+			case gpuUsed && cpuUsed:
+				result.Modes[guest.ID] = "gpu+ram"
+			case gpuUsed:
+				result.Modes[guest.ID] = "gpu"
+			default:
+				result.Modes[guest.ID] = "ram"
 			}
 			rpcIndex += len(guest.RPCDeviceKinds)
 			continue

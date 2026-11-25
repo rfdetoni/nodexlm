@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
@@ -106,12 +107,26 @@ func nativeDeviceKinds(device string, profile protocol.Device) []string {
 			return nil // Do not guess budgets for a custom native device name.
 		}
 	}
-	// Host indices are intentionally deterministic for one GPU plus CPU.
-	// Multiple GPUs remain supported manually by upstream llama.cpp, but
-	// they are reported as unknown until per-card native mapping exists.
-	if len(kinds) > 2 || (len(kinds) == 2 &&
-		(kinds[0] != "gpu" || kinds[1] != "cpu")) {
-		return nil
+	// Multiple CUDA devices are admitted only with complete dedicated GPU
+	// telemetry; the Host uses a conservative per-card minimum.
+	gpuCount := 0
+	for i, kind := range kinds {
+		if kind == "cpu" && i != len(kinds)-1 {
+			return nil
+		}
+		if kind == "gpu" {
+			gpuCount++
+		}
+	}
+	if gpuCount > 1 {
+		for _, name := range strings.Split(device, ",") {
+			if name != "CPU" && !strings.HasPrefix(name, "CUDA") {
+				return nil
+			}
+		}
+		if !clusterplan.DedicatedCUDADevices(profile, gpuCount) {
+			return nil
+		}
 	}
 	return kinds
 }
@@ -148,24 +163,24 @@ func autoRPCDeviceChoice(available []string, profile protocol.Device) string {
 // Explicit CUDA must never silently start a CPU-only worker. Dedicated RAM
 // remains additive only with known, single-GPU telemetry.
 func explicitCUDADeviceChoice(available []string, profile protocol.Device) (string, error) {
-	var gpu string
+	var gpus []string
 	cpu := false
 	for _, name := range available {
 		if name == "CPU" {
 			cpu = true
 		}
 		if strings.HasPrefix(name, "CUDA") {
-			if gpu != "" {
-				return "", errors.New("multiple CUDA devices: specify --rpc-device explicitly or restrict CUDA_VISIBLE_DEVICES")
-			}
-			gpu = name
+			gpus = append(gpus, name)
 		}
 	}
-	if gpu == "" {
+	if len(gpus) == 0 {
 		return "", errors.New("CUDA backend selected but no native CUDA device initialized")
 	}
-	if cpu && guestDedicatedGPU(profile) && len(profile.GPUs) == 1 {
-		return gpu + ",CPU", nil
+	if len(gpus) > 1 && !clusterplan.DedicatedCUDADevices(profile, len(gpus)) {
+		return "", errors.New("multiple CUDA devices require complete dedicated NVIDIA VRAM telemetry; restrict CUDA_VISIBLE_DEVICES or select one device")
 	}
-	return gpu, nil
+	if cpu && guestDedicatedGPU(profile) && (len(gpus) > 1 || len(profile.GPUs) == 1) {
+		gpus = append(gpus, "CPU")
+	}
+	return strings.Join(gpus, ","), nil
 }

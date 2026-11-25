@@ -7,13 +7,13 @@ import (
 )
 
 func TestRPCDeviceTopologyAcceptsOnlySupportedNativeLayouts(t *testing.T) {
-	for _, kinds := range [][]string{nil, {}, {"cpu"}, {"gpu"}, {"gpu", "cpu"}} {
+	for _, kinds := range [][]string{nil, {}, {"cpu"}, {"gpu"}, {"gpu", "cpu"}, {"gpu", "gpu"}, {"gpu", "gpu", "cpu"}} {
 		if !validRPCDeviceTopology(kinds) {
 			t.Fatalf("valid native RPC topology rejected: %+v", kinds)
 		}
 	}
 	for _, kinds := range [][]string{
-		{"cpu", "gpu"}, {"gpu", "gpu"}, {"cpu", "cpu"},
+		{"cpu", "gpu"}, {"cpu", "cpu"},
 		{"gpu", "cpu", "gpu"}, {"GPU"}, {"garbage"},
 	} {
 		if validRPCDeviceTopology(kinds) {
@@ -35,8 +35,8 @@ func TestGuestHeartbeatRejectsInvalidGPUCPUClaims(t *testing.T) {
 		t.Fatal("valid GPU+CPU heartbeat rejected")
 	}
 	d.Runtime.RPCDevices = []string{"gpu", "gpu", "cpu"}
-	if validDevice(d) {
-		t.Fatal("unsupported multi-GPU heartbeat was admitted without a safe device mapping")
+	if !validDevice(d) {
+		t.Fatal("valid multi-GPU shape rejected; missing telemetry is handled by zero budget")
 	}
 	d.Runtime.RPCDevices = []string{"cpu", "gpu"}
 	if validDevice(d) {

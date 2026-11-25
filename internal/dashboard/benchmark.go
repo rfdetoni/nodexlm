@@ -222,7 +222,7 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 		if len(engine.RPCServers) != len(selection.Guests) {
 			return InferenceSample{}, errors.New("RPC placement changed")
 		}
-		if err = preflightRPCGuests(ctx, selection.Guests, engine.RPCServers); err != nil {
+		if err = preflightRPCGuests(ctx, selection.Guests, engine.RPCServers, guests...); err != nil {
 			return InferenceSample{}, err
 		}
 		engine.RPCLocalLayers = layers
@@ -245,10 +245,17 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 				}
 				engine.RPCServers = []string{guest.Endpoint}
 				topology = guest.ID
-				if err = preflightRPCGuests(ctx, []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}, engine.RPCServers); err != nil {
+				if err = preflightRPCGuests(ctx, []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}, engine.RPCServers, guest); err != nil {
 					return InferenceSample{}, err
 				}
 				engine.RPCLocalLayers = 0
+				if rpcGPUCount(guest) > 1 {
+					plan := planRPCDevices(clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}, []RPCGuest{guest}, meta, settings, uint64(size))
+					if len(plan.Devices) == 0 {
+						return InferenceSample{}, errors.New("model does not fit individual GPU budgets")
+					}
+					engine.RPCDeviceNames, engine.RPCTensorSplit = plan.Devices, plan.TensorSplitArg()
+				}
 				engine.GPULayers = "all"
 				found = true
 				break
