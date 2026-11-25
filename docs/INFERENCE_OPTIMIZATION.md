@@ -157,3 +157,5 @@ A coleta de cluster com 2–10 rodadas usa `/api/bench/inference-series`: manté
 ## Migração r4
 
 A v1.0.0 estável do llama.cpp usa RPC 10.0 e remove APIs obsoletas. A release contém apenas um marcador nightly, por isso os binários NodexLM devem ser compilados a partir do commit fixado, validados e ter hashes próprios publicados. Não misturar runtime r3 e r4: atualizar Host, todos os Guests desktop e Android juntos. O preflight rejeita protocolo incompatível antes de enviar tensores. Para rollback, reinstalar o conjunto completo r3. Os seis bundles r4 foram publicados e fixados no manifesto após aprovação dos testes.
+
+`NODEXLM_RPC_BATCH_COMMANDS=1` enables experimental bounded native response-free command coalescence in the r5 candidate. The reviewed r4 remains active until both Windows E2E checks and r5 artifact promotion are complete. Four existing r5 candidate platform builds already passed; revalidate only Windows, not all six.

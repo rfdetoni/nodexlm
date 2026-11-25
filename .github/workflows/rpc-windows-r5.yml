@@ -1,0 +1,135 @@
+name: r5 Windows candidate revalidation
+# Build immutable candidate once, promote reviewed hashes rather than rebuild.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/rpc-windows-r5.yml']
+permissions:
+  contents: read
+concurrency:
+  group: nodexlm-rpc-windows-r5-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: windows-latest, os: windows, arch: amd64, backend: cpu}
+          - {runner: windows-latest, os: windows, arch: amd64, backend: vulkan}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 80
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Vulkan tools
+        if: matrix.backend == 'vulkan' && matrix.os == 'linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan-dev glslc spirv-headers
+      - name: Vulkan SDK (Windows)
+        if: matrix.backend == 'vulkan' && matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install vulkan-sdk --yes --no-progress
+          $sdk = Get-ChildItem "C:\VulkanSDK" -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sdk -or -not (Test-Path "$sdk\Bin\glslc.exe") -or -not (Test-Path "$sdk\Lib\vulkan-1.lib")) {
+            throw "Vulkan SDK installation incomplete under C:\VulkanSDK"
+          }
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Clang compiler (Linux ARM64 SME/KleidiAI)
+        if: matrix.os == 'linux' && matrix.arch == 'arm64'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang
+      - name: Build pinned pair
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')
+          commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
+          git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
+          test "$(git -C upstream rev-parse HEAD)" = "$commit"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/arm32-rpc-wire.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          if [[ -f internal/llamaruntime/patches/rpc-command-batching.patch ]]; then
+            git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
+          fi
+          git -C upstream apply --check "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
+          options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DCMAKE_BUILD_TYPE=Release)
+          if [[ "$BACKEND" == vulkan ]]; then options+=(-DGGML_VULKAN=ON); fi
+          if [[ "$TARGET_OS" == linux && "$TARGET_ARCH" == arm64 ]]; then options+=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_CPU_KLEIDIAI=ON); fi
+          if [[ "$TARGET_OS" == darwin ]]; then options+=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON); fi
+          cmake -S upstream -B native "${options[@]}"
+          cmake --build native --config Release --parallel 3 --target llama-server ggml-rpc-server
+          mkdir -p stage/bin dist
+          python3 scripts/stage-rpc-bundle.py native stage
+          cp upstream/LICENSE stage/LICENSE.llama.cpp
+          chmod -R u+rx stage/bin
+          # Test the actual staged layout, not the CMake build tree.
+          export LD_LIBRARY_PATH="$PWD/stage/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export DYLD_LIBRARY_PATH="$PWD/stage/bin${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+          export PATH="$PWD/stage/bin:$PATH"
+          suffix=""
+          if [[ "$TARGET_OS" == windows ]]; then suffix=".exe"; fi
+          stage/bin/llama-server"$suffix" --version 2>&1 | tee stage/native-capabilities.txt
+          stage/bin/llama-server"$suffix" --list-devices 2>&1 | tee -a stage/native-capabilities.txt
+          worker="stage/bin/ggml-rpc-server$suffix"
+          if [[ ! -f "$worker" ]]; then worker="stage/bin/rpc-server$suffix"; fi
+          "$worker" --help 2>&1 | tee -a stage/native-capabilities.txt
+          python3 - <<'PY'
+          import os, pathlib
+          root=pathlib.Path("stage/bin")
+          cpu=[p for p in root.iterdir() if p.is_file() and "ggml-cpu-" in p.name]
+          assert len(cpu)>=2, "CPU variant modules missing"
+          if os.environ.get("BACKEND") == "vulkan":
+              assert any("ggml-vulkan" in p.name for p in root.iterdir() if p.is_file()), "Vulkan backend module missing"
+          assert any(b"bounded parallel RPC tensor uploads enabled" in p.read_bytes() for p in root.iterdir() if p.is_file()), "RPC loader patch marker missing"
+          PY
+          archive="nodexlm-rpc_${version}_${TARGET_OS}_${TARGET_ARCH}_${BACKEND}.tar.gz"
+          tar -czf "dist/$archive" -C stage bin LICENSE.llama.cpp native-capabilities.txt
+          test "$(wc -c < "dist/$archive")" -le 419430400
+          python3 - <<'PY'
+          import hashlib,pathlib
+          for p in pathlib.Path('dist').glob('*.tar.gz'):
+              digest=hashlib.sha256(p.read_bytes()).hexdigest()
+              (p.parent/(p.name+'.sha256')).write_text(digest+'  '+p.name+'\n')
+          PY
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: true}
+      - name: Software Vulkan driver for CI
+        if: matrix.backend == 'vulkan' && matrix.os == 'linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers
+      - name: Native RPC end-to-end against the candidate bundle
+        shell: bash
+        env:
+          GGML_METAL_DEVICES: 0
+          NODEXLM_TEST_RPC_DEVICE: ${{ (matrix.os == 'darwin' || (matrix.os == 'windows' && matrix.backend == 'vulkan')) && 'CPU' || '' }}
+          NODEXLM_TEST_GPU_LAYERS: ${{ (matrix.os == 'darwin' || (matrix.os == 'windows' && matrix.backend == 'vulkan')) && '0' || 'auto' }}
+          NODEXLM_TEST_GUEST_COUNT: ${{ matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu' && '2' || '1' }}
+          NODEXLM_TEST_DEVICE_MICROBENCH: ${{ matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu' && '1' || '0' }}
+          NODEXLM_RPC_DIRECTIONAL_BENCH: '1'
+          NODEXLM_PARALLEL_RPC_UPLOAD: '1'
+          NODEXLM_RPC_BATCH_COMMANDS: '1'
+          NODEXLM_RPC_DIR: ${{ github.workspace }}/stage
+          NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
+        run: |
+          curl -fsSL --retry 3 https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -o tiny.gguf
+          python3 -c 'import hashlib,pathlib; assert hashlib.sha256(pathlib.Path("tiny.gguf").read_bytes()).hexdigest()=="270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d"'
+          go build -o nodexlm${{ matrix.os == 'windows' && '.exe' || '' }} ./cmd/nodexlm
+          python3 scripts/e2e-rpc.py
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with: {subject-path: 'dist/*.tar.gz'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rpc-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.backend }}
+          path: dist/*
+          retention-days: 14

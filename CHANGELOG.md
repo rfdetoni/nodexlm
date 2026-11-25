@@ -14,6 +14,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Runtime experimental
 
+- r5 candidate: bounded native command batching; revalidation only for the two failed Windows targets. r4 remains active until exact r5 hashes are reviewed.
+
 - Compressão lossless opt-in de transporte RPC (Go), negociada por túnel, frames limitados e fallback incompressível/legado. Métricas distinguem payload nativo e bytes de framing; validação Android e A/B físicos ainda pendentes.
 
 - Benchmark direcional negociado por conexão (Go/Rust), opt-in, com mediana de upload/download independentes e fallback legado.

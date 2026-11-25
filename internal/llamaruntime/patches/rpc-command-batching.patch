@@ -1,0 +1,117 @@
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -19,9 +19,10 @@
+ #include <mutex>
+ #include <unordered_map>
+ #include <unordered_set>
+-#include <cstring>
+-#include <fstream>
+-#include <filesystem>
++#include <cstring>
++#include <cstdlib>
++#include <fstream>
++#include <filesystem>
+ #include <algorithm>
+ #include <atomic>
+ 
+@@ -671,22 +672,83 @@
+     return true;
+ }
+ 
+-void rpc_dispatcher::work() {
+-    auto last_cmd = std::chrono::steady_clock::now();
+-    while (running) {
+-        rpc_msg_ptr msg_ptr;
+-        // spin only while commands keep coming, so an idle dispatcher does not keep a core busy
+-        const bool spin = busy_spin_users.load(std::memory_order_relaxed) != 0 &&
+-                          std::chrono::steady_clock::now() - last_cmd < RPC_BUSY_SPIN_IDLE_TIME;
+-        if (spin) {
+-            if (!queue.try_pop(&msg_ptr)) {
+-                rpc_cpu_relax();
+-                continue;
+-            }
+-        } else if (!queue.pop(&msg_ptr)) {
+-            break;
+-        }
+-        if (msg_ptr->cmd != RPC_CMD_NONE) {
++void rpc_dispatcher::work() {
++    auto last_cmd = std::chrono::steady_clock::now();
++    // Opt-in: coalesce only already queued, response-free, small commands.
++    // No wire extension or delay to collect work; never cross a sync barrier.
++    const char * batch_env = std::getenv("NODEXLM_RPC_BATCH_COMMANDS");
++    const bool batch = batch_env && std::strcmp(batch_env, "1") == 0;
++    constexpr size_t max_batch_bytes = 64 * 1024;
++    constexpr size_t max_batch_commands = 16;
++    rpc_msg_ptr deferred;
++    std::vector<uint8_t> wire;
++    std::array<rpc_msg_ptr, max_batch_commands> commands;
++    auto eligible = [](const rpc_msg_ptr & msg) {
++        return msg && msg->cmd != RPC_CMD_NONE && !msg->output &&
++               msg->output_size == 0 && msg->payload_size == 0 &&
++               msg->input_size <= 4096;
++    };
++    if (batch) {
++        LOG_INFO("NodexLM bounded RPC command batching enabled\n");
++    }
++    while (running) {
++        rpc_msg_ptr msg_ptr;
++        // spin only while commands keep coming, so an idle dispatcher does not keep a core busy
++        const bool spin = busy_spin_users.load(std::memory_order_relaxed) != 0 &&
++                          std::chrono::steady_clock::now() - last_cmd < RPC_BUSY_SPIN_IDLE_TIME;
++        if (deferred) {
++            msg_ptr = std::move(deferred);
++        } else if (spin) {
++            if (!queue.try_pop(&msg_ptr)) {
++                rpc_cpu_relax();
++                continue;
++            }
++        } else if (!queue.pop(&msg_ptr)) {
++            break;
++        }
++        // Do not bypass detailed upstream command diagnostics.
++        if (batch && rpc_log_debug_level() < 2 && eligible(msg_ptr)) {
++            rpc_msg_ptr next;
++            if (queue.try_pop(&next)) {
++                if (!eligible(next)) {
++                    deferred = std::move(next);
++                } else {
++                    wire.clear();
++                    size_t count = 0;
++                    auto append = [&](rpc_msg_ptr msg) {
++                        const uint64_t size = msg->input_size;
++                        const size_t pos = wire.size();
++                        wire.resize(pos + 9 + size);
++                        wire[pos] = static_cast<uint8_t>(msg->cmd);
++                        // Fixed little-endian wire framing, independent of ABI.
++                        for (size_t i = 0; i < 8; ++i) {
++                            wire[pos + 1 + i] = static_cast<uint8_t>(size >> (8 * i));
++                        }
++                        if (size) {
++                            memcpy(wire.data() + pos + 9, msg->input.get(), size);
++                        }
++                        commands[count++] = std::move(msg);
++                    };
++                    append(std::move(msg_ptr));
++                    append(std::move(next));
++                    while (count < max_batch_commands && queue.try_pop(&next)) {
++                        if (!eligible(next) || wire.size() + 9 + next->input_size > max_batch_bytes) {
++                            deferred = std::move(next);
++                            break;
++                        }
++                        append(std::move(next));
++                    }
++                    RPC_STATUS_ASSERT(sock->send_data(wire.data(), wire.size()) && sock->flush());
++                    for (size_t i = 0; i < count; ++i) {
++                        commands[i]->completion.set_value();
++                        commands[i].reset();
++                    }
++                    last_cmd = std::chrono::steady_clock::now();
++                    continue;
++                }
++            }
++        }
++        if (msg_ptr->cmd != RPC_CMD_NONE) {
+             LOG_DBG2("[%s] %s (in: %s, out: %s)\n", __func__, rpc_cmd_name(msg_ptr->cmd),
+                      rpc_log_format_size(msg_ptr->input_size).c_str(), rpc_log_format_size(msg_ptr->output_size).c_str());
+             const bool trace = rpc_log_debug_level() >= 3;
