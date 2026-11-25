@@ -156,6 +156,8 @@ def rejoin_guests(old, new, endpoint, guests):
     expect(new, HOST, "ActiveState", ("active",))
     expect(new, GUEST, "ActiveState", ("inactive",))
     new_id = remote(new, "cat", "/etc/machine-id")
+    if not new_id:
+        raise RuntimeError("new Host machine identity missing")
     machine_ids = {new_id}
     for guest in guests:
         identity = remote(guest, "cat", "/etc/machine-id")
