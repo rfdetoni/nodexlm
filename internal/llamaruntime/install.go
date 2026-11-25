@@ -395,8 +395,15 @@ func SupportsRPC(ctx context.Context, server string) bool {
 // libraries and must not be reused after upgrading the CLI.
 func distributedDir(home, backend string) string {
 	dir := installDir(home, backend) + "-rpc"
-	if nativeTraceBuild() {
-		return dir + "-" + revision.RPCRelease + "-native-trace-v1"
+	if nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
+		dir += "-" + revision.RPCRelease
+		if nativeTraceBuild() {
+			dir += "-native-trace-v1"
+		}
+		if smolmaxSingleRowBuild(backend) {
+			dir += "-smolmax-row-v1"
+		}
+		return dir
 	}
 	if experimentalCUDASelected(backend) {
 		return dir + "-" + experimentalCUDARelease
@@ -441,8 +448,8 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		}
 		return s, p, nil
 	}
-	if nativeTraceBuild() {
-		slog.Info("Opt-in native trace requires a separate instrumented source build")
+	if nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
+		slog.Info("Opt-in native optimization requires a separate pinned source build")
 	} else if publishedRPCSupported(backend) {
 		slog.Info("Checking verified RPC runtime download", "platform", runtime.GOOS+"/"+runtime.GOARCH, "backend", backend, "release", revision.RPCRelease)
 		var s, p string
@@ -503,7 +510,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	if err != nil || strings.TrimSpace(string(raw)) != SourceCommit {
 		return "", "", errors.New("pinned llama.cpp source commit mismatch")
 	}
-	if err := applyRPCPatch(ctx, src); err != nil {
+	if err := applyRPCPatch(ctx, src, backend); err != nil {
 		return "", "", err
 	}
 	build := filepath.Join(stage, "build")
