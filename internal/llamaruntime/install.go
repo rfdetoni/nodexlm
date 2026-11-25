@@ -398,6 +398,9 @@ func distributedDir(home, backend string) string {
 	if nativeTraceBuild() {
 		return dir + "-" + revision.RPCRelease + "-native-trace-v1"
 	}
+	if experimentalCUDASelected(backend) {
+		return dir + "-" + experimentalCUDARelease
+	}
 	if publishedRPCSupported(backend) {
 		return dir + "-" + revision.RPCRelease
 	}
@@ -428,6 +431,16 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	// Prefer a ready-to-run, pinned RPC pair: ordinary Linux Guests should not
 	// need CMake, a compiler or root access just to join a trusted cluster.
 	var publishedErr error
+	if experimentalCUDASelected(backend) {
+		s, p, err := fetchPublishedRPC(ctx, home, backend, experimentalCUDABaseURL)
+		if err != nil {
+			return "", "", fmt.Errorf("verified experimental CUDA download: %w", err)
+		}
+		if !SupportsRPC(ctx, s) || !SupportsUnixRPC(ctx, s) {
+			return "", "", errors.New("experimental CUDA runtime failed RPC capability probe; check CUDA dependencies")
+		}
+		return s, p, nil
+	}
 	if nativeTraceBuild() {
 		slog.Info("Opt-in native trace requires a separate instrumented source build")
 	} else if publishedRPCSupported(backend) {
