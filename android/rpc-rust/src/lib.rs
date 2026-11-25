@@ -115,7 +115,7 @@ fn config(host: String, port: u16, node: String, token: String, cert: Vec<u8>, s
     // Do not cache TLS session secrets or enable early data. Each tunnel
     // authenticates the exact currently enrolled Host.
     tls.resumption = rustls::client::Resumption::disabled();
-    let request = format!("CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nX-Nodex-Node: {node}\r\n\r\n").into_bytes();
+    let request = format!("CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nX-Nodex-Node: {node}\r\nX-Nodex-RPC-Capabilities: directional-v1\r\n\r\n").into_bytes();
     Ok(Config { host, port, request, socket, server_name, efficient_cores, tls: TlsConnector::from(Arc::new(tls)) })
 }
 
@@ -178,6 +178,20 @@ async fn connect_status<R: AsyncRead + Unpin>(r: &mut R) -> Result<(), RelayErro
         }
     }
     Err(RelayError::Protocol)
+}
+
+async fn directional<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> Result<(), RelayError> {
+    let mut buffer = vec![0; 16 * 1024];
+    for _ in 0..64 {
+        s.read_exact(&mut buffer).await?;
+        if buffer.iter().any(|&b| b != 0xa5) { return Err(RelayError::Protocol); }
+    }
+    s.write_u8(0xa5).await?;
+    s.flush().await?;
+    if s.read_u8().await? != 0x5a { return Err(RelayError::Protocol); }
+    for _ in 0..64 { s.write_all(&buffer).await?; }
+    s.flush().await?;
+    Ok(())
 }
 
 async fn benchmark<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> Result<(), RelayError> {
@@ -265,6 +279,10 @@ async fn relay(cfg: &Config, c: Arc<Control>) -> Result<(), RelayError> {
     match remote.read_u8().await? {
         2 => timeout(Duration::from_secs(15), benchmark(&mut remote))
             .await.map_err(|_| timed_out())?,
+        3 => timeout(Duration::from_secs(15), async {
+            benchmark(&mut remote).await?;
+            directional(&mut remote).await
+        }).await.map_err(|_| timed_out())?,
         1 => {
             let _claim = Claim::new(c);
             let local = timeout(Duration::from_secs(3), UnixStream::connect(&cfg.socket))
@@ -468,6 +486,21 @@ mod tests {
             let mut out = vec![0; body.len()];
             host.read_exact(&mut out).await.unwrap();
             assert_eq!(out, body);
+        }
+        g.await.unwrap().unwrap();
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn directional_probe_is_bounded_and_independent() {
+        let (mut host, mut guest) = tokio::io::duplex(32768);
+        let g = tokio::spawn(async move { directional(&mut guest).await });
+        let payload = vec![0xa5; 16384];
+        for _ in 0..64 { host.write_all(&payload).await.unwrap(); }
+        assert_eq!(host.read_u8().await.unwrap(), 0xa5);
+        host.write_u8(0x5a).await.unwrap();
+        let mut out = vec![0; 16384];
+        for _ in 0..64 {
+            host.read_exact(&mut out).await.unwrap();
+            assert_eq!(out, payload);
         }
         g.await.unwrap().unwrap();
     }

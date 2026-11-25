@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Runtime experimental
 
+- Benchmark direcional negociado por conexão (Go/Rust), opt-in, com mediana de upload/download independentes e fallback legado.
+
 - CUDA explícito no Host e Guest, fallback de compilação Linux e descoberta nativa; binários CUDA publicados e validação física ainda pendentes.
 
 ## Correções da auditoria

@@ -88,6 +88,7 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	}
 	req.Header.Set("Authorization", "Bearer "+client.Token)
 	req.Header.Set("X-Nodex-Node", client.NodeID)
+	req.Header.Set("X-Nodex-RPC-Capabilities", "directional-v1")
 	// A stalled Host must not consume a tunnel slot indefinitely during CONNECT.
 	if err = secured.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return err
@@ -119,9 +120,15 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	if err != nil {
 		return err
 	}
-	if marker == 2 {
+	if marker == 2 || marker == 3 {
 		_ = secured.SetDeadline(time.Now().Add(15 * time.Second))
-		return echoBenchmark(reader, secured)
+		if err := echoBenchmark(reader, secured); err != nil {
+			return err
+		}
+		if marker == 3 {
+			return directionalGuest(reader, secured)
+		}
+		return nil
 	}
 	if marker != 1 {
 		return errors.New("invalid RPC relay handshake")
