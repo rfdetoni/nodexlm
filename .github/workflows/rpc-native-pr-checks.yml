@@ -32,7 +32,9 @@ jobs:
             https://github.com/ggml-org/llama.cpp.git llama-source
           test "$(git -C llama-source rev-parse HEAD)" = "$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')"
           git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/arm32-rpc-wire.patch"
           git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          git -C llama-source apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
       - name: Compile patched native llama-server and worker
         shell: bash
         run: |
