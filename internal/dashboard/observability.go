@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -163,7 +164,9 @@ func (m *Manager) recordInferenceWithLatency(model string, raw []byte, elapsed t
 			// Only compare the controlled cluster sample with equivalent
 			// native decode measurements, never a single Guest's rate.
 			key := model + "@bench-cluster"
+			topology := strings.Join(m.loadRPCNodes, ":") + ":" + fmt.Sprint(m.engine.RPCLocalLayers) + ":" + strings.Join(m.engine.RPCDeviceNames, ",") + ":" + m.engine.RPCTensorSplit
 			if baseline, ok := m.samples[key]; ok && baseline.Kind == "benchmark" &&
+				baseline.BenchmarkTopology == topology && len(m.loadRPCNodes) > 0 &&
 				baseline.RateBasis == "native_decode" && sample.RateBasis == baseline.RateBasis &&
 				baseline.TokensPerSecond > 0 && time.Since(baseline.MeasuredAt) < 24*time.Hour {
 				if sample.TokensPerSecond < baseline.TokensPerSecond*0.7 || sample.TokensPerSecond > baseline.TokensPerSecond*1.3 {
