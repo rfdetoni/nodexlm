@@ -692,6 +692,10 @@ class MainActivity : Activity() {
             text = getString(R.string.rpc_cpu_affinity)
             isChecked = prefs.getBoolean("rpc_cpu_affinity", false)
         }
+        val weightCache = CheckBox(this).apply {
+            text = getString(R.string.rpc_weight_cache)
+            isChecked = prefs.getBoolean("rpc_weight_cache", false)
+        }
         val dedicatedGuest = CheckBox(this).apply {
             text = getString(R.string.rpc_dedicated_guest)
             isChecked = prefs.getBoolean("rpc_dedicated_guest", false)
@@ -702,6 +706,7 @@ class MainActivity : Activity() {
         }
         settings.addView(rpcCompression)
         settings.addView(cpuAffinity)
+        settings.addView(weightCache)
         settings.addView(dedicatedGuest)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
@@ -726,6 +731,7 @@ class MainActivity : Activity() {
                     .putBoolean("rpc_efficient_cores", efficientCores.isChecked)
                     .putBoolean("rpc_compression", rpcCompression.isChecked)
                     .putBoolean("rpc_cpu_affinity", cpuAffinity.isChecked)
+                    .putBoolean("rpc_weight_cache", weightCache.isChecked)
                     .putBoolean("rpc_dedicated_guest", dedicatedGuest.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
@@ -813,6 +819,7 @@ class MainActivity : Activity() {
                 .putExtra(RpcGuestService.EXTRA_EFFICIENT_CORES, prefs.getBoolean("rpc_efficient_cores", false))
                 .putExtra(RpcGuestService.EXTRA_COMPRESSION, prefs.getBoolean("rpc_compression", false))
                 .putExtra(RpcGuestService.EXTRA_CPU_AFFINITY, prefs.getBoolean("rpc_cpu_affinity", false))
+                .putExtra(RpcGuestService.EXTRA_WEIGHT_CACHE, prefs.getBoolean("rpc_weight_cache", false))
             startForegroundService(intent)
             setStatus(getString(R.string.ui_69873d9d8387))
             // Foreground RPC service lives in :rpc. Closing this task releases
