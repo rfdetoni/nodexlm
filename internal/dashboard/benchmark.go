@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -71,7 +72,7 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 	return sample, m.persistBenchmarksLocked()
 }
 
-func (m *Manager) measureInference(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest) (InferenceSample, error) {
+func (m *Manager) measureInference(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest, frozen ...*benchmarkPlacement) (InferenceSample, error) {
 	settings.Model = model
 	path, err := modelPath(m.modelDir, model)
 	if err != nil {
@@ -128,17 +129,37 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 			return InferenceSample{}, errors.New("no RPC Guests")
 		}
 		guests := provider()
-		selection, err := m.chooseRPC(settings, meta, uint64(size), hostBudget, guests)
-		if err != nil {
-			return InferenceSample{}, err
+		var selection clusterplan.Selection
+		var placement RPCDevicePlacement
+		var layers int
+		var fixed *benchmarkPlacement
+		if len(frozen) > 0 {
+			fixed = frozen[0]
 		}
-		if len(selection.Guests) == 0 {
-			return InferenceSample{}, errors.New("placement selected Host only; choose capacity strategy to measure a cluster")
-		}
-		placement, layers := planRPCDevices(selection, guests, meta, settings, uint64(size)), selection.LocalLayers
-		if len(placement.Devices) > 0 && layers > 0 && settings.GPULayers != "0" {
-			device := discoverHostGPU(ctx, binary, settings.HostGPU)
-			placement, layers = withHostGPU(placement, layers, meta.BlockCount, settings.HostGPU, device, settings.GPULayers)
+		if fixed != nil && fixed.ready {
+			if err := fixed.validate(guests, meta, settings, uint64(size), hostBudget); err != nil {
+				return InferenceSample{}, err
+			}
+			selection, placement, layers = fixed.selection, fixed.devices, fixed.localLayers
+			if placement.Modes["host"] != "" && (len(placement.Devices) == 0 || discoverHostGPU(ctx, binary, settings.HostGPU) != placement.Devices[0]) {
+				return InferenceSample{}, errors.New("fixed Host GPU is no longer available")
+			}
+		} else {
+			selection, err = m.chooseRPC(settings, meta, uint64(size), hostBudget, guests)
+			if err != nil {
+				return InferenceSample{}, err
+			}
+			if len(selection.Guests) == 0 {
+				return InferenceSample{}, errors.New("placement selected Host only; choose capacity strategy to measure a cluster")
+			}
+			placement, layers = planRPCDevices(selection, guests, meta, settings, uint64(size)), selection.LocalLayers
+			if len(placement.Devices) > 0 && layers > 0 && settings.GPULayers != "0" {
+				device := discoverHostGPU(ctx, binary, settings.HostGPU)
+				placement, layers = withHostGPU(placement, layers, meta.BlockCount, settings.HostGPU, device, settings.GPULayers)
+			}
+			if fixed != nil {
+				*fixed = benchmarkPlacement{ready: true, selection: selection, devices: placement, localLayers: layers, guests: slices.Clone(guests)}
+			}
 		}
 		for _, selected := range selection.Guests {
 			for _, guest := range guests {

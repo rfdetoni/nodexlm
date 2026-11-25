@@ -22,10 +22,11 @@ type TuneCandidate struct {
 }
 
 type TuneReport struct {
-	Fingerprint string          `json:"fingerprint"`
-	MeasuredAt  time.Time       `json:"measured_at"`
-	Candidates  []TuneCandidate `json:"candidates"`
-	Recommended *Settings       `json:"recommended,omitempty"`
+	Fingerprint    string          `json:"fingerprint"`
+	PlacementFixed bool            `json:"placement_fixed,omitempty"`
+	MeasuredAt     time.Time       `json:"measured_at"`
+	Candidates     []TuneCandidate `json:"candidates"`
+	Recommended    *Settings       `json:"recommended,omitempty"`
 }
 
 func tuneCandidates(s Settings, physical int, slowRPC bool, link ...string) []TuneCandidate {
@@ -143,8 +144,17 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 		return TuneReport{}, errors.New("invalid model for autotuning")
 	}
 	report := TuneReport{Fingerprint: fingerprint, MeasuredAt: time.Now()}
+	var fixed *benchmarkPlacement
+	if node == "cluster" {
+		fixed = &benchmarkPlacement{}
+	}
 	measure := func(row TuneCandidate) {
-		sample, err := m.measureInference(ctx, row.Settings, model, node, false, provider)
+		if fixed != nil && row.Name != "baseline" && !report.PlacementFixed {
+			row.Error = "baseline did not establish explicit native cluster placement"
+			report.Candidates = append(report.Candidates, row)
+			return
+		}
+		sample, err := m.measureInference(ctx, row.Settings, model, node, false, provider, fixed)
 		if err != nil {
 			row.Error = err.Error()
 		} else {
@@ -157,6 +167,7 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 	}
 	measure(TuneCandidate{Name: "baseline", Settings: s})
 	first := report.Candidates[0].Sample
+	report.PlacementFixed = fixed != nil && fixed.ready && first != nil && len(fixed.devices.Devices) > 0
 	slowRPC := node != "" && first != nil && m.slowBenchmarkRPC(first.BenchmarkTopology)
 	link := ""
 	if node != "" && first != nil {

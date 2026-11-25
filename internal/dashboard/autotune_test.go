@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
+	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
 
@@ -111,5 +113,36 @@ func TestPrefillLinkFindsSlowGuestAfterUnmeasuredGuest(t *testing.T) {
 	}
 	if got := m.prefillLink(unknown + ":" + slow + ":0::"); got != "" {
 		t.Fatalf("unmeasured link was treated as fast: %q", got)
+	}
+}
+
+func TestFixedBenchmarkPlacementRetainsSplitForLowerBatch(t *testing.T) {
+	const mib = uint64(1 << 20)
+	meta := local.GGUFInfo{BlockCount: 40, EmbeddingLength: 4096, HeadCount: 32, KVHeadCount: 8}
+	guest := RPCGuest{ID: "guest", Endpoint: "127.0.0.1:1234", CapacityBytes: 1800 * mib, GPUBudgetBytes: 600 * mib, RAMBudgetBytes: 1200 * mib, RPCDeviceKinds: []string{"gpu", "cpu"}}
+	guests := []RPCGuest{guest}
+	selection := clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}
+	baseline := Settings{ContextTokens: 256, BatchSize: 1024, UBatchSize: 1024}
+	candidate := baseline
+	candidate.BatchSize, candidate.UBatchSize = 128, 128
+	placement := planRPCDevices(selection, guests, meta, baseline, 1200*mib)
+	alternative := planRPCDevices(selection, guests, meta, candidate, 1200*mib)
+	if placement.TensorSplitArg() == alternative.TensorSplitArg() || len(placement.Devices) != 2 {
+		t.Fatalf("fixture must reproduce changing split: %+v %+v", placement, alternative)
+	}
+	fixed := benchmarkPlacement{ready: true, selection: selection, devices: placement, guests: guests}
+	// Use a larger currently reported GPU budget to cover conservative rounded
+	// layer admission. The candidate's arguments must still be the baseline's.
+	current := slices.Clone(guests)
+	current[0].GPUBudgetBytes = 800 * mib
+	if err := fixed.validate(current, meta, candidate, 1200*mib, 512*mib); err != nil {
+		t.Fatal(err)
+	}
+	if fixed.devices.TensorSplitArg() != placement.TensorSplitArg() {
+		t.Fatal("fixed split mutated")
+	}
+	current[0].GPUBudgetBytes = mib
+	if err := fixed.validate(current, meta, candidate, 1200*mib, 512*mib); err == nil {
+		t.Fatal("accepted insufficient device memory")
 	}
 }

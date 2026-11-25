@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Correções da auditoria
 
+- FIX2: autotune de cluster fixa placement do baseline e revalida memória/topologia para cada candidato; não compara splits diferentes.
+
 - FIX5: benchmark de rede adapta quantidade de pares aos túneis ociosos, limita cada par a 5 s dentro do orçamento total e informa amostras reais.
 
 - FIX4: amostras suspeitas não ponderam placement; motivo de re-medição explícito, sem confundir benchmark agregado com taxa individual.
