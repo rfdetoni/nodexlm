@@ -87,17 +87,18 @@ func (m *Manager) Plan() (map[string]any, error) {
 		if provider != nil {
 			guests = provider()
 		}
-		selection, selectErr := m.chooseRPC(settings, meta, uint64(size), host, guests)
+		measurements := m.placementMeasurements(settings)
+		selection, selectErr := m.chooseRPCWithMeasurements(settings, meta, uint64(size), host, guests, measurements)
 		if selectErr != nil {
 			return nil, selectErr
 		}
 		localLayers = selection.LocalLayers
 		hostWeight = uint64(size) * uint64(localLayers) / uint64(meta.BlockCount)
-		if len(selection.GuestLayers) > 0 && len(selection.GuestLayers) == len(selection.Guests) {
+		if len(selection.GuestLayers) > 0 && len(selection.GuestLayers) == len(selection.Guests) && len(meta.BlockBytes) == int(meta.BlockCount) {
 			hostWeight = meta.NonBlockBytes + blockWeight(meta, 0, localLayers)
 		}
 		devices := planRPCDevices(selection, guests, meta, settings, uint64(size))
-		suggestions = append(suggestions, m.kvPlacementSuggestion(settings, meta, uint64(size), host, guests, selection, devices)...)
+		suggestions = append(suggestions, m.kvPlacementSuggestion(settings, meta, uint64(size), host, guests, selection, devices, measurements)...)
 		excluded = selection.Excluded
 		selectionReason = selection.Reason
 		var total uint64
@@ -115,7 +116,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 			}
 			weight := uint64(size) * uint64(layers) / uint64(meta.BlockCount)
 			if len(selection.GuestLayers) == len(selection.Guests) {
-				weight = blockWeight(meta, int(meta.BlockCount)-remaining, layers)
+				weight = estimatedBlockWeight(meta, uint64(size), int(meta.BlockCount)-remaining, layers)
 			}
 			name, endpoint := guest.ID, ""
 			var ramBudget, vramBudget uint64
@@ -174,7 +175,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if kvType == "" {
 		kvType = "f16"
 	}
-	return map[string]any{"suggestions": append(suggestions, speculativeSuggestion(nodes)...), "estimated_minimum_runtime_bytes": estimateTransientBytes(meta, settings), "bundled_rpc_release": llamaruntime.BundledRPCRelease(), "bundled_parallel_rpc_uploads_supported": llamaruntime.BundledParallelRPCUploadsSupported(), "estimated_kv_type": kvType, "strategy": strategy, "excluded_guests": excluded, "selection_reason": selectionReason, "model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
+	return map[string]any{"suggestions": append(suggestions, speculativeSuggestion(nodes)...), "estimated_minimum_runtime_bytes": estimateTransientBytes(meta, settings), "bundled_rpc_release": llamaruntime.BundledRPCRelease(), "bundled_parallel_rpc_uploads_supported": llamaruntime.BundledParallelRPCUploadsSupported(), "estimated_kv_type": kvType, "strategy": strategy, "primary_node": settings.PrimaryNode, "excluded_guests": excluded, "selection_reason": selectionReason, "model": settings.Model, "size_bytes": size, "blocks": meta.BlockCount, "nodes": nodes, "estimated_kv_bytes": kvBytes, "tokens_per_second": tps, "bottleneck": bottleneck, "notice": "Layer placement and KV memory are estimates; native GGML determines actual allocation. Network advisory thresholds: RTT >10 ms or aggregate echo <50 MiB/s. Tokens/s is an observed measurement for this model, not a prediction from bandwidth; configuration or node changes can invalidate comparison."}, nil
 }
 func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 	if len(id) != 64 {
@@ -194,12 +195,14 @@ func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 	return &sample
 }
 
-func (m *Manager) kvPlacementSuggestion(s Settings, meta local.GGUFInfo, size, host uint64, guests []RPCGuest, original clusterplan.Selection, devices RPCDevicePlacement) []planSuggestion {
+func (m *Manager) kvPlacementSuggestion(s Settings, meta local.GGUFInfo, size, host uint64, guests []RPCGuest, original clusterplan.Selection, devices RPCDevicePlacement, measurements placementMeasurements) []planSuggestion {
 	if (s.KVCacheType != "" && s.KVCacheType != "f16") || estimateKVBytes(meta, s) == nil {
 		return nil
 	}
 	s.KVCacheType = "q8_0"
-	alternative, err := m.chooseRPC(s, meta, size, host, guests)
+	// Retain the original controlled rates only for this memory what-if.
+	// Do not persist them or treat them as measured q8_0 throughput.
+	alternative, err := m.chooseRPCWithMeasurements(s, meta, size, host, guests, measurements)
 	if err != nil {
 		return nil
 	}
@@ -213,5 +216,5 @@ func (m *Manager) kvPlacementSuggestion(s Settings, meta local.GGUFInfo, size, h
 	if !improved {
 		return nil
 	}
-	return []planSuggestion{{Kind: "kv_q8_0", Reason: "Estimativa de admissão com KV q8_0 permite reduzir Guests ou usar somente GPU. Teste Flash Attention compatível e qualidade antes de aplicar."}}
+	return []planSuggestion{{Kind: "kv_q8_0", Reason: "Estimativa de admissão com KV q8_0 (mesmas medições de placement) permite reduzir Guests ou usar somente GPU. Teste Flash Attention compatível e qualidade antes de aplicar."}}
 }

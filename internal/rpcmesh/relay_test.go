@@ -220,34 +220,50 @@ func TestIdleClaimPreservesFirstByte(t *testing.T) {
 }
 
 func TestLegacyEchoBenchmarkMedian(t *testing.T) {
-	hub := NewHub()
-	defer hub.Close()
-	r := &relay{ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
-	hub.nodes["test"] = r
-	// Hub.Close requires a listener; keep the fixture local.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.listener = listener
-	for range 4 {
-		host, guest := net.Pipe()
-		r.track(host)
-		pending := &idleTunnel{conn: host, claimed: make(chan struct{}), stopped: make(chan struct{})}
-		r.enqueue(pending)
-		go r.watchIdle(pending)
-		go func() {
-			defer guest.Close()
-			var marker [1]byte
-			if _, err := io.ReadFull(guest, marker[:]); err == nil && marker[0] == 2 {
-				_ = echoBenchmark(guest, guest)
+	for _, slots := range []int{1, 2, 3, 8} {
+		t.Run(fmt.Sprint(slots), func(t *testing.T) {
+			hub := NewHub()
+			defer hub.Close()
+			r := &relay{ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
+			hub.nodes["test"] = r
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
 			}
-		}()
+			r.listener = listener
+			var add func(bool)
+			add = func(replenish bool) {
+				host, guest := net.Pipe()
+				r.track(host)
+				pending := &idleTunnel{conn: host, claimed: make(chan struct{}), stopped: make(chan struct{})}
+				r.enqueue(pending)
+				go r.watchIdle(pending)
+				go func() {
+					defer guest.Close()
+					var marker [1]byte
+					if _, err := io.ReadFull(guest, marker[:]); err == nil && marker[0] == 2 {
+						if echoBenchmark(guest, guest) == nil && replenish {
+							add(false)
+						}
+					}
+				}()
+			}
+			for range slots {
+				add(slots == 1)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			got, err := hub.Benchmark(ctx, "test")
+			want := min(3, max(1, slots-1))
+			if err != nil || got.Samples != want || got.Bytes != want*(2<<20) || got.MiBPerSecond <= 0 {
+				t.Fatalf("legacy echo median: %+v %v", got, err)
+			}
+			if want == 1 && (got.RTTSpreadMS != 0 || got.EchoSpreadMiBPerSecond != 0) {
+				t.Fatalf("single sample has nonzero spread: %+v", got)
+			}
+		})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	got, err := hub.Benchmark(ctx, "test")
-	if err != nil || got.Samples != 3 || got.Bytes != 6<<20 || got.MiBPerSecond <= 0 {
-		t.Fatalf("legacy echo median: %+v %v", got, err)
+	if medianSorted([]float64{2, 4}) != 3 || medianSorted([]float64{2}) != 2 || medianSorted([]float64{1, 2, 9}) != 2 {
+		t.Fatal("incorrect median")
 	}
 }

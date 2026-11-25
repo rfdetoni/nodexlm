@@ -25,6 +25,11 @@ func RecommendedThreads(root string, logical int) int {
 	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
 		return fallback
 	}
+	return recommendedThreads(root, logical, fallback)
+}
+
+// recommendedThreads reports the fastest cluster or the caller's fallback.
+func recommendedThreads(root string, logical, fallback int) int {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return fallback
@@ -116,8 +121,9 @@ func GuestThreads(requested, physical int, policy string) (int, error) {
 	if requested > 0 {
 		return requested, nil
 	}
-	if policy == "performance" {
-		return min(256, RecommendedThreads("/sys/devices/system/cpu", runtime.NumCPU())), nil
+	fallback := min(256, max(1, physical))
+	if policy == "performance" && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
+		return min(256, recommendedThreads("/sys/devices/system/cpu", runtime.NumCPU(), fallback)), nil
 	}
-	return min(256, max(1, physical)), nil
+	return fallback, nil
 }

@@ -21,7 +21,7 @@ de 24 horas expiram; ausência de medição não significa que o nó seja lento.
 Para ponderar camadas, benchmarks de Host e Guest precisam ser controlados,
 recentes (menos de 24 horas), do mesmo modelo e fingerprint de opções, e da
 mesma base de taxa (decode nativo ou ponta a ponta). Sem comparabilidade,
-o split permanece proporcional à memória. Com o opt-in explícito no Host
+o split permanece proporcional à memória. Uma medição suspeita de Host/Guest desativa a ponderação por tokens/s para a decisão até nova medição controlada; a amostra de cluster permanece visível para diagnóstico. Com o opt-in explícito no Host
 `NODEXLM_RPC_COST_PLACEMENT=1` (desabilitado por padrão) no modo velocidade,
 quando todos os nós selecionados possuem RTT medido, o planner compara prefixos ranqueados
 e Guests individuais por custo serial estimado: tempo por camada derivado
@@ -143,3 +143,13 @@ O workflow `Real RPC end-to-end` executa um teste focado nas alterações de E2E
 Para a coleta física, mantenha o mesmo GGUF (confira `sha256sum`), configurações, topologia e temperatura inicial. Descarregue todos os modelos e execute `python3 scripts/hardware-acceptance.py --model MODELO.gguf --repeat 3 --output host.json`, depois o mesmo com `--node ID_DO_GUEST --output guest.json` e `--node cluster --output cluster.json`. Para cluster, selecione o GGUF e habilite distribuição; use capacity se precisar forçar o teste distribuído. O coletor salva settings, plano de cluster, métricas nativas, estatísticas RPC antes/depois e rede por Guest. Repita com cada opt-in isolado, mesmo contexto, batch, ubatch, KV/FA e temperatura. Compare apenas bases de taxa e topologias equivalentes. Hardware, consumo e qualidade exigem validação do operador.
 
 A revisão final rejeita bases de taxa mistas na ausência de benchmark do Host, exige fingerprint da carga e topologia compatíveis para o alerta de divergência, não ignora um link lento medido quando outro ainda não tem amostra e contabiliza os pesos não-blk na prévia do Host. O coletor interrompe sessões com topologia alterada entre rodadas.
+
+No autotune de cluster, o placement nativo do baseline fica fixado (Guests, camadas locais, devices e tensor-split). O relatório informa `placement_fixed`; candidatos revalidam os budgets atuais e a estimativa de memória de cada dispositivo, sem recalcular o split por fingerprint. Topologia desconhecida/legacy continua funcionando na inferência normal, mas não produz recomendação de autotune de cluster sem um baseline explícito.
+
+A sugestão de KV q8_0 usa o mesmo snapshot de benchmarks/fingerprint da seleção original exclusivamente na comparação de memória; não assume que os tokens/s se repetem após quantizar o KV e não aplica a configuração.
+
+## Nó principal (opt-in)
+
+A preferência `primary_node` (vazio/auto, host ou ID do Guest conectado) maximiza a fatia de pesos estimada, não tokens/s. Tem precedência sobre ponderação por velocidade/RTT. Em capacidade, mantém todos os Guests com memória disponível; em velocidade pode omitir Guests secundários. Pesos não-blk permanecem no Host. Usa pesos GGUF por bloco quando disponíveis, estimativa uniforme conservadora caso contrário, margem de 15% e reserva de contexto por dispositivo. Legacy sem topologia usa fallback proporcional identificado; principal offline causa erro. O cálculo maximiza dentro da ordem determinística dos Guests (principal primeiro); não busca permutações. O processo llama-server e coordenador não migram. Compare A/B antes de concluir ganho.
+
+A coleta de cluster com 2–10 rodadas usa `/api/bench/inference-series`: mantém os argumentos nativos do primeiro load, descarrega entre rodadas, revalida budgets/topologia e rejeita séries incompatíveis. Rede medida antes da série (baseline compartilhado), contadores RPC antes/depois de cada rodada. A API antiga de medição única continua compatível.

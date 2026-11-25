@@ -121,7 +121,8 @@ def main():
             measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
             assert measurement['mib_per_second'] > 0
             if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
-                assert measurement.get('samples') == 3, measurement
+                assert 1 <= measurement.get('samples', 0) <= 3, measurement
+                assert measurement['bytes'] == measurement['samples'] * (2 << 20), measurement
                 for node in nodes:
                     sample = json.load(api('/api/bench/rpc-device/'+node['id'],'POST',{}))
                     assert sample['source'] == 'auto', sample
@@ -131,6 +132,34 @@ def main():
             settings = json.load(api('/api/status'))['settings']
             settings.update(model=model.name,distributed=True,context_tokens=256,threads=2,gpu_layers=os.environ.get('NODEXLM_TEST_GPU_LAYERS','auto'),placement_strategy='capacity')
             api('/api/settings','PUT',settings).close()
+            if guest_count == 2 and os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1' and pathlib.Path('/proc').is_dir():
+                # Observe actual post-preflight native traffic before cancelling.
+                # The tiny fixture checks real process teardown/reload, not upload timing on hardware.
+                api('/api/load','POST',{}).close()
+                deadline = time.monotonic() + 20
+                child_pids = set()
+                while time.monotonic() < deadline:
+                    state = json.load(api('/api/status'))['runtime']
+                    if state.get('error') or state.get('loaded'):
+                        raise AssertionError(f'Load completed before cancellation fixture: {state}')
+                    if state.get('phase') == 'loading_model' and any(n.get('to_guest_bytes',0)>0 for n in state.get('rpc_transfer',{}).values()):
+                        for task in pathlib.Path(f'/proc/{host.pid}/task').glob('*/children'):
+                            try:
+                                child_pids.update(int(pid) for pid in task.read_text().split())
+                            except FileNotFoundError:
+                                pass
+                        if child_pids:
+                            break
+                    time.sleep(.005)
+                assert child_pids, 'No native child and RPC traffic observed during load'
+                api('/api/inference/cancel-load','POST',{}).close()
+                cancelled = wait_for(lambda: (s if not s['loading'] else None) if (s:=json.load(api('/api/status'))['runtime']) else None,20)
+                assert cancelled['phase']=='cancelled' and not cancelled['loaded'],cancelled
+                assert not json.load(api('/api/resident-models'))
+                wait_for(lambda: all(not pathlib.Path(f'/proc/{pid}').exists() for pid in child_pids),10)
+                ids={n['id'] for n in nodes}
+                wait_for(lambda: all(stats.get(id,{}).get('idle',0)>0 for id in ids) if (stats:=json.load(api('/api/cluster'))['rpc_stats']) else None,20)
+                print('PASS: cancelled distributed native load with observed RPC traffic; child reaped, Guests idle, reload follows')
             api('/api/load','POST',{}).close()
             def loaded():
                 state = json.load(api('/api/status'))['runtime']
@@ -138,6 +167,10 @@ def main():
                     raise AssertionError(state['error'])
                 return state['loaded']
             wait_for(loaded,120)
+            topology=json.load(api('/api/inference/topology'))
+            assert topology['loaded'] and sum(n['layers'] for n in topology['nodes']) == topology['blocks'],topology
+            assert len(topology['nodes']) == guest_count+1,topology
+            assert json.load(api('/api/inference/activity'))['in_flight'] == 0
             if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
                 try:
                     api('/api/bench/rpc-device/'+nodes[0]['id'],'POST',{}).close()
@@ -183,6 +216,8 @@ def main():
                 cluster_report = acceptance.collect(base,token,model.name,'cluster',2,'ci')
                 assert cluster_report['plan'] and cluster_report['physical_acceptance'] == 'not-established'
                 assert all(p['networks'] and p['inference']['benchmark_topology'] for p in cluster_report['measurements'])
+                assert len({p['inference']['benchmark_topology'] for p in cluster_report['measurements']}) == 1
+                assert all(p['network_scope']=='shared_pre_series_baseline' for p in cluster_report['measurements'])
                 print('PASS: controlled whole-cluster collection with RPC statistics')
             # Confirm pinned ngram-simple + RPC can actually load and generate.
             # Failure is explicit: never silently retry without speculation.
@@ -195,6 +230,20 @@ def main():
             api('/api/unload','POST',{}).close()
             api('/api/settings','PUT',settings).close()
             print('PASS: pinned ngram-simple + RPC load and generation (not a speed claim)')
+            if guest_count == 2 and os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                # Explicit primary bypasses the benchmark advantage guard, but not memory.
+                primary={**settings,'primary_node':nodes[0]['id'],'placement_strategy':'speed'}
+                api('/api/settings','PUT',primary).close()
+                plan=json.load(api('/api/plan'))
+                chosen=[n for n in plan['nodes'] if n.get('node_id')]
+                assert len(chosen)==1 and chosen[0]['node_id']==primary['primary_node'] and chosen[0]['layers']==plan['blocks'],plan
+                api('/api/load','POST',{}).close()
+                wait_for(loaded,120)
+                topology=json.load(api('/api/inference/topology'))
+                assert any(n['node_id']==primary['primary_node'] and n['layers']==plan['blocks'] for n in topology['nodes']),topology
+                api('/api/unload','POST',{}).close()
+                api('/api/settings','PUT',settings).close()
+                print('PASS: explicit whole-Guest primary, preview and loaded topology agree')
             # An inference key must not access administrative resources.
             try:
                 api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])

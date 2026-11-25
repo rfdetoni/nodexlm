@@ -22,12 +22,12 @@ def collect(base, token, model, node, repeat, environment, ca=None):
     context = ssl.create_default_context(cafile=ca)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
 
-    def api(path, data=None):
+    def api(path, data=None, timeout=240):
         request = urllib.request.Request(base.rstrip('/') + path,
             data=None if data is None else json.dumps(data).encode(),
             headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
         try:
-            with opener.open(request, timeout=240) as response:
+            with opener.open(request, timeout=timeout) as response:
                 raw = response.read(2 * 1024 * 1024 + 1)
         except urllib.error.HTTPError as error:
             detail = error.read(4096).decode('utf-8', errors='replace')
@@ -71,7 +71,26 @@ def collect(base, token, model, node, repeat, environment, ca=None):
     measurements = []
     baseline_topology = None
     started = time.monotonic()
-    for index in range(repeat):
+    if node == 'cluster' and repeat > 1:
+        if repeat > 10:
+            raise ValueError('A fixed-placement cluster series supports at most 10 rounds')
+        wait_for_idle_guests()
+        networks = {target: api('/v1/bench/' + urllib.parse.quote(target, safe=''), {}) for target in targets}
+        wait_for_idle_guests()
+        if api('/api/status')['settings'] != settings:
+            raise RuntimeError('Settings changed during measurement; discard the session')
+        series_plan = api('/api/plan')
+        rows = api('/api/bench/inference-series', {'model': model, 'rounds': repeat}, timeout=1810)
+        if len(rows) != repeat:
+            raise RuntimeError('Incomplete benchmark series')
+        for row in rows:
+            row['networks'] = networks
+            row['network_scope'] = 'shared_pre_series_baseline'
+            row['plan'] = series_plan
+            measurements.append(row)
+        if api('/api/status')['settings'] != settings:
+            raise RuntimeError('Settings changed during measurement; discard the session')
+    for index in range(0 if measurements else repeat):
         sample = {}
         wait_for_idle_guests()
         if targets:
@@ -117,6 +136,8 @@ def main():
     parser.add_argument('--output', type=pathlib.Path, required=True)
     parser.add_argument('--cli', default='nodexlm')
     args = parser.parse_args()
+    if args.node == 'cluster' and args.repeat > 10:
+        parser.error('fixed-placement cluster series supports at most 10 rounds')
     if not 1 <= args.repeat <= 100:
         parser.error('repeat must be between 1 and 100')
     if args.output.exists():

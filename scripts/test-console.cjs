@@ -56,6 +56,32 @@ const {chromium} = require('playwright');
       'thinking token budget must persist across browser reload');
     await page.locator('#nav-inference').click();
     await page.locator('#view-inference').waitFor({state: 'visible'});
+    await page.locator('#loadedTopology').getByText('Argumentos do runtime carregado', {exact:false}).waitFor();
+    await page.locator('#inferenceActivity').getByText('Sem geração em andamento.', {exact:false}).waitFor();
+    let activityCalls=0;
+    page.on('request', request=>{if(request.url().endsWith('/api/inference/activity'))activityCalls++;});
+    await page.waitForTimeout(450);
+    assert.equal(activityCalls,0,'idle workspace must not poll activity');
+    // Deterministic UI-only fixture: the tiny native model can finish before
+    // the polling interval. Exercise visibility transitions without claiming
+    // native per-token observability.
+    await page.route('**/api/status',async route=>{
+      const response=await route.fetch();
+      const status=await response.json();status.runtime.in_flight=1;
+      await route.fulfill({response,json:status});
+    });
+    await page.route('**/api/inference/activity',route=>route.fulfill({json:{in_flight:1,phase:'decode',sampling_ms:200,window_ms:200,host_inferred:false,nodes:[],notice:'Estimativa por amostragem de tráfego RPC'}}));
+    await page.locator('#nav-chat').click();
+    await page.locator('#nav-inference').click();
+    await page.locator('#inferenceActivity').getByText('Estimativa por amostragem de tráfego RPC',{exact:false}).waitFor();
+    assert(activityCalls>0,'visible active workspace must sample');
+    await page.locator('#nav-chat').click();
+    const stopped=activityCalls;
+    await page.waitForTimeout(650);
+    assert.equal(activityCalls,stopped,'hidden workspace must stop sampling');
+    await page.unroute('**/api/status');
+    await page.unroute('**/api/inference/activity');
+    await page.locator('#nav-inference').click();
     await page.locator('#previewPlan').click();
     await page.locator('#planOutput').getByText('KV F16 estimado:', {exact: false}).waitFor();
     await page.locator('#nav-observability').click();

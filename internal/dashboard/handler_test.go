@@ -4,6 +4,7 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -230,5 +231,83 @@ func TestAdminAndInferenceCredentialsStaySeparated(t *testing.T) {
 		if got := req(h, http.MethodGet, tc.path, tc.key, "", nil).Code; got != tc.want {
 			t.Errorf("%s with key prefix %q: got %d, want %d", tc.path, tc.key[:2], got, tc.want)
 		}
+	}
+}
+
+func TestClusterBenchmarkSeriesRejectsInvalidRounds(t *testing.T) {
+	h, m := newTestUI(t)
+	defer m.Close()
+	secret := strings.Repeat("a", 64)
+	for _, rounds := range []int{0, 1, 11} {
+		if got := req(h, "POST", "/api/bench/inference-series", secret, "", map[string]any{"rounds": rounds}).Code; got != 400 {
+			t.Fatalf("rounds %d: status %d", rounds, got)
+		}
+	}
+	if got := req(h, "POST", "/api/bench/inference-series", "", "", map[string]any{"rounds": 2}).Code; got != 401 {
+		t.Fatalf("unauthenticated series: %d", got)
+	}
+}
+
+func TestCancelPrimaryLoadDoesNotCancelPoolWork(t *testing.T) {
+	h, m := newTestUI(t)
+	defer m.Close()
+	secret := strings.Repeat("a", 64)
+	path := filepath.Join(m.modelDir, "cancel.gguf")
+	if err := os.WriteFile(path, []byte("GGUF"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Update(Settings{Model: "cancel.gguf", Threads: 2, ContextTokens: 2048, GPULayers: "auto", Distributed: true}); err != nil {
+		t.Fatal(err)
+	}
+	poolCtx, poolCancel := context.WithCancel(context.Background())
+	defer poolCancel()
+	m.poolMu.Lock()
+	m.mu.Lock()
+	m.poolCancel = poolCancel
+	m.mu.Unlock()
+	if got := req(h, "POST", "/api/load", secret, "", nil).Code; got != 202 {
+		m.poolMu.Unlock()
+		t.Fatalf("load: %d", got)
+	}
+	if got := req(h, "POST", "/api/inference/cancel-load", "", "", nil).Code; got != 401 {
+		m.poolMu.Unlock()
+		t.Fatalf("unauthenticated cancel: %d", got)
+	}
+	for range 2 {
+		if got := req(h, "POST", "/api/inference/cancel-load", secret, "", nil).Code; got != 200 {
+			m.poolMu.Unlock()
+			t.Fatalf("cancel: %d", got)
+		}
+	}
+	if poolCtx.Err() != nil || m.State()["phase"] != "cancelling" {
+		m.poolMu.Unlock()
+		t.Fatal("cancel touched unrelated pool operation or lost cancelling state")
+	}
+	m.poolMu.Unlock()
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		state := m.State()
+		if state["loading"] == false {
+			if state["phase"] != "cancelled" || state["loaded"] != false || state["error"] != "" {
+				t.Fatalf("cancelled load published state: %+v", state)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cancelled load retained the pool")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if m.CancelLoad() || poolCtx.Err() != nil || len(m.LoadedModels()) != 0 || len(m.InferenceSamples()) != 0 {
+		t.Fatal("cancellation changed unrelated work or published a model/sample")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("model file removed:", err)
+	}
+	m.Unload()
+	if m.State()["phase"] != "idle" {
+		t.Fatal("cancelled state did not return to idle")
+	}
+	if err := m.StartLoad(); err != nil {
+		t.Fatal("subsequent load was rejected:", err)
 	}
 }

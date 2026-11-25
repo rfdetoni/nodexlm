@@ -8,12 +8,20 @@ import (
 
 // Write counts describe successful relay writes, not protocol calls or RTT.
 // Request bytes include prefill as well as decode, excluding model load.
+type nodeInferenceTraffic struct {
+	NodeID string `json:"node_id"`
+	Name   string `json:"name"`
+	Bytes  uint64 `json:"bytes"`
+}
+
 type InferenceRPCTraffic struct {
-	BytesToGuest    uint64  `json:"bytes_to_guest"`
-	BytesFromGuest  uint64  `json:"bytes_from_guest"`
-	WritesToGuest   uint64  `json:"writes_to_guest"`
-	WritesFromGuest uint64  `json:"writes_from_guest"`
-	BytesPerOutput  float64 `json:"request_bytes_per_output_token"`
+	Nodes           []nodeInferenceTraffic `json:"nodes,omitempty"`
+	HostLayers      int                    `json:"estimated_host_layers"`
+	BytesToGuest    uint64                 `json:"bytes_to_guest"`
+	BytesFromGuest  uint64                 `json:"bytes_from_guest"`
+	WritesToGuest   uint64                 `json:"writes_to_guest"`
+	WritesFromGuest uint64                 `json:"writes_from_guest"`
+	BytesPerOutput  float64                `json:"request_bytes_per_output_token"`
 }
 
 func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
@@ -29,6 +37,7 @@ func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelSta
 			b.WritesToGuest < a.WritesToGuest || b.WritesFromGuest < a.WritesFromGuest {
 			return nil
 		}
+		result.Nodes = append(result.Nodes, nodeInferenceTraffic{NodeID: id, Name: id, Bytes: b.BytesToGuest - a.BytesToGuest + b.BytesFromGuest - a.BytesFromGuest})
 		result.BytesToGuest += b.BytesToGuest - a.BytesToGuest
 		result.BytesFromGuest += b.BytesFromGuest - a.BytesFromGuest
 		result.WritesToGuest += b.WritesToGuest - a.WritesToGuest
@@ -37,19 +46,32 @@ func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelSta
 	return result
 }
 
-func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string, before, after map[string]rpcmesh.TunnelStats) {
+func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
 	traffic := inferenceTraffic(nodes, before, after)
 	if traffic == nil {
-		return
+		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.loadedTopology != nil {
+		for _, node := range m.loadedTopology.Nodes {
+			if node.NodeID == "host" {
+				traffic.HostLayers = node.Layers
+			}
+			for i := range traffic.Nodes {
+				if traffic.Nodes[i].NodeID == node.NodeID {
+					traffic.Nodes[i].Name = node.Name
+				}
+			}
+		}
+	}
 	key := model + "@cluster"
 	sample, ok := m.samples[key]
 	if !ok || sample.MeasuredAt.Before(start) || sample.Tokens <= 0 {
-		return
+		return traffic
 	}
 	traffic.BytesPerOutput = (float64(traffic.BytesToGuest) + float64(traffic.BytesFromGuest)) / float64(sample.Tokens)
 	sample.RPCTraffic = traffic
 	m.samples[key] = sample
+	return traffic
 }

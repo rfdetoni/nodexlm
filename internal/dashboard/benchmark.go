@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
 
 // medianInferenceSample chooses a real measured run, not an average that
@@ -32,6 +34,25 @@ func (m *Manager) BenchmarkInference(ctx context.Context, model, nodeID string) 
 }
 
 func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, extended bool) (InferenceSample, error) {
+	rows, err := m.benchmarkSeries(ctx, model, nodeID, extended, 1)
+	if err != nil {
+		return InferenceSample{}, err
+	}
+	return rows[0].Inference, nil
+}
+
+type benchmarkRound struct {
+	Inference      InferenceSample                `json:"inference"`
+	RPCStatsBefore map[string]rpcmesh.TunnelStats `json:"rpc_stats_before"`
+	RPCStatsAfter  map[string]rpcmesh.TunnelStats `json:"rpc_stats_after"`
+}
+
+// Keep the same admitted native placement across unloaded rounds. Do not
+// persist a partial series or reuse its topology after this request returns.
+func (m *Manager) benchmarkSeries(ctx context.Context, model, nodeID string, extended bool, rounds int) ([]benchmarkRound, error) {
+	if rounds < 1 || rounds > 10 || rounds > 1 && (nodeID != "cluster" || extended) {
+		return nil, errors.New("benchmark series requires 1–10 rounds; multiple rounds require cluster without extended workloads")
+	}
 	m.poolMu.Lock()
 	defer m.poolMu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
@@ -41,25 +62,49 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.poolCancel = nil; m.mu.Unlock() }()
 	if len(m.LoadedModels()) != 0 {
-		return InferenceSample{}, errors.New("unload resident models before inference benchmark")
+		return nil, errors.New("unload resident models before inference benchmark")
 	}
 	m.mu.Lock()
 	settings := m.settings
 	provider := m.rpcEndpoints
-	closed := m.closed
+	stats := m.rpcStatsProvider
+	closed := m.closed || m.loading || m.unloading
 	m.mu.Unlock()
 	if closed {
-		return InferenceSample{}, errors.New("manager closed")
+		return nil, errors.New("manager closed")
 	}
-	sample, err := m.measureInference(ctx, settings, model, nodeID, extended, provider)
-	if err != nil {
-		return InferenceSample{}, err
+	var fixed *benchmarkPlacement
+	if rounds > 1 {
+		fixed = &benchmarkPlacement{}
 	}
+	rows := make([]benchmarkRound, 0, rounds)
+	snapshot := func() map[string]rpcmesh.TunnelStats {
+		if stats == nil {
+			return nil
+		}
+		return stats()
+	}
+	for range rounds {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		row := benchmarkRound{RPCStatsBefore: snapshot()}
+		sample, err := m.measureInference(ctx, settings, model, nodeID, extended, provider, fixed)
+		if err != nil {
+			return nil, err
+		}
+		row.Inference, row.RPCStatsAfter = sample, snapshot()
+		if len(rows) > 0 && (sample.BenchmarkTopology != rows[0].Inference.BenchmarkTopology || sample.RateBasis != rows[0].Inference.RateBasis || sample.Fingerprint != rows[0].Inference.Fingerprint) {
+			return nil, errors.New("benchmark topology, rate basis or fingerprint changed between rounds")
+		}
+		rows = append(rows, row)
+	}
+	sample := rows[len(rows)-1].Inference
 	key := sample.Model
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if sample.Fingerprint != m.benchmarkSignature(m.settings, model) {
-		return InferenceSample{}, errors.New("runtime settings changed during benchmark")
+		return nil, errors.New("runtime settings changed during benchmark")
 	}
 	if _, exists := m.samples[key]; !exists {
 		m.pruneSamplesLocked(time.Now())
@@ -68,10 +113,10 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 	if nodeID == "cluster" {
 		m.microbenchDrift = 0
 	}
-	return sample, m.persistBenchmarksLocked()
+	return rows, m.persistBenchmarksLocked()
 }
 
-func (m *Manager) measureInference(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest) (InferenceSample, error) {
+func (m *Manager) measureInference(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest, frozen ...*benchmarkPlacement) (InferenceSample, error) {
 	settings.Model = model
 	path, err := modelPath(m.modelDir, model)
 	if err != nil {
@@ -128,17 +173,37 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 			return InferenceSample{}, errors.New("no RPC Guests")
 		}
 		guests := provider()
-		selection, err := m.chooseRPC(settings, meta, uint64(size), hostBudget, guests)
-		if err != nil {
-			return InferenceSample{}, err
+		var selection clusterplan.Selection
+		var placement RPCDevicePlacement
+		var layers int
+		var fixed *benchmarkPlacement
+		if len(frozen) > 0 {
+			fixed = frozen[0]
 		}
-		if len(selection.Guests) == 0 {
-			return InferenceSample{}, errors.New("placement selected Host only; choose capacity strategy to measure a cluster")
-		}
-		placement, layers := planRPCDevices(selection, guests, meta, settings, uint64(size)), selection.LocalLayers
-		if len(placement.Devices) > 0 && layers > 0 && settings.GPULayers != "0" {
-			device := discoverHostGPU(ctx, binary, settings.HostGPU)
-			placement, layers = withHostGPU(placement, layers, meta.BlockCount, settings.HostGPU, device, settings.GPULayers)
+		if fixed != nil && fixed.ready {
+			if err := fixed.validate(guests, meta, settings, uint64(size), hostBudget); err != nil {
+				return InferenceSample{}, err
+			}
+			selection, placement, layers = fixed.selection, fixed.devices, fixed.localLayers
+			if placement.Modes["host"] != "" && (len(placement.Devices) == 0 || discoverHostGPU(ctx, binary, settings.HostGPU) != placement.Devices[0]) {
+				return InferenceSample{}, errors.New("fixed Host GPU is no longer available")
+			}
+		} else {
+			selection, err = m.chooseRPC(settings, meta, uint64(size), hostBudget, guests)
+			if err != nil {
+				return InferenceSample{}, err
+			}
+			if len(selection.Guests) == 0 {
+				return InferenceSample{}, errors.New("placement selected Host only; choose capacity strategy to measure a cluster")
+			}
+			placement, layers = planRPCDevices(selection, guests, meta, settings, uint64(size)), selection.LocalLayers
+			if len(placement.Devices) > 0 && layers > 0 && settings.GPULayers != "0" {
+				device := discoverHostGPU(ctx, binary, settings.HostGPU)
+				placement, layers = withHostGPU(placement, layers, meta.BlockCount, settings.HostGPU, device, settings.GPULayers)
+			}
+			if fixed != nil {
+				*fixed = benchmarkPlacement{ready: true, selection: selection, devices: placement, localLayers: layers, guests: slices.Clone(guests)}
+			}
 		}
 		for _, selected := range selection.Guests {
 			for _, guest := range guests {

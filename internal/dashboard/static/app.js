@@ -32,6 +32,68 @@ const consoleViews=[
  {id:'decisions',name:'Decisões',description:'Perguntas tipadas e probabilidades via System One.'},
  {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'}
 ];
+
+// High-frequency sampling is request-driven: only while the inference
+// workspace is visible and the server has an admitted generation.
+let activityTimer=null,activityRequest=null,topologySnapshot=null,activityHistory=[];
+function activityVisible(){return !!token&&!document.hidden&&!$('app').hidden&&!$('view-inference').hidden}
+function stopActivity(){if(activityTimer!==null)clearTimeout(activityTimer);activityTimer=null;if(activityRequest)activityRequest.abort();activityRequest=null;activityHistory=[]}
+function renderTopology(activity=null){
+ const area=$('loadedTopology'),topology=topologySnapshot;
+ area.replaceChildren();
+ if(!topology?.loaded){area.append(el('p','muted','Nenhum modelo carregado.'));return;}
+ area.append(el('p','',topology.model+' · '+topology.blocks+' blocos'+(topology.aggregated?' · slots agregados':'')),el('p','muted',topology.notice));
+ const bar=document.createElementNS('http://www.w3.org/2000/svg','svg');bar.setAttribute('class','loaded-split');bar.setAttribute('viewBox','0 0 1000 24');bar.setAttribute('role','img');bar.setAttribute('aria-label','Participação estimada das camadas por nó');let offset=0;
+ for(const node of topology.nodes){
+  if(node.layers>0){const segment=document.createElementNS('http://www.w3.org/2000/svg','rect');const width=1000*node.layers/Math.max(1,topology.blocks);segment.setAttribute('x',String(offset));segment.setAttribute('width',String(width));segment.setAttribute('height','24');segment.setAttribute('class',node.node_id==='host'?'split-host':'split-guest');const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=node.name+': '+node.layers+' camadas';segment.append(title);bar.append(segment);offset+=width;}
+  const live=activity?.nodes?.find(n=>n.node_id===node.node_id);
+  const active=node.node_id==='host'?activity?.host_inferred:live?.active;
+  const range=node.first_block>=0?'blk.'+node.first_block+'–'+node.last_block:'sem blocos';
+  const text=node.name+' · '+range+' · '+node.layers+' camadas · '+node.mode+(node.devices?.length?' ('+node.devices.join(', ')+')':'')+' · '+fmt(node.weight_bytes)+' de pesos ('+node.weight_method+')'+(node.estimated_kv_bytes!=null?' · KV ~'+fmt(node.estimated_kv_bytes):'')+' · RAM/VRAM: '+fmt(node.ram_budget_bytes)+' / '+fmt(node.vram_budget_bytes);
+  area.append(el('p',active?'topology-active':'muted',text+(active?(node.node_id==='host'?' · Host (inferido)':' · tráfego recente'):'')));
+ }
+ area.prepend(bar);
+}
+function renderActivity(data){
+ const area=$('inferenceActivity');area.replaceChildren();
+ if(!data?.in_flight){area.append(el('p','muted','Sem geração em andamento.'));renderTopology();return;}
+ area.append(el('p','',data.in_flight+' geração(ões) · fase '+data.phase),el('p','muted',data.notice+' Resolução nominal '+data.sampling_ms+' ms.'));
+ const active=[];
+ for(const node of data.nodes||[]){
+  const name=topologySnapshot?.nodes?.find(n=>n.node_id===node.node_id)?.name||node.node_id;
+  if(node.active)active.push(name);
+  area.append(el('p','muted',name+': '+(node.available?node.mib_per_second_window.toFixed(2)+' MiB/s · '+node.share_percent_window.toFixed(1)+'% dos bytes RPC na janela':'sem delta comparável')));
+ }
+ if(data.host_inferred)active.push('Host (inferido)');
+ activityHistory.push(active.length?active.join(' + '):'sem amostra comparável');activityHistory=activityHistory.slice(-10);
+ area.append(el('p','muted','Últimos intervalos: '+activityHistory.join(' | ')));
+ renderTopology(data);
+}
+async function pollActivity(){
+ activityTimer=null;
+ if(!activityVisible()||activityRequest||!latestStatus?.runtime?.in_flight)return;
+ const controller=new AbortController();activityRequest=controller;
+ try{
+  const response=await fetch('/api/inference/activity',{headers:{Authorization:'Bearer '+token},cache:'no-store',signal:controller.signal});
+  if(!response.ok)throw Error('HTTP '+response.status);
+  const data=await response.json();
+  if(!activityVisible()||controller.signal.aborted)return;
+  renderActivity(data);
+  if(!data.in_flight){latestStatus.runtime.in_flight=0;activityHistory=[];return;}
+ }catch(error){if(!controller.signal.aborted)$('inferenceActivity').textContent='Atividade indisponível: '+error.message;}
+ finally{if(activityRequest===controller)activityRequest=null;}
+ if(activityVisible()&&latestStatus?.runtime?.in_flight&&!controller.signal.aborted)activityTimer=setTimeout(pollActivity,200);
+}
+async function refreshTopology(){
+ if(!activityVisible()){stopActivity();return;}
+ const data=await api('/api/inference/topology');
+ if(!activityVisible())return;
+ topologySnapshot=data;renderTopology();
+ if(latestStatus?.runtime?.in_flight){if(activityTimer===null&&!activityRequest)pollActivity();}
+ else {stopActivity();renderActivity(null);}
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopActivity();else if(activityVisible())guard(refresh);});
+
 function activateConsoleView(view){
  const chosen=consoleViews.find(item=>item.id===view)||consoleViews[0];
  for(const item of consoleViews){
@@ -43,6 +105,7 @@ function activateConsoleView(view){
  $('workspaceDescription').textContent=chosen.description;
  $('consoleMain').scrollTop=0;
  try{sessionStorage.setItem('nodexlm-console-view',chosen.id)}catch{}
+ if(chosen.id==='inference' && token)guard(refresh);else stopActivity();
  if(chosen.id==='observability' && token)guard(refreshObservations);
  if(chosen.id==='decisions' && token)guard(refreshDecisionWorkers);
 }
@@ -104,7 +167,7 @@ function setDraftModels(items, chosen){
 function settingsFromForm(model) {
  return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, threads_batch:+$('threadsBatch').value, parallel_slots:+$('parallelSlots').value, prompt_cache_mib:+$('promptCacheMiB').value, load_mode:$('loadMode').value, lazy_mode:$('lazyMode').value, numa:$('numaPolicy').value, context_tokens:+$('contextTokens').value,
   gpu_layers:$('gpuLayers').value, host_gpu:$('hostGpu').value, moe_cpu:$('moeCPU').checked,
-  distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
+  distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, primary_node:$('primaryNode').value, moe_cpu_layers:+$('moeCPULayers').value,
   moe_cache_mib:+$('moeCache').value, moe_cache_cpu_share:+$('moeCacheCPUShare').value, flash_attention:$('flashAttention').value,
    kv_cache_type:$('kvCacheType').value, batch_size:+$('batchSize').value,
    ubatch_size:+$('ubatchSize').value, cache_reuse_tokens:+$('cacheReuseTokens').value,
@@ -194,8 +257,9 @@ async function loadModelFolder() {
 }
 function renderLoadStatus(status){
  const box=$('loadingStatus'), runtime=status.runtime||{};
- if(!runtime.loading){box.hidden=true;box.replaceChildren();loadingPlan=null;loadingPlanModel='';return;}
+ if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled';if(!box.hidden)box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));return;}
  box.hidden=false;box.replaceChildren(el('strong','', 'Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
+ box.append(action(runtime.phase==='cancelling'?'Cancelando…':'Cancelar carregamento','secondary',async()=>{const state=await api('/api/inference/cancel-load','POST',{});notice(state.phase==='ready'?'O modelo já terminou de carregar.':'Cancelamento solicitado; aguardando encerramento do runtime.');await refresh()},runtime.phase==='cancelling'));
  const activity=el('progress','download-bar');
  activity.setAttribute('aria-label','Carregamento em andamento: progresso real indisponível');
  box.append(activity,el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s · progresso real não informado pelo llama.cpp'));
@@ -367,6 +431,7 @@ async function refresh(){
  renderResidentModels(resident);
  $('residentCount').textContent=resident.length;
  latestStatus=status;localModels=models;
+ if(activityVisible())await refreshTopology();else stopActivity();
  renderLoadStatus(status);
  await updateLoadingPlan(status);
  renderNodeResources(cluster.devices);
@@ -378,6 +443,7 @@ async function refresh(){
  $('sideCapacity').textContent=fmt(c.aggregate_budget_bytes);
  $('modelState').textContent=status.runtime.loading
   ? 'Carregando · '+String(status.runtime.phase||'preparando').replace(/_/g,' ')
+  : status.runtime.phase==='cancelled'?'Carregamento cancelado'
   : status.runtime.error ? 'Falha · '+status.runtime.error
   : status.runtime.loaded?'Carregado':'Descarregado';
  const s=status.settings;
@@ -385,6 +451,7 @@ async function refresh(){
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
+  $('primaryNode').dataset.initialized='no';
   for(const [id,v] of Object.entries({threads:s.threads,threadsBatch:s.threads_batch||0,parallelSlots:s.parallel_slots||1,promptCacheMiB:s.prompt_cache_mib||0,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
   $('runtimeBackend').value=s.backend||'llama.cpp';
   $('hostGpu').value=s.host_gpu||'auto';
@@ -392,6 +459,12 @@ async function refresh(){
   configureBackendUI();
  }
  renderLocalModels(models,status);renderCatalog();
+ const primary=$('primaryNode'), selectedPrimary=settingsInitialized&&primary.dataset.initialized==='yes'?primary.value:(s.primary_node==='auto'?'':s.primary_node||'');
+ primary.replaceChildren();
+ for(const [value,label] of [['','Automático'],['host','Host']]){const option=el('option','',label);option.value=value;primary.append(option);}
+ for(const node of nodes){if(node.status!=='online'||!node.runtime?.rpc_ready||!cluster.rpc_guests?.[node.id])continue;const option=el('option','',node.name||node.id);option.value=node.id;primary.append(option);}
+ if(selectedPrimary&&![...primary.children].some(o=>o.value===selectedPrimary)){const option=el('option','','Guest indisponível: '+selectedPrimary);option.value=selectedPrimary;primary.append(option);}
+ primary.value=selectedPrimary;primary.dataset.initialized='yes';
  const benchTarget=$('inferenceBenchTarget'), selectedTarget=benchTarget.value;
  benchTarget.replaceChildren();
  const hostOption=el('option','', 'Host local (sem RPC)');hostOption.value='';benchTarget.append(hostOption);
@@ -447,7 +520,7 @@ async function sendChat(){
  const prompt=$('prompt').value.trim();if(!prompt)return;
  const model=$('chatModel').value||latestStatus?.runtime?.model;if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
- const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let done=false;let reader;
+ const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let rpcTraffic=null;let done=false;let reader;
  renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');const details=el('details','reasoning-details');const summary=el('summary','','Raciocínio do modelo');const thoughts=el('p','reasoning-content');details.append(summary,thoughts);details.hidden=true;output.append(details,reply);
  try{
   const effort=$('chatEffort').value;
@@ -472,6 +545,7 @@ async function sendChat(){
     if(!data)continue;if(data==='[DONE]'){done=true;break}
     const event=JSON.parse(data);if(event.error)throw Error(event.error.message||event.error);
     if(event.usage)usage=event.usage;
+    if(event.nodexlm_rpc_traffic)rpcTraffic=event.nodexlm_rpc_traffic;
     const timing=event.timings;
     if(Number(timing?.predicted_ms)>0&&Number(timing?.predicted_n)>0){
      nativeDecode=1000*Number(timing.predicted_n)/Number(timing.predicted_ms);
@@ -497,6 +571,7 @@ async function sendChat(){
   if(nativeDecode!==null)metrics+=' · Decode nativo: '+nativeDecode.toFixed(1)+' t/s';
   else if(estimatedRate>0)metrics+=' · Geração após 1º evento (estimativa): '+estimatedRate.toFixed(1)+' t/s';
   if(usage?.completion_tokens_details?.reasoning_tokens)metrics+=' · Thinking: '+usage.completion_tokens_details.reasoning_tokens+' tokens';
+  if(rpcTraffic?.nodes?.length)metrics+=' · RPC nesta resposta: '+rpcTraffic.nodes.map(n=>n.name+': '+fmt(n.bytes)).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
   $('chatMetrics').textContent=metrics;
  }catch(error){
   const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;
@@ -716,6 +791,7 @@ $('autotuneBench').addEventListener('click',()=>guard(async()=>{
  try{
   const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value,node_id:$('inferenceBenchTarget').value});
   const area=$('autotuneResults');area.replaceChildren();
+  if(report.placement_fixed)area.append(el('p','muted','Placement fixado do baseline; candidatos com memória insuficiente são rejeitados.'));
   for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s':row.error||'indisponível')));
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')+' · '+(s.speculative_tokens||0)+' tokens (0 = nativo)'));
    const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
@@ -730,7 +806,7 @@ async function refreshObservations(){
    (sample.kind==='benchmark'?'benchmark controlado':'medição ao vivo')+' · '+
    (sample.rate_basis==='native_decode'?'decode nativo':'inclui prefill/TTFT')+
    ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro texto '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
- for(const sample of data.inference)if(sample.suspect)area.append(el('p','muted',sample.model+': desempenho ao vivo divergiu; descarregue o modelo e repita o benchmark controlado.'));
+ for(const sample of data.inference)if(sample.suspect){const note=el('p','muted');note.append(el('strong','','Medição suspeita: '),document.createTextNode(sample.model+' — descarregue o modelo e repita o benchmark controlado. '));const button=el('button','','Ir para re-medição');button.addEventListener('click',()=>activateConsoleView('inference'));note.append(button);area.append(note);}
  for(const sample of data.inference)if(sample.native_system_info)area.append(el('p','muted',sample.native_system_info));
  for(const sample of data.inference)for(const workload of sample.workloads||[]){const s=workload.sample;area.append(el('p','muted',workload.profile+': '+(s? s.prompt_tokens+' tokens de prompt · '+s.tokens_per_second.toFixed(1)+' t/s · prefill '+(s.prefill_tokens_per_second||0).toFixed(1)+' t/s · primeiro output '+(s.first_output_ms||0).toFixed(0)+' ms':workload.status)));}
  for(const node of data.nodes){

@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/rfdetoni/nodexlm/internal/catalog"
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
@@ -95,6 +96,27 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, sample)
 	}))
+	mux.HandleFunc("POST /api/bench/inference-series", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model  string `json:"model"`
+			Rounds int    `json:"rounds"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.Rounds < 2 || input.Rounds > 10 {
+			failure(w, 400, errors.New("cluster series requires 2–10 rounds"))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		rows, err := d.Manager.benchmarkSeries(ctx, input.Model, "cluster", false, input.Rounds)
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, rows)
+	}))
 	mux.HandleFunc("POST /api/bench/autotune", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Model string `json:"model"`
@@ -111,6 +133,12 @@ func (d *Dashboard) Handler() http.Handler {
 			return
 		}
 		reply(w, 200, report)
+	}))
+	mux.HandleFunc("GET /api/inference/topology", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, d.Manager.InferenceTopology())
+	}))
+	mux.HandleFunc("GET /api/inference/activity", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, d.Manager.InferenceActivity())
 	}))
 	mux.HandleFunc("GET /api/observability", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"inference": d.Manager.InferenceSamples(), "nodes": d.Cluster.Observations()})
@@ -258,6 +286,10 @@ func (d *Dashboard) Handler() http.Handler {
 			return
 		}
 		reply(w, 202, d.Manager.State())
+	}))
+	mux.HandleFunc("POST /api/inference/cancel-load", d.api(func(w http.ResponseWriter, r *http.Request) {
+		d.Manager.CancelLoad()
+		reply(w, 200, d.Manager.State())
 	}))
 	mux.HandleFunc("POST /api/unload", d.api(func(w http.ResponseWriter, r *http.Request) { d.Manager.Unload(); reply(w, 200, d.Manager.State()) }))
 

@@ -318,6 +318,7 @@ func TestPlacementBenchmarksRejectIncompatibleSamples(t *testing.T) {
 		Fingerprint: "current", TokensPerSecond: 10, MeasuredAt: now}
 	for _, mutate := range []func(*InferenceSample){
 		func(s *InferenceSample) { s.Kind = "live" },
+		func(s *InferenceSample) { s.Suspect = true },
 		func(s *InferenceSample) { s.RateBasis = "" },
 		func(s *InferenceSample) { s.Fingerprint = "" },
 		func(s *InferenceSample) { s.Fingerprint = "old" },
@@ -373,5 +374,91 @@ func TestChooseRPCRejectsMixedGuestRatesWithoutHostBenchmark(t *testing.T) {
 	got, err := m.chooseRPC(s, local.GGUFInfo{BlockCount: 40}, 3*gib, gib, guests)
 	if err != nil || len(got.Guests) != 1 || got.Guests[0].ID != "large" || got.Guests[0].Performance.TokensPerSecond != 0 {
 		t.Fatalf("mixed rate bases must fall back to memory: %+v %v", got, err)
+	}
+}
+
+func TestChooseRPCSuspectRateFallsBackUntilRemeasured(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	s := Settings{Model: "small.gguf", PlacementStrategy: "speed"}
+	fingerprint := placementTestFingerprint(t, m, s)
+	now := time.Now()
+	m.samples[s.Model] = InferenceSample{Model: s.Model, Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint, TokensPerSecond: 10, MeasuredAt: now}
+	key := s.Model + "@guest"
+	sample := InferenceSample{Model: key, Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint, TokensPerSecond: 100, MeasuredAt: now, Suspect: true}
+	m.samples[key] = sample
+	guests := []RPCGuest{{ID: "guest", CapacityBytes: 8 * gib}}
+	meta := local.GGUFInfo{BlockCount: 40}
+	got, err := m.chooseRPC(s, meta, 3*gib, 8*gib, guests)
+	if err != nil || len(got.Guests) != 0 || !strings.Contains(got.Reason, "medição suspeita") {
+		t.Fatalf("suspect rate changed placement: %+v %v", got, err)
+	}
+	sample.Suspect = false
+	sample.MeasuredAt = time.Now()
+	m.samples[key] = sample
+	got, err = m.chooseRPC(s, meta, 3*gib, 8*gib, guests)
+	if err != nil || len(got.Guests) != 1 || got.LocalLayers != 0 {
+		t.Fatalf("fresh controlled rate not admitted: %+v %v", got, err)
+	}
+}
+
+func TestKVWhatIfDoesNotLoseComparableRates(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	s := Settings{Model: "small.gguf", PlacementStrategy: "speed", ContextTokens: 256}
+	fingerprint := placementTestFingerprint(t, m, s)
+	now := time.Now()
+	for key, rate := range map[string]float64{s.Model: 10, s.Model + "@guest": 100} {
+		m.samples[key] = InferenceSample{Model: key, Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint, TokensPerSecond: rate, MeasuredAt: now}
+	}
+	meta := local.GGUFInfo{BlockCount: 32, EmbeddingLength: 4096, HeadCount: 32, KVHeadCount: 8}
+	guests := []RPCGuest{{ID: "guest", CapacityBytes: 8 * gib, RAMBudgetBytes: 8 * gib, RPCDeviceKinds: []string{"cpu"}}}
+	measurements := m.placementMeasurements(s)
+	original, err := m.chooseRPCWithMeasurements(s, meta, 3*gib, 8*gib, guests, measurements)
+	if err != nil || len(original.Guests) != 1 {
+		t.Fatalf("fixture did not select measured Guest: %+v %v", original, err)
+	}
+	q8 := s
+	q8.KVCacheType = "q8_0"
+	unmatched, err := m.chooseRPC(q8, meta, 3*gib, 8*gib, guests)
+	if err != nil || len(unmatched.Guests) != 0 {
+		t.Fatalf("fixture did not reproduce fingerprint loss: %+v %v", unmatched, err)
+	}
+	devices := planRPCDevices(original, guests, meta, s, 3*gib)
+	if got := m.kvPlacementSuggestion(s, meta, 3*gib, 8*gib, guests, original, devices, measurements); len(got) != 0 {
+		t.Fatalf("spurious KV recommendation: %+v", got)
+	}
+}
+
+func TestKVWhatIfSuggestsGPUOnlyWhenMemoryActuallyFits(t *testing.T) {
+	const mib = uint64(1 << 20)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	s := Settings{Model: "small.gguf", PlacementStrategy: "capacity", ContextTokens: 4096}
+	placementTestFingerprint(t, m, s)
+	meta := local.GGUFInfo{BlockCount: 32, EmbeddingLength: 4096, HeadCount: 32, KVHeadCount: 8}
+	guests := []RPCGuest{{ID: "guest", CapacityBytes: 8192 * mib, GPUBudgetBytes: 4700 * mib, RAMBudgetBytes: 3492 * mib, RPCDeviceKinds: []string{"gpu", "cpu"}}}
+	measurements := m.placementMeasurements(s)
+	original, err := m.chooseRPCWithMeasurements(s, meta, 4096*mib, 0, guests, measurements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices := planRPCDevices(original, guests, meta, s, 4096*mib)
+	if devices.Modes["guest"] != "gpu+ram" {
+		t.Fatalf("fixture did not require hybrid: %+v", devices)
+	}
+	if got := m.kvPlacementSuggestion(s, meta, 4096*mib, 0, guests, original, devices, measurements); len(got) != 1 || got[0].Kind != "kv_q8_0" {
+		t.Fatalf("missing KV-only recommendation: %+v", got)
 	}
 }

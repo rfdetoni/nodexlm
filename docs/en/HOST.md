@@ -31,3 +31,11 @@ Optional `NODEXLM_DECISION_ADAPTIVE=1` prioritizes idle decision workers and inc
 Explicit Metal Host GPU mode supports mixed CPU/RPC placement only after the resolved native binary confirms a single Metal device using --list-devices. Vulkan also uses discovery rather than a guessed name. Unknown or multiple devices preserve CPU placement. Mac hardware acceptance remains required.
 
 The targeted real RPC E2E workflow uses the verified pinned bundle, two CPU Guests and a complete Windows cross-build without publishing anything. For physical comparison use `scripts/hardware-acceptance.py --model MODEL.gguf --repeat 3 --output host.json`, then `--node GUEST_ID` and `--node cluster` with different output files. Keep the same GGUF SHA-256, settings, topology and starting temperature. The collector captures settings, plan and per-round RPC stats; physical acceptance remains unestablished until an operator checks the hardware.
+
+**Cancel loading** stops the primary model's startup context and native child; the console reports cancelling until cleanup finishes, then cancelled. GGUF files remain intact; unrelated benchmark/autotune/microbenchmark work is not cancelled. Ctrl+C cancels the CLI service context.
+
+Loaded topology is a snapshot of successful native launch arguments, with estimated block ranges and weights. Demand-driven activity sampling runs only in the visible inference workspace during admitted generation (nominal 200 ms, two-second window). Remote byte share is not compute utilization; Host activity is inferred from valid zero remote deltas. Dashboard chat can report per-Guest request bytes; no per-token instrumentation.
+
+### Primary weight node
+
+Optional `primary_node` selects the Host or a ready Guest and prioritizes its estimated weight share rather than decode speed. Empty/auto preserves the previous planner; capacity retains all usable Guests. Admission uses per-device budgets and context estimates; legacy topology falls back to proportional allocation with an explanation. An offline explicit primary is rejected. The server and coordinator remain on the Host; hardware A/B is required to establish speed gains.

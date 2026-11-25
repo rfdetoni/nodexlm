@@ -2,6 +2,26 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Correções da auditoria
+
+- Aceitação de cluster: série de benchmarks com placement fixado, revalidação por rodada e baseline de rede compartilhado; evita comparar splits recalculados a partir de RAM livre variável.
+
+- FEAT3: preferência explícita de nó principal, com admissão conservadora por dispositivo e preview compartilhando a decisão de load; automático permanece padrão.
+
+- FEAT1: topologia do runtime carregado, atividade por tráfego RPC sob demanda e bytes por Guest na resposta do Chat; faixas e atividade explicitamente estimadas.
+
+- FEAT2: cancelamento administrativo do carregamento primário com estado cancelando/cancelado e encerramento do runtime, sem afetar outros trabalhos do pool.
+
+- FIX3: prévia de KV q8_0 reaproveita snapshot de medições da seleção original e isola alteração da admissão de memória.
+
+- FIX2: autotune de cluster fixa placement do baseline e revalida memória/topologia para cada candidato; não compara splits diferentes.
+
+- FIX5: benchmark de rede adapta quantidade de pares aos túneis ociosos, limita cada par a 5 s dentro do orçamento total e informa amostras reais.
+
+- FIX4: amostras suspeitas não ponderam placement; motivo de re-medição explícito, sem confundir benchmark agregado com taxa individual.
+
+- FIX1: política performance do Guest preserva cores físicas em topologia homogênea ou sem telemetria; Host/smolmax mantém fallback anterior.
+
 ## Aceitação integrada dos WPs
 
 - E2E RPC pinado focalizado em PRs e cross-build Windows completo; coleta física suporta cluster, plano e estatísticas RPC por rodada. Corrige identificação Metal MTL<n> conforme a revisão nativa.

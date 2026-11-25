@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/catalog"
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
@@ -48,6 +49,7 @@ type Settings struct {
 	MoECacheCPUShare  float64 `json:"moe_cache_cpu_share,omitempty"`
 	Distributed       bool    `json:"distributed"`
 	PlacementStrategy string  `json:"placement_strategy,omitempty"`
+	PrimaryNode       string  `json:"primary_node,omitempty"`
 	FlashAttention    string  `json:"flash_attention,omitempty"`
 	KVCacheType       string  `json:"kv_cache_type,omitempty"`
 	BatchSize         int     `json:"batch_size,omitempty"`
@@ -93,6 +95,9 @@ type Manager struct {
 	microbenchAttempts    map[string]time.Time
 	microbenchDrift       int
 	loadFingerprint       string
+	loadedTopology        *inferenceTopology
+	activityWindow        []activityObservation
+	generationPhases      map[uint64]string
 	microbenchNode        string
 	generationTokens      uint64
 	generationBuckets     [8]uint64
@@ -116,6 +121,7 @@ type Manager struct {
 	loadRPCBaseline       map[string]rpcmesh.TunnelStats
 	rpcStatsProvider      func() map[string]rpcmesh.TunnelStats
 	loadCancel            context.CancelFunc
+	loadCancelRequested   bool
 	loadDone              chan struct{}
 	generations           map[uint64]context.CancelFunc
 	generationSequence    uint64
@@ -188,7 +194,7 @@ func (m *Manager) State() map[string]any {
 	if phase == "" {
 		phase = "idle"
 	}
-	state := map[string]any{"backend": local.EffectiveBackend(m.settings.Backend), "model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
+	state := map[string]any{"backend": local.EffectiveBackend(m.settings.Backend), "model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError, "in_flight": len(m.generations)}
 	if m.nativeSystemInfo != "" {
 		state["native_system_info"] = m.nativeSystemInfo
 	}
@@ -232,6 +238,9 @@ func (m *Manager) DownloadState() *Download {
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
+	if explicitPrimary(s.PrimaryNode) && s.PrimaryNode != "host" && !s.Distributed {
+		return errors.New("Guest principal exige distribuição RPC habilitada")
+	}
 	backend := local.EffectiveBackend(s.Backend)
 	if backend != local.BackendLlama && backend != local.BackendMistralRS {
 		return errors.New("unsupported backend; select llama.cpp or mistralrs")
@@ -314,7 +323,7 @@ func (m *Manager) Update(s Settings) error {
 	// Benchmarks are only comparable when the native inference configuration
 	// is unchanged. Do not allow stale tokens/s to drive placement decisions.
 	old := m.settings
-	if old.Backend != s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
+	if old.PrimaryNode != s.PrimaryNode || old.Backend != s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
 		old.ThreadsBatch != s.ThreadsBatch || old.ParallelSlots != s.ParallelSlots || old.PromptCacheMiB != s.PromptCacheMiB || old.LoadMode != s.LoadMode || old.LazyMode != s.LazyMode || old.NUMA != s.NUMA ||
 		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
 		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB || old.MoECacheCPUShare != s.MoECacheCPUShare ||
@@ -420,27 +429,57 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.loadPhase = "preparing_runtime"
 	m.loadError = ""
 	m.loadCancel = cancel
+	m.loadCancelRequested = false
 	m.loadDone = make(chan struct{})
 	return nil
 }
 
 // Load preserves the synchronous API for callers outside the dashboard.
 func (m *Manager) Load(ctx context.Context) error {
-	if err := m.beginLoad(nil); err != nil {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if err := m.beginLoad(cancel); err != nil {
 		return err
 	}
 	return m.runLoad(ctx)
 }
 
+// CancelLoad affects only the primary load, never the pool's benchmark,
+// autotune, microbenchmark or additional resident operation. Publishing the
+// engine and cancelling are serialized by mu; a completed load is untouched.
+func (m *Manager) CancelLoad() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.loading || m.engine != nil || m.loadCancel == nil {
+		return false
+	}
+	m.loadCancelRequested = true
+	m.loadPhase = "cancelling"
+	m.phaseStartedAt = time.Now()
+	m.loadCancel()
+	return true
+}
+
 func (m *Manager) runLoad(ctx context.Context) error {
 	m.poolMu.Lock()
 	defer m.poolMu.Unlock()
-	err := m.load(ctx)
+	err := ctx.Err()
+	if err == nil {
+		err = m.load(ctx)
+	}
 	m.mu.Lock()
 	duration := time.Since(m.loadStartedAt)
 	m.loading = false
 	m.loadCancel = nil
-	if err != nil {
+	cancelled := err != nil && (m.loadCancelRequested || errors.Is(ctx.Err(), context.Canceled))
+	m.loadCancelRequested = false
+	if cancelled {
+		m.loadPhase = "cancelled"
+		m.loadError = ""
+		m.loadRPCNodes = nil
+		m.loadRPCBaseline = nil
+		m.loadFingerprint = ""
+	} else if err != nil {
 		m.loadPhase = "error"
 		m.loadError = err.Error()
 	} else {
@@ -450,7 +489,9 @@ func (m *Manager) runLoad(ctx context.Context) error {
 	close(m.loadDone)
 	m.loadDone = nil
 	m.mu.Unlock()
-	if err != nil {
+	if cancelled {
+		slog.Info("Model load cancelled", "elapsed_seconds", int(duration.Seconds()))
+	} else if err != nil {
 		slog.Error("Model load failed", "elapsed_seconds", int(duration.Seconds()), "error", err)
 	} else {
 		slog.Info("Model load completed", "elapsed_seconds", int(duration.Seconds()))
@@ -460,8 +501,10 @@ func (m *Manager) runLoad(ctx context.Context) error {
 
 func (m *Manager) setPhase(phase string) {
 	m.mu.Lock()
-	m.loadPhase = phase
-	m.phaseStartedAt = time.Now()
+	if !m.loadCancelRequested {
+		m.loadPhase = phase
+		m.phaseStartedAt = time.Now()
+	}
 	m.mu.Unlock()
 	slog.Info("Model load phase", "phase", phase)
 }
@@ -488,6 +531,10 @@ func (m *Manager) load(ctx context.Context) error {
 	localLayers := 0
 	var devicePlacement RPCDevicePlacement
 	var modelBlocks uint32
+	var loadedMeta local.GGUFInfo
+	var loadedSize, loadedBudget uint64
+	var loadedSelection clusterplan.Selection
+	var loadedGuests []RPCGuest
 	if s.Distributed {
 		m.setPhase("selecting_guests")
 		// The Host can still load locally if there are no RPC Guests,
@@ -519,6 +566,8 @@ func (m *Manager) load(ctx context.Context) error {
 		localLayers = selection.LocalLayers
 		devicePlacement = planRPCDevices(selection, guests, model, s, uint64(size))
 		modelBlocks = model.BlockCount
+		loadedMeta, loadedSize, loadedBudget = model, uint64(size), hostCapacity
+		loadedSelection, loadedGuests = selection, guests
 		selectedIDs := make([]string, 0, len(selection.Guests))
 		for _, candidate := range selection.Guests {
 			selectedIDs = append(selectedIDs, candidate.ID)
@@ -570,6 +619,7 @@ func (m *Manager) load(ctx context.Context) error {
 		if budgetErr != nil {
 			return budgetErr
 		}
+		loadedMeta, loadedSize, loadedBudget = meta, uint64(size), hostCapacity
 		if inspectErr = validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
 			return inspectErr
 		}
@@ -630,6 +680,8 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
+	m.loadedTopology = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
+	m.activityWindow = nil
 	m.loadFingerprint = loadFingerprint
 	m.nativeSystemInfo = systemInfo
 	m.current = s.Model
@@ -656,6 +708,8 @@ func (m *Manager) Unload() {
 	m.mu.Lock()
 	engine := m.engine
 	m.engine = nil
+	m.loadedTopology = nil
+	m.activityWindow = nil
 	m.nativeSystemInfo = ""
 	m.current = ""
 	m.loadPhase = "idle"

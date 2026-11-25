@@ -54,3 +54,30 @@ func TestGuestThreadsPreserveDefaultsAndExplicitLimit(t *testing.T) {
 		t.Fatal("invalid policy accepted")
 	}
 }
+
+func TestGuestPerformanceTopologyFallback(t *testing.T) {
+	root := t.TempDir()
+	if n := recommendedThreads(root, 32, 16); n != 16 {
+		t.Fatalf("missing telemetry: got %d, want 16", n)
+	}
+	for i := 0; i < 32; i++ {
+		dir := filepath.Join(root, "cpu"+strconv.Itoa(i))
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "cpu_capacity"), []byte("1024"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := recommendedThreads(root, 32, 16); n != 16 {
+		t.Fatalf("homogeneous topology: got %d, want 16", n)
+	}
+	for i := 8; i < 32; i++ {
+		if err := os.WriteFile(filepath.Join(root, "cpu"+strconv.Itoa(i), "cpu_capacity"), []byte("512"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := recommendedThreads(root, 32, 16); n != 8 {
+		t.Fatalf("heterogeneous topology: got %d, want 8", n)
+	}
+}

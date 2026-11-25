@@ -79,3 +79,6 @@ Guest Vulkan (apenas GPU), auto GPU+RAM, e capacidade distribuída, registrando
 TTFT, decode nativo, média total, RAM/VRAM e as camadas do plano. A inferência
 híbrida pode reduzir tokens/s se parte da geração passar pela CPU; prefira GPU
 sozinha sempre que houver capacidade suficiente.
+
+
+O benchmark de rede usa um túnel TLS ocioso por par marker-2 (warmup + 1–3 pares medidos); recomenda-se quatro túneis ociosos. Com apenas um, aguarda a reconexão autenticada para medir o segundo par. Cada par tem limite de 5 s, operação inteira de 15 s. `samples` informa a quantidade real; dispersão zero com uma amostra não demonstra estabilidade. Não mede tokens/s.
