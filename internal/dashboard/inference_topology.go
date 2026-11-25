@@ -95,7 +95,7 @@ func buildInferenceTopology(s Settings, meta local.GGUFInfo, size, hostBudget ui
 			for i, device := range devices.Devices {
 				owner := deviceOwner[device]
 				cumulative += devices.Split[i]
-				end := int((cumulative*uint64(remaining)+sum-1)/sum)
+				end := int((cumulative*uint64(remaining) + sum - 1) / sum)
 				out.Nodes[owner].Layers += end - previous
 				out.Nodes[owner].Devices = append(out.Nodes[owner].Devices, device)
 				previous = end
@@ -191,12 +191,17 @@ func activityDelta(a, b rpcmesh.TunnelStats) (bytes, writes uint64, ok bool) {
 	if a.Epoch == 0 || a.Epoch != b.Epoch || b.Connected == 0 || b.BytesToGuest < a.BytesToGuest || b.BytesFromGuest < a.BytesFromGuest || b.WritesToGuest < a.WritesToGuest || b.WritesFromGuest < a.WritesFromGuest {
 		return 0, 0, false
 	}
-	return b.BytesToGuest - a.BytesToGuest + b.BytesFromGuest - a.BytesFromGuest, b.WritesToGuest - a.WritesToGuest + b.WritesFromGuest - a.WritesFromGuest, true
+	sent, received := b.BytesToGuest-a.BytesToGuest, b.BytesFromGuest-a.BytesFromGuest
+	writesTo, writesFrom := b.WritesToGuest-a.WritesToGuest, b.WritesFromGuest-a.WritesFromGuest
+	if sent > ^uint64(0)-received || writesTo > ^uint64(0)-writesFrom {
+		return 0, 0, false
+	}
+	return sent + received, writesTo + writesFrom, true
 }
 
 func calculateActivity(nodes []topologyNode, oldest, previous, current activityObservation) ([]activityNode, bool) {
 	out := []activityNode{}
-	var total uint64
+	var total float64
 	complete, active := !previous.at.IsZero(), false
 	for _, node := range nodes {
 		if node.NodeID == "host" {
@@ -212,14 +217,14 @@ func calculateActivity(nodes []topologyNode, oldest, previous, current activityO
 		if windowOK && current.at.After(oldest.at) {
 			item.MiBPerSecond = float64(window) / 1048576 / current.at.Sub(oldest.at).Seconds()
 			item.SharePercent = float64(window)
-			total += window
+			total += float64(window)
 		}
 		active = active || item.Active
 		out = append(out, item)
 	}
 	for i := range out {
 		if total > 0 {
-			out[i].SharePercent = 100 * out[i].SharePercent / float64(total)
+			out[i].SharePercent = 100 * out[i].SharePercent / total
 		}
 	}
 	return out, complete && !active

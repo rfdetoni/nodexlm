@@ -100,6 +100,7 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	m.recordGeneration(time.Since(start), err)
 	return err
 }
+
 type generationActivityKey struct{}
 type generationActivity struct {
 	manager *Manager
@@ -140,6 +141,7 @@ func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, 
 		return err
 	}, onTraffic...)
 }
+
 func (m *Manager) Complete(ctx context.Context, req protocol.ChatRequest) (json.RawMessage, error) {
 	var raw json.RawMessage
 	err := m.withGeneration(ctx, req, func(ctx context.Context, engine *local.Managed, req protocol.ChatRequest) error {
