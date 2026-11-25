@@ -1,0 +1,86 @@
+name: Experimental CUDA RPC bundle
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/rpc-cuda-candidate.yml']
+permissions:
+  contents: read
+concurrency:
+  group: nodexlm-cuda-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux-cuda:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Install distribution CUDA toolkit and supported compiler
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nvidia-cuda-toolkit=12.0.140~12.0.1-4build4 gcc-12 g++-12
+          nvcc --version
+      - name: Compile matching CUDA Host and Guest
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')
+          commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
+          git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
+          test "$(git -C upstream rev-parse HEAD)" = "$commit"
+          for patch in unix-rpc arm32-rpc-wire parallel-rpc-loader; do
+            git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/$patch.patch"
+          done
+          if test -f internal/llamaruntime/patches/rpc-command-batching.patch; then
+            git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
+          fi
+          git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
+          # Turing (including RTX 2060) and Ampere; PTX for later compatible devices.
+          # This headless runner cannot establish a hardware speed/driver claim.
+          cmake -S upstream -B native -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-12 \
+            '-DCMAKE_CUDA_ARCHITECTURES=75-real;86-real;86-virtual' \
+            -DGGML_CUDA=ON -DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+            -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
+            -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON \
+            -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
+          cmake --build native --parallel 2 --target llama-server ggml-rpc-server
+          mkdir -p stage/bin dist
+          python3 scripts/stage-rpc-bundle.py native stage
+          cp upstream/LICENSE stage/LICENSE.llama.cpp
+          chmod -R u+rx stage/bin
+          export LD_LIBRARY_PATH="$PWD/stage/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          test -n "$(find stage/bin -type f -name '*ggml-cuda*' -print -quit)"
+          stage/bin/llama-server --version 2>&1 | tee stage/native-capabilities.txt
+          stage/bin/llama-server --list-devices 2>&1 | tee -a stage/native-capabilities.txt
+          worker=stage/bin/ggml-rpc-server
+          if ! test -f "$worker"; then worker=stage/bin/rpc-server; fi
+          "$worker" --help 2>&1 | tee -a stage/native-capabilities.txt
+          printf '%s\n' 'Experimental CUDA 12.0 Linux x64. External compatible CUDA runtime/driver required. Headless CPU RPC acceptance only.' > stage/CUDA-REQUIREMENTS.txt
+          name="nodexlm-rpc_${version}_linux_amd64_cuda.tar.gz"
+          tar -czf "dist/$name" -C stage bin LICENSE.llama.cpp native-capabilities.txt CUDA-REQUIREMENTS.txt
+          test "$(wc -c < "dist/$name")" -le 419430400
+          (cd dist && sha256sum "$name" > "$name.sha256")
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - name: CPU transport acceptance on CUDA build
+        env:
+          NODEXLM_RPC_DIR: ${{ github.workspace }}/stage
+          NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
+          NODEXLM_TEST_RPC_DEVICE: CPU
+          NODEXLM_TEST_GPU_LAYERS: '0'
+          NODEXLM_RPC_DIRECTIONAL_BENCH: '1'
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -o tiny.gguf
+          echo '270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d  tiny.gguf' | sha256sum -c -
+          go build -o nodexlm ./cmd/nodexlm
+          python3 scripts/e2e-rpc.py
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with: {subject-path: 'dist/*.tar.gz'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: rpc-linux-amd64-cuda-candidate, path: 'dist/*', retention-days: 14}
