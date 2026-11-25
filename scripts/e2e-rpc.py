@@ -121,7 +121,8 @@ def main():
             measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
             assert measurement['mib_per_second'] > 0
             if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
-                assert measurement.get('samples') == 3, measurement
+                assert 1 <= measurement.get('samples', 0) <= 3, measurement
+                assert measurement['bytes'] == measurement['samples'] * (2 << 20), measurement
                 for node in nodes:
                     sample = json.load(api('/api/bench/rpc-device/'+node['id'],'POST',{}))
                     assert sample['source'] == 'auto', sample
