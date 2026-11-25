@@ -2,6 +2,11 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## CI de laboratório
+
+- Reutiliza cache Go e cache nativo Android limitado; APK integral em PR somente para mudanças nativas/build, Kotlin e recursos usam checks leves. APK assinado continua automático na main.
+- Matrizes nativas de seis plataformas, smoke multiplataforma, SDK oficial completo e cross-build Windows E2E ficam sob dispatch explícito. Publicação usa artefatos revisados, não recompilação no merge. Segurança mantém govulncheck nos arquivos relevantes e agenda semanal. Builds edge obsoletos são cancelados; tags e assinatura preservados.
+
 ## Runtime experimental
 
 - Compressão lossless opt-in de transporte RPC (Go), negociada por túnel, frames limitados e fallback incompressível/legado. Métricas distinguem payload nativo e bytes de framing; validação Android e A/B físicos ainda pendentes.

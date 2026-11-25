@@ -30,7 +30,7 @@ permissions:
 
 concurrency:
   group: nodexlm-desktop-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build-release:
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - name: Validate production signing configuration
         id: signing
         env:
@@ -76,28 +76,8 @@ jobs:
         run: |
           node --check internal/dashboard/static/app.js
           node scripts/test-dashboard-models.cjs
-          go test ./internal/dashboard
       - name: POSIX installer smoke test
         run: sh ./scripts/test-install.sh
-      - name: Smoke test public Linux RPC shared libraries
-        shell: bash
-        run: |
-          set -euo pipefail
-          runtime_dir="$(mktemp -d)"
-          trap 'rm -rf "$runtime_dir"' EXIT
-          url='https://github.com/rfdetoni/nodexlm/releases/download/nodexlm-rpc-b12143-r2/nodexlm-rpc_b12143_linux_amd64_cpu.tar.gz'
-          curl -fsSL --retry 3 "$url" -o "$runtime_dir/rpc.tar.gz"
-          mkdir "$runtime_dir/payload"
-          tar -xzf "$runtime_dir/rpc.tar.gz" -C "$runtime_dir/payload"
-          rpc="$runtime_dir/payload/bin/ggml-rpc-server"
-          test -x "$rpc"
-          # Pinned GGML may be fully static. Missing shared libraries are
-          # determined by the dynamic loader, not by requiring libggml.so.0.
-          LD_LIBRARY_PATH="$runtime_dir/payload/bin" ldd "$rpc" | tee "$runtime_dir/dependencies.log"
-          if grep -Fq 'not found' "$runtime_dir/dependencies.log"; then
-            echo "::error::Published RPC bundle has missing ELF shared libraries"
-            exit 1
-          fi
       - name: Native packaging tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
       - name: Cross compile and package

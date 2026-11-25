@@ -8,9 +8,14 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'android/**'
+      - 'android/app/src/main/cpp/**'
+      - 'android/rpc-rust/**'
+      - 'android/**/build.gradle.kts'
+      - 'android/settings.gradle.kts'
+      - 'android/gradle.properties'
       - 'internal/llamaruntime/revision.json'
-      - 'internal/llamaruntime/patches/**'
+      - 'internal/llamaruntime/patches/unix-rpc.patch'
+      - 'internal/llamaruntime/patches/arm32-rpc-wire.patch'
       - 'scripts/apply-rpc-patch.cmake'
       - 'scripts/verify-android-pages.sh'
       - 'scripts/fetch-android-tokenizer.py'
@@ -20,7 +25,8 @@ on:
     paths:
       - 'android/**'
       - 'internal/llamaruntime/revision.json'
-      - 'internal/llamaruntime/patches/**'
+      - 'internal/llamaruntime/patches/unix-rpc.patch'
+      - 'internal/llamaruntime/patches/arm32-rpc-wire.patch'
       - 'scripts/apply-rpc-patch.cmake'
       - 'scripts/verify-android-pages.sh'
       - 'scripts/fetch-android-tokenizer.py'
@@ -49,8 +55,8 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" == refs/tags/* ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            native="$(python3 scripts/native-revision-changed.py)"
-            app_changes="$(git diff --name-only HEAD^ HEAD -- android/ internal/llamaruntime/patches/ scripts/apply-rpc-patch.cmake scripts/verify-android-pages.sh scripts/fetch-android-tokenizer.py .github/workflows/android-apk.yml)"
+            native="$(python3 scripts/native-revision-changed.py --android)"
+            app_changes="$(git diff --name-only HEAD^ HEAD -- android/ internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/arm32-rpc-wire.patch scripts/apply-rpc-patch.cmake scripts/verify-android-pages.sh scripts/fetch-android-tokenizer.py .github/workflows/android-apk.yml)"
             if [[ "$native" == "true" || -n "$app_changes" ]]; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
               {
@@ -189,8 +195,26 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq glslc spirv-headers libvulkan-dev
+          sudo apt-get install -y -qq glslc spirv-headers libvulkan-dev ccache
           command -v glslc
+      - name: Configure bounded native compiler cache
+        shell: bash
+        run: |
+          ccache --set-config=cache_dir="$HOME/.cache/nodexlm-ccache"
+          ccache --set-config=max_size=768M
+          ccache --set-config=compiler_check=content
+          ccache --set-config=base_dir="$GITHUB_WORKSPACE"
+          {
+            echo "CCACHE_DIR=$HOME/.cache/nodexlm-ccache"
+            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+          } >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/nodexlm-ccache
+          key: android-native-v1-${{ runner.os }}-ndk27-${{ hashFiles('internal/llamaruntime/revision.json', 'internal/llamaruntime/patches/unix-rpc.patch', 'internal/llamaruntime/patches/arm32-rpc-wire.patch', 'android/app/src/main/cpp/**', 'android/app/build.gradle.kts', 'scripts/apply-rpc-patch.cmake') }}
+          restore-keys: |
+            android-native-v1-${{ runner.os }}-ndk27-
       - name: Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -402,6 +426,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Native compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
       - name: Remove temporary signing keys and prefetch mirror
         if: always()
         run: |

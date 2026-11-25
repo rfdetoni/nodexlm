@@ -1,51 +1,14 @@
 name: Portable RPC bundles
 on:
   workflow_dispatch:
-  push:
-    # Only rebuild native bundles when the pinned runtime/patch changes.
-    # Full-PR diff filters would rebuild the five-platform matrix for
-    # every subsequent frontend/Go edit, wasting Actions minutes.
-    branches: [main]
-    paths:
-      - 'internal/llamaruntime/revision.json'
-      - 'internal/llamaruntime/patches/**'
-      - '.github/workflows/rpc-platforms.yml'
-      - 'scripts/stage-rpc-bundle.py'
-      - 'scripts/optimized-rpc-backend-search.patch'
+
 permissions:
   contents: read
 concurrency:
   group: nodexlm-rpc-platforms-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
-  detect:
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.native.outputs.changed }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with: {persist-credentials: false, fetch-depth: 2}
-      - id: native
-        shell: bash
-        run: |
-          # r2 is already immutable. Until its reviewed promotion sets the
-          # next candidate tag, never build optimized binaries under r2.
-          candidate=$(python3 -c 'import json; print(json.load(open("internal/llamaruntime/revision.json"))["rpc_candidate_release"])')
-          if [[ "$candidate" == nodexlm-rpc-b12255-r2 ]]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || [[ -n "$(git diff --name-only HEAD^ HEAD -- .github/workflows/rpc-platforms.yml scripts/stage-rpc-bundle.py scripts/optimized-rpc-backend-search.patch)" ]]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            previous=$(git show HEAD^:internal/llamaruntime/revision.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("rpc_candidate_release",""))')
-            if [[ "$candidate" != "$previous" ]]; then
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "changed=$(python3 scripts/native-revision-changed.py)" >> "$GITHUB_OUTPUT"
-            fi
-          fi
   build:
-    needs: detect
-    if: needs.detect.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -96,7 +59,11 @@ jobs:
           git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
           test "$(git -C upstream rev-parse HEAD)" = "$commit"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/unix-rpc.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/arm32-rpc-wire.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/parallel-rpc-loader.patch"
+          if [[ -f internal/llamaruntime/patches/rpc-command-batching.patch ]]; then
+            git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
+          fi
           git -C upstream apply --check "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           options=(-DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DCMAKE_BUILD_TYPE=Release)
@@ -140,7 +107,7 @@ jobs:
           PY
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         if: matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu'
-        with: {go-version-file: go.mod, cache: false}
+        with: {go-version-file: go.mod, cache: true}
       - name: Native Unix RPC end-to-end
         if: matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu'
         run: |
@@ -156,26 +123,3 @@ jobs:
           name: rpc-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.backend }}
           path: dist/*
           retention-days: 14
-  publish:
-    if: github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions: {contents: write}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with: {persist-credentials: false}
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with: {path: dist, merge-multiple: true}
-      - name: Publish immutable matching bundles
-        env: {GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}'}
-        run: |
-          set -euo pipefail
-          cat dist/*.sha256 > dist/SHA256SUMS.txt
-          tag=$(python3 -c 'import json; r=json.load(open("internal/llamaruntime/revision.json")); print(r.get("rpc_candidate_release",r["rpc_release"]))')
-          active=$(python3 -c 'import json; print(json.load(open("internal/llamaruntime/revision.json"))["rpc_release"])')
-          [[ "$tag" != "$active" ]] || { echo "::error::Candidate must not overwrite the active runtime"; exit 1; }
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo 'Immutable release already exists; do not overwrite reviewed binaries.'
-            exit 0
-          fi
-          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS.txt --target main --title "Pinned RPC b12255 with private Unix sockets" --notes "Matched b12255 RPC pairs built from $GITHUB_SHA; private Unix sockets plus bounded per-Guest parallel mmap tensor uploads and runtime-selected CPU variants. Six platform artifact attestations are available. Review and pin each SHA-256 before enabling downloads." --prerelease --latest=false

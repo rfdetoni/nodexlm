@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/dashboard/static/styles.css', 'internal/llamaruntime/revision.json', 'internal/local/managed.go', 'internal/pairing/**', 'scripts/hardware-acceptance.py', 'internal/openai/**', 'internal/dashboard/openai.go', 'internal/dashboard/handler.go', 'internal/local/openai.go', 'scripts/test-openai-sdk.py']
+    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/llamaruntime/revision.json', 'internal/local/managed.go', 'internal/pairing/**', 'scripts/hardware-acceptance.py', 'internal/openai/**', 'internal/dashboard/openai.go', 'internal/dashboard/handler.go', 'internal/local/openai.go', 'scripts/test-openai-sdk.py']
 permissions:
   contents: read
 concurrency:
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - name: Download pinned native runtime and tiny test model
         shell: bash
         run: |
@@ -62,7 +62,7 @@ jobs:
           NODEXLM_TEST_GUEST_COUNT: ${{ github.event_name == 'pull_request' && '2' || '1' }}
         run: python3 scripts/e2e-rpc.py
       - name: Official OpenAI SDK chat and agent acceptance
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         env:
           NODEXLM_RPC_DIR: ${{ github.workspace }}/native
           NODEXLM_TEST_MODEL: ${{ runner.temp }}/agent-acceptance.gguf
@@ -92,6 +92,7 @@ jobs:
           retention-days: 7
 
   windows-cross-build:
+    if: github.event_name == 'workflow_dispatch'
     name: Windows full cross-build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -102,6 +103,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - name: Build all Windows packages
         run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...
