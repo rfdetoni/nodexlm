@@ -2,6 +2,10 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Transporte RPC — WP6
+
+- Mediana de três pares após warmup em túneis legados, watcher ocioso sem poll e cache TLS por cliente pareado, sem alteração de protocolo.
+
 ## Bytes por camada — WP5
 
 - Parser GGUF contabiliza tensores conhecidos sem ler pesos e planner opt-in estima alocação contígua não uniforme; fallback uniforme preservado para metadados incompletos.

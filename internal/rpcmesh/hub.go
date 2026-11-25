@@ -154,33 +154,22 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 func (r *relay) watchIdle(t *idleTunnel) {
 	defer close(t.stopped)
 	var b [1]byte
-	for {
+	n, err := t.conn.Read(b[:])
+	if n != 0 {
+		slog.Warn("RPC Guest sent data before relay ready marker")
+		r.finish(t.conn)
+		return
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		select {
 		case <-t.claimed:
 			return
-		case <-r.closed:
-			return
 		default:
 		}
-		if err := t.conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-			r.finish(t.conn)
-			return
-		}
-		n, err := t.conn.Read(b[:])
-		if n != 0 {
-			slog.Warn("RPC Guest sent data before relay ready marker")
-			r.finish(t.conn)
-			return
-		}
-		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() {
-			continue
-		}
-		if err != nil {
-			r.finish(t.conn)
-			return
-		}
 	}
+	// EOF, connection errors and unsolicited timeouts are disconnects.
+	r.finish(t.conn)
 }
 func (r *relay) signalReady() {
 	select {

@@ -198,3 +198,56 @@ func TestRelayReclaimsDisconnectedIdleTunnels(t *testing.T) {
 		t.Fatalf("expected eight live tunnels after reconnect, got %d", count)
 	}
 }
+
+func TestIdleClaimPreservesFirstByte(t *testing.T) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	r := &relay{ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: map[net.Conn]struct{}{host: {}}}
+	pending := &idleTunnel{conn: host, claimed: make(chan struct{}), stopped: make(chan struct{})}
+	r.waiting = []*idleTunnel{pending}
+	go r.watchIdle(pending)
+	claimed := r.takeIdle()
+	if claimed == nil {
+		t.Fatal("claim lost idle connection")
+	}
+	go func() { _, _ = guest.Write([]byte{0x42}) }()
+	_ = claimed.SetReadDeadline(time.Now().Add(time.Second))
+	var first [1]byte
+	if _, err := io.ReadFull(claimed, first[:]); err != nil || first[0] != 0x42 {
+		t.Fatalf("lost first byte: %x %v", first, err)
+	}
+}
+
+func TestLegacyEchoBenchmarkMedian(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+	r := &relay{ready: make(chan struct{}, 1), closed: make(chan struct{}), peers: make(map[net.Conn]struct{})}
+	hub.nodes["test"] = r
+	// Hub.Close requires a listener; keep the fixture local.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.listener = listener
+	for range 4 {
+		host, guest := net.Pipe()
+		r.track(host)
+		pending := &idleTunnel{conn: host, claimed: make(chan struct{}), stopped: make(chan struct{})}
+		r.enqueue(pending)
+		go r.watchIdle(pending)
+		go func() {
+			defer guest.Close()
+			var marker [1]byte
+			if _, err := io.ReadFull(guest, marker[:]); err == nil && marker[0] == 2 {
+				_ = echoBenchmark(guest, guest)
+			}
+		}()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := hub.Benchmark(ctx, "test")
+	if err != nil || got.Samples != 3 || got.Bytes != 6<<20 || got.MiBPerSecond <= 0 {
+		t.Fatalf("legacy echo median: %+v %v", got, err)
+	}
+}

@@ -51,6 +51,7 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	// Inheriting that ALPN breaks raw CONNECT: HTTP/2 SETTINGS is parsed as
 	// a malformed HTTP/1.1 response. Keep pinned TLS verification unchanged.
 	cfg.NextProtos = []string{"http/1.1"}
+	cfg.ClientSessionCache = client.RPCSessionCache()
 	d := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", u.Host)
 	if err != nil {

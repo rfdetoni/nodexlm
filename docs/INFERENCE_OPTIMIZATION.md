@@ -127,3 +127,7 @@ Autotune usa RTT >15 ms ou eco <25 MiB/s para testar microbatch 128/256, links r
 ## Estimativa de bytes por camada (WP5)
 
 `NODEXLM_GGUF_LAYER_BYTES=1` ativa o cálculo experimental por descritores de tensores GGUF, sem carregar pesos. Tipos quantizados conhecidos são contabilizados por tamanho de bloco; embeddings/output e outros tensores não-blk são reservados no Host. Metadados incompletos, tipos desconhecidos e shards mantêm fallback uniforme. A alocação contígua com margem de 15% é estimativa; validação física do tensor split nativo é necessária antes de usar em produção.
+
+## Transporte (WP6)
+
+O marcador 2 legado aceita dois exchanges; o Host usa quatro túneis autenticados separados (warmup descartado + três pares medidos), com mediana, amplitude e deadline total de 15 s. Sem novo marcador. O watcher ocioso bloqueia em Read e o claim interrompe por deadline antes de entregar o socket; TLS 1.3 pode reutilizar sessões por cliente pareado, preservando VerifyConnection e ALPN HTTP/1.1. Medições separadas up/down exigem negociação futura.

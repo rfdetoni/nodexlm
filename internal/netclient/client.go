@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -28,6 +29,15 @@ type Client struct {
 	Token             string
 	NodeID            string
 	HTTP              *http.Client
+	rpcCacheOnce      sync.Once
+	rpcCache          tls.ClientSessionCache
+}
+
+// RPCSessionCache is scoped to this paired client; VerifyConnection still
+// executes on resumed sessions. Never share tickets across identities.
+func (c *Client) RPCSessionCache() tls.ClientSessionCache {
+	c.rpcCacheOnce.Do(func() { c.rpcCache = tls.NewLRUClientSessionCache(32) })
+	return c.rpcCache
 }
 
 func New(base, token, nodeID string) (*Client, error) {
