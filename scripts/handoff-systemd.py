@@ -181,7 +181,7 @@ def rejoin_guests(old, new, endpoint, guests):
             enabled(guest, GUEST, "disabled")
             raw = remote(new, "sudo", "-n", "-u", "nodexlm", "/usr/local/bin/nodexlm",
                          "pairing", "--dir", "/var/lib/nodexlm")
-            match = re.fullmatch(r"NODEXLM PAIRING CODE: ([A-HJ-NP-Z2-9]{8}) \\(valid [^)]+\\)", raw)
+            match = re.fullmatch(r"NODEXLM PAIRING CODE: ([A-HJ-NP-Z2-9]{8}) \(valid [^)]+\)", raw)
             if not match:
                 raise RuntimeError("cannot obtain temporary pairing code")
             # Stdin only: code never appears in argv or printed diagnostics.
