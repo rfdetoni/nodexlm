@@ -155,3 +155,16 @@ func TestDetailedLayerPlacementPreservesLegacyTopology(t *testing.T) {
 		t.Fatalf("legacy placement changed: %+v, %v", selection, err)
 	}
 }
+
+func TestCUDAHostRequiresConfirmedDevice(t *testing.T) {
+	output := "Available devices:\n  CUDA0: NVIDIA GPU (6144 MiB, 5000 MiB free)\n"
+	device := parseHostGPU(output, "cuda")
+	plan := RPCDevicePlacement{Devices: []string{"RPC0"}, Split: []uint64{20}}
+	got, layers := withHostGPU(plan, 20, 40, "cuda", device, "auto")
+	if layers != 0 || got.DeviceArg() != "CUDA0,RPC0" || got.Modes["host"] != "cuda" {
+		t.Fatalf("CUDA placement: %+v %d", got, layers)
+	}
+	if parseHostGPU(output+"  CUDA1: GPU (6144 MiB, 5000 MiB free)\n", "cuda") != "" {
+		t.Fatal("ambiguous native CUDA devices")
+	}
+}

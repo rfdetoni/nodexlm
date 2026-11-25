@@ -570,7 +570,7 @@ func guest(args []string) error {
 	rejoin := f.Bool("rejoin", false, "renew stale credentials using a new Host pairing code")
 	dir := f.String("dir", config.DefaultDir(), "Guest configuration directory")
 	debug := f.Bool("debug", false, "log Guest heartbeat, reconnects and native RPC output to a private rotating file")
-	backend := f.String("backend", "auto", "auto, cpu, vulkan or metal")
+	backend := f.String("backend", "auto", "auto, cpu, vulkan, metal or cuda")
 	bin := f.String("rpc-bin", "", "matching rpc-server executable")
 	threads := f.Int("threads", 0, "Guest CPU threads (0 = automatic)")
 	threadPolicy := f.String("thread-policy", "", "auto or performance (big cores; manual --threads takes precedence)")
@@ -940,7 +940,7 @@ func rpcNode(args []string) error {
 	bin := f.String("rpc-bin", "", "optional custom rpc-server binary (must match Host's llama.cpp)")
 	threads := f.Int("threads", 0, "Guest CPU threads (0 = automatic)")
 	threadPolicy := f.String("thread-policy", "", "auto or performance (big cores; manual --threads takes precedence)")
-	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan or metal")
+	backend := f.String("backend", "auto", "runtime backend: auto, cpu, vulkan, metal or cuda")
 	addr := f.String("rpc-addr", "auto", "private Unix socket with patched runtime, otherwise random loopback TCP")
 	slots := f.Int("tunnels", 8, "simultaneous secured RPC tunnels (1-8)")
 	rpcCache := f.Bool("rpc-cache", false, "cache model tensors on this Guest disk (opt-in; contains model weights)")
@@ -1001,7 +1001,11 @@ func rpcNode(args []string) error {
 				selectedBackend = "cpu"
 			}
 		}
-		c, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
+		buildTimeout := 7 * time.Minute
+		if selectedBackend == "cuda" {
+			buildTimeout = 60 * time.Minute
+		}
+		c, cancel := context.WithTimeout(context.Background(), buildTimeout)
 		defer cancel()
 		_, executable, err = llamaruntime.EnsureDistributed(c, *dir, selectedBackend)
 		if err != nil && *backend == "auto" && selectedBackend != "cpu" {
@@ -1019,6 +1023,12 @@ func rpcNode(args []string) error {
 	if *device == "" || *device == "auto" {
 		names := nativeRPCDeviceNames(executable)
 		choice := autoRPCDeviceChoice(names, profile)
+		if selectedBackend == "cuda" {
+			choice, err = explicitCUDADeviceChoice(names, profile)
+			if err != nil {
+				return err
+			}
+		}
 		if choice == "" && selectedBackend == "cpu" {
 			choice = "CPU"
 		}

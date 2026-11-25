@@ -153,7 +153,9 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 			binary, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, effectiveHostRuntimeBackend(settings.HostGPU))
 		}
 	} else {
-		if (binary == "" || binary == "llama-server") && (settings.HostGPU == "vulkan" || settings.HostGPU == "metal") {
+		if (binary == "" || binary == "llama-server") && settings.HostGPU == "cuda" {
+			binary, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, "cuda")
+		} else if (binary == "" || binary == "llama-server") && (settings.HostGPU == "vulkan" || settings.HostGPU == "metal") {
 			binary, _, err = llamaruntime.Ensure(ctx, m.dir, settings.HostGPU)
 		} else {
 			binary, err = llamaruntime.AutoExecutable(ctx, m.dir, binary)
@@ -161,6 +163,9 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 	}
 	if err != nil {
 		return InferenceSample{}, err
+	}
+	if settings.HostGPU == "cuda" && settings.GPULayers != "0" && discoverHostGPU(ctx, binary, "cuda") == "" {
+		return InferenceSample{}, errors.New("explicit CUDA requires exactly one initialized native CUDA device")
 	}
 	draftPath, err := m.resolveDraftModel(settings)
 	if err != nil {

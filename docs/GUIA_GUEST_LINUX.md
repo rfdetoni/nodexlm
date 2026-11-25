@@ -71,3 +71,6 @@ tail -f "${NODEXLM_HOME:-$HOME/.nodexlm}/logs/guest.log"
 No modo debug, os eventos de heartbeat, túnel e a saída do servidor GGML ficam em um arquivo local privado e com rotação. Não compartilhe tokens ou caminhos pessoais por acidente.
 
 Para experimentar a contagem de núcleos rápidos, use `nodexlm guest --thread-policy performance`. O padrão usa cores físicas e `--threads N` mantém prioridade. Em CPU homogênea ou sem telemetria confiável, a política performance do Guest também usa cores físicas (máximo 256). Não altera afinidade.
+
+
+Experimental CUDA: `nodexlm guest --backend cuda` selects an initialized CUDA device, never silently falls back to CPU. Linux can compile the pinned matching pair with a compatible installed CUDA toolkit, CMake and compiler; first build may be expensive. On other systems use `--rpc-bin` with a matching native binary. For multiple GPUs, select explicitly with `--rpc-device` or `CUDA_VISIBLE_DEVICES`; automatic per-card placement and published CUDA bundles are not yet certified. Default backend selection is unchanged.
