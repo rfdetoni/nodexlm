@@ -92,21 +92,22 @@ func (m *Manager) slowBenchmarkRPC(topology string) bool {
 }
 
 func (m *Manager) prefillLink(topology string) string {
-	measured := false
+	measured, missing := false, false
 	for _, id := range strings.Split(topology, ":") {
 		if len(id) != 64 {
 			break
 		}
 		network := m.networkSample(id)
 		if network == nil {
-			return ""
+			missing = true
+			continue
 		}
 		measured = true
 		if network.RoundTripMS > 15 || network.MiBPerSecond < 25 {
 			return "slow"
 		}
 	}
-	if measured {
+	if measured && !missing {
 		return "fast"
 	}
 	return ""

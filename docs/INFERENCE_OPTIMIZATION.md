@@ -112,9 +112,9 @@ o conteúdo armazenado no disco dele. O Android não recebeu essa opção.
 
 A revisão do llama.cpp fica fixada em `internal/llamaruntime/revision.json` e os hashes SHA-256 em `internal/llamaruntime/revision.json`. Ao mudar de revisão, os pares Host/Guest RPC devem ser recompilados juntos (inclusive o patch Unix) e os novos binários publicados e verificados antes de preencher `published`. Enquanto os novos hashes não forem publicados, `EnsureDistributed` tenta a compilação local da mesma revisão. **Não é permitido reutilizar bundles publicados de revisões antigas**. Android compila sua própria biblioteca C++ na revisão fixada e precisa de testes físicos específicos.
 
-## Runtime RPC r2
+## Runtime RPC b12255/r3
 
-O r2 é o bundle publicado fixado, com os cinco SHA-256 obtidos dos ativos da release e o build 43231952808 aprovado nas cinco plataformas, incluindo E2E Linux com dois Guests. O cache de instalação é separado por tag. Upload paralelo é ativado apenas nos bundles verificados, não representa ganho garantido no decode. O r3 fica reservado para candidatos de kernels especializados; não promover sem CI, hashes e testes de compatibilidade.
+O bundle fixado para estes WPs é `nodexlm-rpc-b12255-r3`; a revisão, os hashes e os patches permanecem inalterados. O cache de instalação é separado por tag. Upload paralelo é ativado apenas nos bundles verificados, não representa ganho garantido no decode.
 
 ## Microbenchmark RPC por dispositivo (WP3)
 
@@ -141,3 +141,5 @@ Metal é uma opção explícita para macOS. Em cargas distribuídas e benchmarks
 O workflow `Real RPC end-to-end` executa um teste focado nas alterações de E2E, com dois Guests CPU reais no runner e o bundle pinado verificado por SHA-256, mais `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...`. Não recompila nem publica o runtime. Verifica eco mediano, microbenchmark nativo, recusa durante residência e n-gram+RPC. O teste em runner não estabelece aceitação física.
 
 Para a coleta física, mantenha o mesmo GGUF (confira `sha256sum`), configurações, topologia e temperatura inicial. Descarregue todos os modelos e execute `python3 scripts/hardware-acceptance.py --model MODELO.gguf --repeat 3 --output host.json`, depois o mesmo com `--node ID_DO_GUEST --output guest.json` e `--node cluster --output cluster.json`. Para cluster, selecione o GGUF e habilite distribuição; use capacity se precisar forçar o teste distribuído. O coletor salva settings, plano de cluster, métricas nativas, estatísticas RPC antes/depois e rede por Guest. Repita com cada opt-in isolado, mesmo contexto, batch, ubatch, KV/FA e temperatura. Compare apenas bases de taxa e topologias equivalentes. Hardware, consumo e qualidade exigem validação do operador.
+
+A revisão final rejeita bases de taxa mistas na ausência de benchmark do Host, exige fingerprint da carga e topologia compatíveis para o alerta de divergência, não ignora um link lento medido quando outro ainda não tem amostra e contabiliza os pesos não-blk na prévia do Host. O coletor interrompe sessões com topologia alterada entre rodadas.

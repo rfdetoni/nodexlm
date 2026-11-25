@@ -5,6 +5,7 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 ## Aceitação integrada dos WPs
 
 - E2E RPC pinado focalizado em PRs e cross-build Windows completo; coleta física suporta cluster, plano e estatísticas RPC por rodada. Corrige identificação Metal MTL<n> conforme a revisão nativa.
+- Endurece comparabilidade de benchmarks, fingerprint carregado, identificação de links lentos e prévia de pesos não-blk; testes de regressão na revisão integrada.
 
 ## GPU do Host — WP9
 

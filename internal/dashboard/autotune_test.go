@@ -1,8 +1,12 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
@@ -80,5 +84,32 @@ func TestPrefillCandidatesMatchMeasuredLink(t *testing.T) {
 		if !slices.Equal(got, tc.want) {
 			t.Fatalf("%s: got %v want %v", tc.link, got, tc.want)
 		}
+	}
+}
+
+func TestPrefillLinkFindsSlowGuestAfterUnmeasuredGuest(t *testing.T) {
+	m := &Manager{dir: t.TempDir()}
+	unknown, slow := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	sample := rpcmesh.Measurement{NodeID: slow, MeasuredAt: time.Now(), RoundTripMS: 20, MiBPerSecond: 100}
+	body, err := json.Marshal(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writePrivate(filepath.Join(m.dir, "bench-"+slow+".json"), body); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.prefillLink(unknown + ":" + slow + ":0::"); got != "slow" {
+		t.Fatalf("known slow link was ignored: %q", got)
+	}
+	sample.RoundTripMS = 1
+	body, err = json.Marshal(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writePrivate(filepath.Join(m.dir, "bench-"+slow+".json"), body); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.prefillLink(unknown + ":" + slow + ":0::"); got != "" {
+		t.Fatalf("unmeasured link was treated as fast: %q", got)
 	}
 }

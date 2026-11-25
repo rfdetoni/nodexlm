@@ -179,6 +179,11 @@ def main():
             report=acceptance.collect(base,token,model.name,nodes[0]['id'],2,'ci')
             assert report['physical_acceptance']=='not-established' and len(report['measurements'])==2
             assert all(p['inference']['tokens_per_second']>0 for p in report['measurements'])
+            if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                cluster_report = acceptance.collect(base,token,model.name,'cluster',2,'ci')
+                assert cluster_report['plan'] and cluster_report['physical_acceptance'] == 'not-established'
+                assert all(p['networks'] and p['inference']['benchmark_topology'] for p in cluster_report['measurements'])
+                print('PASS: controlled whole-cluster collection with RPC statistics')
             # Confirm pinned ngram-simple + RPC can actually load and generate.
             # Failure is explicit: never silently retry without speculation.
             ngram = {**settings, 'speculative_mode':'ngram','speculative_tokens':8}

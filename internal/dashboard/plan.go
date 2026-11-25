@@ -77,6 +77,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	}
 	nodes := []placement{}
 	localLayers := int(meta.BlockCount)
+	hostWeight := uint64(size)
 	strategy := effectivePlacementStrategy(settings.PlacementStrategy)
 	excluded := []string{}
 	var suggestions []planSuggestion
@@ -91,6 +92,10 @@ func (m *Manager) Plan() (map[string]any, error) {
 			return nil, selectErr
 		}
 		localLayers = selection.LocalLayers
+		hostWeight = uint64(size) * uint64(localLayers) / uint64(meta.BlockCount)
+		if len(selection.GuestLayers) > 0 && len(selection.GuestLayers) == len(selection.Guests) {
+			hostWeight = meta.NonBlockBytes + blockWeight(meta, 0, localLayers)
+		}
 		devices := planRPCDevices(selection, guests, meta, settings, uint64(size))
 		suggestions = append(suggestions, m.kvPlacementSuggestion(settings, meta, uint64(size), host, guests, selection, devices)...)
 		excluded = selection.Excluded
@@ -136,7 +141,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 			return nil, err
 		}
 	}
-	nodes = append([]placement{{Name: "Host", Endpoint: "Host", Layers: localLayers, WeightBytes: uint64(size) * uint64(localLayers) / uint64(meta.BlockCount), Budget: host}}, nodes...)
+	nodes = append([]placement{{Name: "Host", Endpoint: "Host", Layers: localLayers, WeightBytes: hostWeight, Budget: host}}, nodes...)
 
 	kvBytes := estimateKVBytes(meta, settings)
 	samples := m.InferenceSamples()
@@ -183,7 +188,7 @@ func (m *Manager) networkSample(id string) *rpcmesh.Measurement {
 		return nil
 	}
 	var sample rpcmesh.Measurement
-	if json.Unmarshal(raw, &sample) != nil || sample.NodeID != id || sample.RoundTripMS < 0 || sample.MeasuredAt.After(time.Now()) || time.Since(sample.MeasuredAt) >= 24*time.Hour {
+	if json.Unmarshal(raw, &sample) != nil || sample.NodeID != id || sample.RoundTripMS < 0 || sample.MiBPerSecond <= 0 || sample.MeasuredAt.After(time.Now()) || time.Since(sample.MeasuredAt) >= 24*time.Hour {
 		return nil
 	}
 	return &sample

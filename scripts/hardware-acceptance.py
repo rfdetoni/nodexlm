@@ -69,6 +69,7 @@ def collect(base, token, model, node, repeat, environment, ca=None):
         raise RuntimeError('Guest did not return to idle RPC readiness within 15 seconds')
 
     measurements = []
+    baseline_topology = None
     started = time.monotonic()
     for index in range(repeat):
         sample = {}
@@ -82,9 +83,16 @@ def collect(base, token, model, node, repeat, environment, ca=None):
             wait_for_idle_guests()
         if api('/api/status')['settings'] != settings:
             raise RuntimeError('Settings changed during measurement; discard the session')
+        if node == 'cluster':
+            sample['plan'] = api('/api/plan')
         sample['rpc_stats_before'] = api('/api/cluster')['rpc_stats']
         sample['inference'] = api('/api/bench/inference', {'model': model, 'node_id': node})
         sample['rpc_stats_after'] = api('/api/cluster')['rpc_stats']
+        topology = sample['inference'].get('benchmark_topology', '')
+        if baseline_topology is None:
+            baseline_topology = topology
+        elif topology != baseline_topology:
+            raise RuntimeError('Benchmark topology changed between rounds; discard the session')
         if api('/api/status')['settings'] != settings:
             raise RuntimeError('Settings changed during measurement; discard the session')
         measurements.append(sample)

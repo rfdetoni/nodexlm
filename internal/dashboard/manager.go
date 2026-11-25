@@ -92,6 +92,7 @@ type Manager struct {
 	samples               map[string]InferenceSample
 	microbenchAttempts    map[string]time.Time
 	microbenchDrift       int
+	loadFingerprint       string
 	microbenchNode        string
 	generationTokens      uint64
 	generationBuckets     [8]uint64
@@ -411,6 +412,8 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.phaseStartedAt = m.loadStartedAt
 	m.loadRPCNodes = nil
 	m.loadRPCBaseline = nil
+	m.loadFingerprint = ""
+	m.microbenchDrift = 0
 	if m.rpcStatsProvider != nil {
 		m.loadRPCBaseline = m.rpcStatsProvider()
 	}
@@ -611,6 +614,7 @@ func (m *Manager) load(ctx context.Context) error {
 			engine.GPULayers = "all"
 		}
 	}
+	loadFingerprint := m.benchmarkSignature(s, s.Model)
 	if err = engine.Load(ctx); err != nil {
 		engine.Close()
 		return err
@@ -626,6 +630,7 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
+	m.loadFingerprint = loadFingerprint
 	m.nativeSystemInfo = systemInfo
 	m.current = s.Model
 	m.mu.Unlock()

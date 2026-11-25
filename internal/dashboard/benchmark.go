@@ -65,6 +65,9 @@ func (m *Manager) benchmarkInference(ctx context.Context, model, nodeID string, 
 		m.pruneSamplesLocked(time.Now())
 	}
 	m.samples[key] = sample
+	if nodeID == "cluster" {
+		m.microbenchDrift = 0
+	}
 	return sample, m.persistBenchmarksLocked()
 }
 

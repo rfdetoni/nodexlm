@@ -354,3 +354,24 @@ func TestChooseRPCIncompatibleRateBasisFallsBackToMemory(t *testing.T) {
 		t.Fatalf("incompatible measurements changed memory split: %+v %v", got, err)
 	}
 }
+
+func TestChooseRPCRejectsMixedGuestRatesWithoutHostBenchmark(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	s := Settings{Model: "small.gguf", PlacementStrategy: "speed"}
+	fingerprint := placementTestFingerprint(t, m, s)
+	now := time.Now()
+	m.samples[s.Model+"@small"] = InferenceSample{Model: s.Model + "@small", Kind: "benchmark",
+		RateBasis: "native_decode", Fingerprint: fingerprint, TokensPerSecond: 100, MeasuredAt: now}
+	m.samples[s.Model+"@large"] = InferenceSample{Model: s.Model + "@large", Kind: "benchmark",
+		RateBasis: "end_to_end", Fingerprint: fingerprint, TokensPerSecond: 1, MeasuredAt: now}
+	guests := []RPCGuest{{ID: "small", CapacityBytes: 3 * gib}, {ID: "large", CapacityBytes: 5 * gib}}
+	got, err := m.chooseRPC(s, local.GGUFInfo{BlockCount: 40}, 3*gib, gib, guests)
+	if err != nil || len(got.Guests) != 1 || got.Guests[0].ID != "large" || got.Guests[0].Performance.TokensPerSecond != 0 {
+		t.Fatalf("mixed rate bases must fall back to memory: %+v %v", got, err)
+	}
+}

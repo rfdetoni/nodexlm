@@ -42,6 +42,24 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 	samples := placementBenchmarks(m.InferenceSamples(), m.benchmarkSignature(s, s.Model), time.Now())
 	hostSample := samples[s.Model]
 	hostSpeed := hostSample.TokensPerSecond
+	basis := hostSample.RateBasis
+	if hostSpeed == 0 {
+		// Without a Host reference, never compare native decode with end-to-end rates.
+		for _, guest := range guests {
+			if guest.CapacityBytes == 0 {
+				continue
+			}
+			sample, ok := samples[s.Model+"@"+guest.ID]
+			if !ok {
+				continue
+			}
+			if basis != "" && basis != sample.RateBasis {
+				basis = ""
+				break
+			}
+			basis = sample.RateBasis
+		}
+	}
 	strategy := effectivePlacementStrategy(s.PlacementStrategy)
 	// A connected Guest is optional for local inference, even when an older
 	// runtime.json explicitly saved "capacity" with distributed=true.
@@ -140,7 +158,7 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			candidate.Performance.MiBPerSecond = network.MiBPerSecond
 		}
 		if sample, ok := samples[s.Model+"@"+guest.ID]; ok &&
-			(hostSpeed == 0 || sample.RateBasis == hostSample.RateBasis) {
+			basis != "" && sample.RateBasis == basis {
 			candidate.Performance.TokensPerSecond = sample.TokensPerSecond
 		}
 		if micro := m.microbenchSample(guest.ID); micro != nil {

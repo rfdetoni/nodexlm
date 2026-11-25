@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -166,9 +167,11 @@ func (m *Manager) recordInferenceWithLatency(model string, raw []byte, elapsed t
 			key := model + "@bench-cluster"
 			topology := strings.Join(m.loadRPCNodes, ":") + ":" + fmt.Sprint(m.engine.RPCLocalLayers) + ":" + strings.Join(m.engine.RPCDeviceNames, ",") + ":" + m.engine.RPCTensorSplit
 			if baseline, ok := m.samples[key]; ok && baseline.Kind == "benchmark" &&
+				model == m.current && m.loadFingerprint != "" && baseline.Fingerprint == m.loadFingerprint &&
 				baseline.BenchmarkTopology == topology && len(m.loadRPCNodes) > 0 &&
 				baseline.RateBasis == "native_decode" && sample.RateBasis == baseline.RateBasis &&
-				baseline.TokensPerSecond > 0 && time.Since(baseline.MeasuredAt) < 24*time.Hour {
+				baseline.TokensPerSecond > 0 && !math.IsNaN(baseline.TokensPerSecond) && !math.IsInf(baseline.TokensPerSecond, 0) &&
+				!baseline.MeasuredAt.After(time.Now()) && time.Since(baseline.MeasuredAt) < 24*time.Hour {
 				if sample.TokensPerSecond < baseline.TokensPerSecond*0.7 || sample.TokensPerSecond > baseline.TokensPerSecond*1.3 {
 					m.microbenchDrift++
 				} else {
