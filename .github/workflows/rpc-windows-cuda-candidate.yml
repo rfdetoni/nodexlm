@@ -1,0 +1,103 @@
+name: Windows CUDA RPC candidate
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/rpc-windows-cuda-candidate.yml']
+permissions:
+  contents: read
+concurrency:
+  group: nodexlm-windows-cuda-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-cuda:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Install signed NVIDIA CUDA toolkit components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'cuda_12.8.1_windows_network.exe'
+          $url = 'https://developer.download.nvidia.com/compute/cuda/12.8.1/network_installers/cuda_12.8.1_windows_network.exe'
+          curl.exe --fail --location --retry 3 --output $installer $url
+          if ($LASTEXITCODE -ne 0) { throw 'CUDA download failed' }
+          $sig = Get-AuthenticodeSignature -FilePath $installer
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'NVIDIA Corporation') {
+            throw 'Unexpected CUDA installer signature'
+          }
+          # No GPU driver, IDE, profiling or documentation packages on CI.
+          $args = '-s nvcc_12.8 cudart_12.8 cublas_12.8 cublas_dev_12.8 nvrtc_12.8 nvrtc_dev_12.8 visual_studio_integration_12.8'
+          $p = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "CUDA installer failed: $($p.ExitCode)" }
+          $cuda = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
+          if (-not (Test-Path "$cuda\bin\nvcc.exe") -or -not (Test-Path "$cuda\lib\x64\cublas.lib")) {
+            throw 'CUDA toolkit incomplete'
+          }
+          & "$cuda\bin\nvcc.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'nvcc failed' }
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Compile matching CUDA Host and Guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["version"])')
+          commit=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/revision.json"))["commit"])')
+          git clone --quiet --depth 1 --branch "$version" https://github.com/ggml-org/llama.cpp.git upstream
+          test "$(git -C upstream rev-parse HEAD)" = "$commit"
+          for patch in unix-rpc arm32-rpc-wire parallel-rpc-loader; do
+            git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/$patch.patch"
+          done
+          if test -f internal/llamaruntime/patches/rpc-command-batching.patch; then
+            git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/rpc-command-batching.patch"
+          fi
+          git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
+          # Turing (RTX 2060) and Ampere; PTX for later compatible devices.
+          cmake -S upstream -B native -G 'Visual Studio 17 2022' -A x64 \
+            '-DCMAKE_CUDA_ARCHITECTURES=75-real;86-real;86-virtual' \
+            -DGGML_CUDA=ON -DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+            -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
+            -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=ON \
+            -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
+          cmake --build native --config Release --parallel 3 --target llama-server ggml-rpc-server
+          mkdir -p stage/bin dist
+          python3 scripts/stage-rpc-bundle.py native stage
+          cp upstream/LICENSE stage/LICENSE.llama.cpp
+          export PATH="$PWD/stage/bin:$PATH"
+          test -n "$(find stage/bin -type f -iname '*ggml-cuda*.dll' -print -quit)"
+          stage/bin/llama-server.exe --version 2>&1 | tee stage/native-capabilities.txt
+          stage/bin/llama-server.exe --list-devices 2>&1 | tee -a stage/native-capabilities.txt
+          worker=stage/bin/ggml-rpc-server.exe
+          if ! test -f "$worker"; then worker=stage/bin/rpc-server.exe; fi
+          "$worker" --help 2>&1 | tee -a stage/native-capabilities.txt
+          printf '%s\n' 'Experimental CUDA 12.8 Windows x64. Install a compatible NVIDIA driver and CUDA runtime separately. CPU RPC acceptance only on this headless runner.' > stage/CUDA-REQUIREMENTS.txt
+          name="nodexlm-rpc_${version}_windows_amd64_cuda.tar.gz"
+          tar -czf "dist/$name" -C stage bin LICENSE.llama.cpp native-capabilities.txt CUDA-REQUIREMENTS.txt
+          test "$(wc -c < "dist/$name")" -le 419430400
+          python3 -c 'import hashlib,pathlib; p=next(pathlib.Path("dist").glob("*.tar.gz")); (p.parent/(p.name+".sha256")).write_text(hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name+"\n")'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: true}
+      - name: CPU transport acceptance on CUDA build
+        shell: bash
+        env:
+          NODEXLM_RPC_DIR: ${{ github.workspace }}/stage
+          NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
+          NODEXLM_TEST_RPC_DEVICE: CPU
+          NODEXLM_TEST_GPU_LAYERS: '0'
+          NODEXLM_RPC_DIRECTIONAL_BENCH: '1'
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -o tiny.gguf
+          python3 -c 'import hashlib,pathlib; assert hashlib.sha256(pathlib.Path("tiny.gguf").read_bytes()).hexdigest()=="270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d"'
+          go build -o nodexlm.exe ./cmd/nodexlm
+          python3 scripts/e2e-rpc.py
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with: {subject-path: 'dist/*.tar.gz'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: rpc-windows-amd64-cuda-candidate, path: 'dist/*', retention-days: 14}
