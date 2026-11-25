@@ -62,7 +62,7 @@ func (s *Server) DecisionWorkers() []DecisionWorker {
 			workers = append(workers, DecisionWorker{
 				ID: id, Name: n.device.Name, Platform: n.device.Platform,
 				Model: model, Busy: n.active != "", P50MS: p50, P95MS: p95,
-				Score: decisionScore(n.device, n.active != "") - min(int(p50/100), 30),
+				Score:  decisionScore(n.device, n.active != "") - min(int(p50/100), 30),
 				EWMAMS: n.decisionEWMA.Milliseconds(), InFlight: inFlight,
 			})
 			if adaptiveDecisionRouting() {
