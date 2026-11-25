@@ -95,6 +95,27 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, sample)
 	}))
+	mux.HandleFunc("POST /api/bench/inference-series", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model  string `json:"model"`
+			Rounds int    `json:"rounds"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.Rounds < 2 || input.Rounds > 10 {
+			failure(w, 400, errors.New("cluster series requires 2–10 rounds"))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		rows, err := d.Manager.benchmarkSeries(ctx, input.Model, "cluster", false, input.Rounds)
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, rows)
+	}))
 	mux.HandleFunc("POST /api/bench/autotune", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Model string `json:"model"`

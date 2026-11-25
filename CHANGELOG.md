@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Correções da auditoria
 
+- Aceitação de cluster: série de benchmarks com placement fixado, revalidação por rodada e baseline de rede compartilhado; evita comparar splits recalculados a partir de RAM livre variável.
+
 - FEAT3: preferência explícita de nó principal, com admissão conservadora por dispositivo e preview compartilhando a decisão de load; automático permanece padrão.
 
 - FEAT1: topologia do runtime carregado, atividade por tráfego RPC sob demanda e bytes por Guest na resposta do Chat; faixas e atividade explicitamente estimadas.

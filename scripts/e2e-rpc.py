@@ -216,6 +216,8 @@ def main():
                 cluster_report = acceptance.collect(base,token,model.name,'cluster',2,'ci')
                 assert cluster_report['plan'] and cluster_report['physical_acceptance'] == 'not-established'
                 assert all(p['networks'] and p['inference']['benchmark_topology'] for p in cluster_report['measurements'])
+                assert len({p['inference']['benchmark_topology'] for p in cluster_report['measurements']}) == 1
+                assert all(p['network_scope']=='shared_pre_series_baseline' for p in cluster_report['measurements'])
                 print('PASS: controlled whole-cluster collection with RPC statistics')
             # Confirm pinned ngram-simple + RPC can actually load and generate.
             # Failure is explicit: never silently retry without speculation.

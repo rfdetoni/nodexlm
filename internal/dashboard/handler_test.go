@@ -234,6 +234,20 @@ func TestAdminAndInferenceCredentialsStaySeparated(t *testing.T) {
 	}
 }
 
+func TestClusterBenchmarkSeriesRejectsInvalidRounds(t *testing.T) {
+	h, m := newTestUI(t)
+	defer m.Close()
+	secret := strings.Repeat("a", 64)
+	for _, rounds := range []int{0, 1, 11} {
+		if got := req(h, "POST", "/api/bench/inference-series", secret, "", map[string]any{"rounds": rounds}).Code; got != 400 {
+			t.Fatalf("rounds %d: status %d", rounds, got)
+		}
+	}
+	if got := req(h, "POST", "/api/bench/inference-series", "", "", map[string]any{"rounds": 2}).Code; got != 401 {
+		t.Fatalf("unauthenticated series: %d", got)
+	}
+}
+
 func TestCancelPrimaryLoadDoesNotCancelPoolWork(t *testing.T) {
 	h, m := newTestUI(t)
 	defer m.Close()
