@@ -5,13 +5,17 @@
 # Does not modify the production llama.cpp or any NodexLM RPC artifacts.
 set -euo pipefail
 
-LLAMA_COMMIT=8642541b255bfb5dc39cd351a178be09013a55d6
-SMOLMAX_COMMIT=8d12bb17fd389c25f3c6167a5b73f93034d6324f
 DEST="${1:-$PWD/build/smolmax-native}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LLAMA_COMMIT=b1b770d90d94cad9e9ea5b993bdbc383a522fb28
+# The full patch is a reviewed port to this exact revision. Never silently rebase.
+python3 - "$ROOT/internal/llamaruntime/revision.json" "$LLAMA_COMMIT" <<'PY'
+import json, sys
+assert json.load(open(sys.argv[1]))["commit"] == sys.argv[2], "Smolmax port must be reviewed for the new llama.cpp revision"
+PY
 
-if [[ "$(uname -s)" != "Linux" ]]; then
-  echo 'smolmax native O_DIRECT/ARM pager requires Linux/Android' >&2
+if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "aarch64" ]]; then
+  echo 'Full Smolmax candidate requires Linux ARM64; Android and other architectures are not yet accepted' >&2
   exit 1
 fi
 for tool in git cmake python3; do
@@ -20,7 +24,7 @@ done
 
 mkdir -p "$DEST"
 DEST="$(cd "$DEST" && pwd)"
-if [[ -e "$DEST/llama-server" || -e "$DEST/llama-server.smolmax.json" ]]; then
+if [[ -e "$DEST/llama-server" || -e "$DEST/llama-server.smolmax.json" || -e "$DEST/llama-bench" || -e "$DEST/llama-perplexity" ]]; then
   echo 'target already contains a runtime or manifest; refusing overwrite' >&2
   exit 1
 fi
@@ -37,8 +41,7 @@ fetch_pinned() {
 }
 
 fetch_pinned https://github.com/ggml-org/llama.cpp.git "$LLAMA_COMMIT" "$TMP/llama"
-fetch_pinned https://github.com/hyperionaidev/smolmaxxing.git "$SMOLMAX_COMMIT" "$TMP/smolmax"
-PATCH="$TMP/smolmax/patches/llama.cpp-v0.8.0-tvbox.patch"
+PATCH="$ROOT/experiments/smolmax/full-v1.patch"
 test -s "$PATCH"
 git -C "$TMP/llama" apply --check "$PATCH"
 git -C "$TMP/llama" apply "$PATCH"
@@ -47,11 +50,15 @@ cmake -S "$TMP/llama" -B "$TMP/build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_NATIVE=OFF -DGGML_RPC=OFF -DGGML_OPENMP=OFF \
   -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF \
-  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=ON
-cmake --build "$TMP/build" --parallel "${NODEXLM_BUILD_JOBS:-2}" --target llama-server
+  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON \
+  -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
+cmake --build "$TMP/build" --parallel "${NODEXLM_BUILD_JOBS:-2}" --target llama-server llama-bench llama-perplexity
 test -x "$TMP/build/bin/llama-server"
-cp "$TMP/build/bin/llama-server" "$DEST/llama-server"
-chmod 0755 "$DEST/llama-server"
+for binary in llama-server llama-bench llama-perplexity; do
+  install -m 0755 "$TMP/build/bin/$binary" "$DEST/$binary"
+done
+install -m 0644 "$ROOT/experiments/smolmax/LICENSE" "$DEST/LICENSE.smolmax"
+install -m 0644 "$TMP/llama/LICENSE" "$DEST/LICENSE.llama.cpp"
 python3 "$ROOT/scripts/register-smolmax-runtime.py" \
   --binary "$DEST/llama-server" --features moe_pager weight_streaming
 
