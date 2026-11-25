@@ -1,0 +1,28 @@
+diff --git a/ggml/src/ggml-cpu/binary-ops.cpp b/ggml/src/ggml-cpu/binary-ops.cpp
+--- a/ggml/src/ggml-cpu/binary-ops.cpp
++++ b/ggml/src/ggml-cpu/binary-ops.cpp
+@@ -58,6 +58,24 @@
+     GGML_ASSERT( nb0 == sizeof(dst_t));
+     GGML_ASSERT(nb00 == sizeof(src0_t));
+ 
++#if defined(__aarch64__) && defined(__linux__) && !defined(GGML_USE_ACCELERATE)
++    // Adapted from smolmaxxing: distribute a long, single row across CPU workers.
++    // Only same-shape contiguous tensors; retain upstream for views and broadcast.
++    if (params->nth > 1 && ne00 >= 1024 && ggml_nrows(src0) == 1 &&
++            ggml_are_same_shape(src0, src1) && dst->view_src == nullptr &&
++            src0->view_src == nullptr && src1->view_src == nullptr &&
++            ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && ggml_is_contiguous(dst)) {
++        const int64_t chunk = ((ne00 + params->nth - 1) / params->nth + 15) & ~int64_t(15);
++        const int64_t begin = std::min<int64_t>(chunk * params->ith, ne00);
++        const int64_t end = std::min<int64_t>(begin + chunk, ne00);
++        if (begin < end) {
++            vec_binary_op_contiguous<op>(end - begin, (dst_t *) dst->data + begin,
++                    (const src0_t *) src0->data + begin, (const src1_t *) src1->data + begin);
++        }
++        return;
++    }
++#endif
++
+     const auto [ir0, ir1] = get_thread_range(params, src0);
+     const bool is_src1_contiguous_rows = ggml_is_contiguous_rows(src1);
+ 
