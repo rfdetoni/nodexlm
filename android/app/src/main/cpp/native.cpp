@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <utility>
 #include <cstring>
 #include <thread>
 #include <chrono>
@@ -357,8 +358,42 @@ Java_dev_nodexlm_app_NativeRpc_recommendedThreads(JNIEnv*, jobject, jint logical
     return std::clamp<int>(performance, 1, std::min<int>(6, std::max<int>(1, logical)));
 }
 
+// Restrict only the CPU-only server thread before it constructs its native
+// backends. Descendant threads inherit the mask unless GGML overrides it.
+// Never expand beyond the OS cpuset or bind Vulkan/driver threads.
+static void preferPerformanceRPCThreads(int threads) {
+    cpu_set_t allowed, fast;
+    CPU_ZERO(&allowed);
+    CPU_ZERO(&fast);
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) return;
+    std::vector<std::pair<int, unsigned long>> capacities;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (!CPU_ISSET(cpu, &allowed)) continue;
+        unsigned long capacity = 0;
+        std::ifstream in("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpu_capacity");
+        if (!(in >> capacity) || capacity == 0 || capacity > 1000000) return;
+        capacities.emplace_back(cpu, capacity);
+    }
+    if (capacities.size() < 2) return;
+    const auto range = std::minmax_element(capacities.begin(), capacities.end(),
+        [](const auto &a, const auto &b) { return a.second < b.second; });
+    if (range.first->second * 100 >= range.second->second * 80) return;
+    int count = 0;
+    for (const auto &entry : capacities) {
+        if (entry.second * 100 >= range.second->second * 80) {
+            CPU_SET(entry.first, &fast);
+            ++count;
+        }
+    }
+    // Respect explicit thread counts rather than oversubscribing a cluster.
+    if (count < threads) return;
+    const int result = sched_setaffinity(0, sizeof(fast), &fast);
+    __android_log_print(result == 0 ? ANDROID_LOG_INFO : ANDROID_LOG_WARN,
+        "NodexLM-RPC", "CPU RPC server affinity: requested %d fast cores; result=%d", count, result);
+}
+
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jstring socketValue) {
+Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jstring socketValue, jboolean performanceAffinity) {
     const std::string socketPath=utf(env,socketValue);
     if(socketPath.empty() || socketPath[0]!='/' || socketPath.size()>100) return env->NewStringUTF("Invalid private RPC socket path");
     if(threads < 1 || threads > 8)
@@ -439,8 +474,9 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
         devices.size(),useGPU?"yes":"no",useCPU?"yes":"no");
     try {
-        rpcThread = std::thread([threads, devices, socketPath] {
+        rpcThread = std::thread([threads, devices, socketPath, performanceAffinity, useCPU, useGPU] {
             try {
+                if (performanceAffinity && useCPU && !useGPU) preferPerformanceRPCThreads(threads);
                 const std::string address = "unix:" + socketPath;
                 ggml_backend_rpc_start_server(address.c_str(), nullptr,
                     static_cast<size_t>(threads), devices.size(),

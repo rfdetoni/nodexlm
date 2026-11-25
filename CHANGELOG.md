@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Runtime experimental
 
+- Android Java: diagnóstico direcional e compressão RPC opt-in com zlib padrão; afinidade experimental da thread do servidor nativo CPU-only, sem alterar Vulkan ou o modo padrão.
+
 - Compressão lossless opt-in de transporte RPC (Go), negociada por túnel, frames limitados e fallback incompressível/legado. Métricas distinguem payload nativo e bytes de framing; validação Android e A/B físicos ainda pendentes.
 
 - Benchmark direcional negociado por conexão (Go/Rust), opt-in, com mediana de upload/download independentes e fallback legado.
