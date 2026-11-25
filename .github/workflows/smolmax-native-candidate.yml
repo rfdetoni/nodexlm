@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'experiments/smolmax/**'
+      - 'internal/llamaruntime/patches/smolmax-single-row.patch'
       - '.github/workflows/smolmax-native-candidate.yml'
   workflow_dispatch:
 permissions:
@@ -25,8 +26,8 @@ jobs:
           git -C upstream fetch --depth=1 origin b1b770d90d94cad9e9ea5b993bdbc383a522fb28
           git -C upstream checkout --detach FETCH_HEAD
           test "$(git -C upstream rev-parse HEAD)" = b1b770d90d94cad9e9ea5b993bdbc383a522fb28
-          git -C upstream apply --check "$GITHUB_WORKSPACE/experiments/smolmax/single-row.patch"
-          git -C upstream apply "$GITHUB_WORKSPACE/experiments/smolmax/single-row.patch"
+          git -C upstream apply --check "$GITHUB_WORKSPACE/internal/llamaruntime/patches/smolmax-single-row.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/internal/llamaruntime/patches/smolmax-single-row.patch"
           cat >> upstream/CMakeLists.txt <<'EOF'
           add_executable(nodexlm-smolmax-test ../experiments/smolmax/test-single-row.cpp)
           target_link_libraries(nodexlm-smolmax-test PRIVATE ggml ggml-cpu)
