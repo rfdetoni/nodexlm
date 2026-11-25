@@ -70,4 +70,4 @@ tail -f "${NODEXLM_HOME:-$HOME/.nodexlm}/logs/guest.log"
 
 No modo debug, os eventos de heartbeat, túnel e a saída do servidor GGML ficam em um arquivo local privado e com rotação. Não compartilhe tokens ou caminhos pessoais por acidente.
 
-Para experimentar a contagem de núcleos rápidos, use `nodexlm guest --thread-policy performance`. O padrão usa cores físicas e `--threads N` mantém prioridade. Não altera afinidade.
+Para experimentar a contagem de núcleos rápidos, use `nodexlm guest --thread-policy performance`. O padrão usa cores físicas e `--threads N` mantém prioridade. Em CPU homogênea ou sem telemetria confiável, a política performance do Guest também usa cores físicas (máximo 256). Não altera afinidade.
