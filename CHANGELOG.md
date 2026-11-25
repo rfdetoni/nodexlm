@@ -2,6 +2,10 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Aceitação integrada dos WPs
+
+- E2E RPC pinado focalizado em PRs e cross-build Windows completo; coleta física suporta cluster, plano e estatísticas RPC por rodada. Corrige identificação Metal MTL<n> conforme a revisão nativa.
+
 ## GPU do Host — WP9
 
 - Metal opt-in e enumeração do dispositivo nativo confirmado para Vulkan/Metal no load e benchmark de cluster; fallback CPU quando não confirmado.

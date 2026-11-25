@@ -283,7 +283,12 @@ func parseHostGPU(output, backend string) string {
 			}
 			continue
 		}
-		if !strings.HasPrefix(strings.ToLower(name), backend) || strings.ContainsAny(name, " \t,\r\n") {
+		// Pinned ggml-metal-device.m names devices MTL<n>.
+		prefix := backend
+		if backend == "metal" {
+			prefix = "mtl"
+		}
+		if !strings.HasPrefix(strings.ToLower(name), prefix) || strings.ContainsAny(name, " \t,\r\n") {
 			continue
 		}
 		if found != "" && found != name {

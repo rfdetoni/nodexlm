@@ -29,3 +29,5 @@ Network measurements use a discarded warmup and three legacy echo pairs on separ
 Optional `NODEXLM_DECISION_ADAPTIVE=1` prioritizes idle decision workers and incorporates EWMA/p95 latency, existing thermal/battery penalties and in-flight jobs; admission rechecks under lock. Existing leases and failover remain unchanged.
 
 Explicit Metal Host GPU mode supports mixed CPU/RPC placement only after the resolved native binary confirms a single Metal device using --list-devices. Vulkan also uses discovery rather than a guessed name. Unknown or multiple devices preserve CPU placement. Mac hardware acceptance remains required.
+
+The targeted real RPC E2E workflow uses the verified pinned bundle, two CPU Guests and a complete Windows cross-build without publishing anything. For physical comparison use `scripts/hardware-acceptance.py --model MODEL.gguf --repeat 3 --output host.json`, then `--node GUEST_ID` and `--node cluster` with different output files. Keep the same GGUF SHA-256, settings, topology and starting temperature. The collector captures settings, plan and per-round RPC stats; physical acceptance remains unestablished until an operator checks the hardware.

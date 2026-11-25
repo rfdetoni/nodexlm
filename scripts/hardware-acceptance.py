@@ -39,18 +39,31 @@ def collect(base, token, model, node, repeat, environment, ca=None):
     if api('/api/resident-models'):
         raise ValueError('Unload resident models deliberately before benchmarking; this tool never evicts them')
     before = api('/v1/nodes')
-    if node and not any(item['id'] == node and item.get('status') == 'online' for item in before):
-        raise ValueError('Requested Guest is not online')
-    def wait_for_idle_guest():
-        if not node:
+    settings = api('/api/status')['settings']
+    plan = None
+    if node == 'cluster':
+        if settings.get('model') != model or not settings.get('distributed'):
+            raise ValueError('Select the target GGUF and enable distributed placement before cluster benchmarking')
+        plan = api('/api/plan')
+        targets = [p['node_id'] for p in plan['nodes'] if p.get('node_id') and p.get('layers', 0) > 0]
+        if not targets:
+            raise ValueError('Cluster plan has no remote layers; choose capacity mode if appropriate')
+    elif node:
+        if not any(item['id'] == node and item.get('status') == 'online' for item in before):
+            raise ValueError('Requested Guest is not online')
+        targets = [node]
+    else:
+        targets = []
+    def wait_for_idle_guests():
+        if not targets:
             return
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             profiles = api('/v1/nodes')
             observations = api('/api/observability')['nodes']
-            ready = any(p['id'] == node and p.get('status') == 'online' and not p.get('busy') and p.get('runtime', {}).get('rpc_ready') for p in profiles)
-            idle = any(p['node_id'] == node and p.get('tunnels', {}).get('idle', 0) > 0 for p in observations)
-            if ready and idle:
+            ready = {p['id'] for p in profiles if p.get('status') == 'online' and not p.get('busy') and p.get('runtime', {}).get('rpc_ready')}
+            idle = {p['node_id'] for p in observations if p.get('tunnels', {}).get('idle', 0) > 0}
+            if set(targets) <= ready & idle:
                 return
             time.sleep(.2)
         raise RuntimeError('Guest did not return to idle RPC readiness within 15 seconds')
@@ -59,17 +72,28 @@ def collect(base, token, model, node, repeat, environment, ca=None):
     started = time.monotonic()
     for index in range(repeat):
         sample = {}
-        wait_for_idle_guest()
-        if node:
-            sample['network'] = api('/v1/bench/' + urllib.parse.quote(node, safe=''), {})
-            wait_for_idle_guest()
+        wait_for_idle_guests()
+        if targets:
+            networks = {target: api('/v1/bench/' + urllib.parse.quote(target, safe=''), {}) for target in targets}
+            if node == 'cluster':
+                sample['networks'] = networks
+            else:
+                sample['network'] = networks[node]
+            wait_for_idle_guests()
+        if api('/api/status')['settings'] != settings:
+            raise RuntimeError('Settings changed during measurement; discard the session')
+        sample['rpc_stats_before'] = api('/api/cluster')['rpc_stats']
         sample['inference'] = api('/api/bench/inference', {'model': model, 'node_id': node})
+        sample['rpc_stats_after'] = api('/api/cluster')['rpc_stats']
+        if api('/api/status')['settings'] != settings:
+            raise RuntimeError('Settings changed during measurement; discard the session')
         measurements.append(sample)
     return {'schema': 1, 'kind': 'measured-ci' if environment == 'ci' else 'measured-device-session',
             'physical_acceptance': 'not-established',
             'notice': 'Real measurements only. Operator must verify physical hardware, GPU backend, thermal/battery and screen-off behavior.',
             'recorded_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'duration_seconds': time.monotonic() - started, 'model': model, 'node_id': node,
+            'settings': settings, 'plan': plan,
             'nodes_before': before, 'nodes_after': api('/v1/nodes'), 'measurements': measurements,
             'observations': api('/api/observability')}
 
@@ -78,7 +102,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', default='http://127.0.0.1:8787')
     parser.add_argument('--model', required=True)
-    parser.add_argument('--node', default='')
+    parser.add_argument('--node', default='', help='empty=Host, Guest ID, or cluster')
     parser.add_argument('--repeat', type=int, default=10)
     parser.add_argument('--environment', choices=('device', 'ci'), default='device')
     parser.add_argument('--ca')

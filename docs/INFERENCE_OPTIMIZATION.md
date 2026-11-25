@@ -135,3 +135,9 @@ O marcador 2 legado aceita dois exchanges; o Host usa quatro túneis autenticado
 ## GPU do Host (WP9)
 
 Metal é uma opção explícita para macOS. Em cargas distribuídas e benchmarks de cluster, a enumeração `--list-devices` do próprio llama-server resolvido confirma o nome da GPU Vulkan ou Metal antes de inseri-la no split. Sem confirmação ou com múltiplas GPUs, mantém a distribuição CPU/RPC; não presume Vulkan0 ou Metal0. CUDA e mapeamento multi-GPU ficam fora do escopo. Testes físicos em Mac permanecem necessários.
+
+## Aceitação integrada dos nove WPs
+
+O workflow `Real RPC end-to-end` executa um teste focado nas alterações de E2E, com dois Guests CPU reais no runner e o bundle pinado verificado por SHA-256, mais `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...`. Não recompila nem publica o runtime. Verifica eco mediano, microbenchmark nativo, recusa durante residência e n-gram+RPC. O teste em runner não estabelece aceitação física.
+
+Para a coleta física, mantenha o mesmo GGUF (confira `sha256sum`), configurações, topologia e temperatura inicial. Descarregue todos os modelos e execute `python3 scripts/hardware-acceptance.py --model MODELO.gguf --repeat 3 --output host.json`, depois o mesmo com `--node ID_DO_GUEST --output guest.json` e `--node cluster --output cluster.json`. Para cluster, selecione o GGUF e habilite distribuição; use capacity se precisar forçar o teste distribuído. O coletor salva settings, plano de cluster, métricas nativas, estatísticas RPC antes/depois e rede por Guest. Repita com cada opt-in isolado, mesmo contexto, batch, ubatch, KV/FA e temperatura. Compare apenas bases de taxa e topologias equivalentes. Hardware, consumo e qualidade exigem validação do operador.

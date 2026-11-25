@@ -120,6 +120,14 @@ def main():
             # Exercise the benchmark marker through a genuine enrolled TLS tunnel.
             measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
             assert measurement['mib_per_second'] > 0
+            if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                assert measurement.get('samples') == 3, measurement
+                for node in nodes:
+                    sample = json.load(api('/api/bench/rpc-device/'+node['id'],'POST',{}))
+                    assert sample['source'] == 'auto', sample
+                    assert {d['bytes'] for d in sample['devices']} == {8 << 20, 32 << 20}, sample
+                    assert all(d['upload_mib_per_second'] > 0 and d['readback_mib_per_second'] > 0 for d in sample['devices']), sample
+                print('PASS: legacy echo median and native per-device tensor upload/readback')
             settings = json.load(api('/api/status'))['settings']
             settings.update(model=model.name,distributed=True,context_tokens=256,threads=2,gpu_layers=os.environ.get('NODEXLM_TEST_GPU_LAYERS','auto'),placement_strategy='capacity')
             api('/api/settings','PUT',settings).close()
@@ -130,6 +138,12 @@ def main():
                     raise AssertionError(state['error'])
                 return state['loaded']
             wait_for(loaded,120)
+            if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                try:
+                    api('/api/bench/rpc-device/'+nodes[0]['id'],'POST',{}).close()
+                    raise AssertionError('microbenchmark admitted with a resident model')
+                except AssertionError as exc:
+                    assert 'HTTP 409' in str(exc), exc
             listed = json.load(api('/v1/models',key=env['NODEXLM_API_KEY']))
             assert listed['data'][0]['id'] == model.name
             chunks = []
@@ -188,6 +202,11 @@ def main():
                 result=subprocess.run(['node',os.environ['NODEXLM_UI_CHECK'],base,token],timeout=90)
                 assert result.returncode==0,'Browser console verification failed'
             print(f'PASS: {guest_count} Guests, pairing, TLS benchmark, native RPC, resident model pool, inference benchmark, SSE and restricted API key')
+        except Exception:
+            print('Host log tail:', log_path.read_text()[-12000:])
+            for path in root.glob('guest*.log'):
+                print(path.name, path.read_text()[-6000:])
+            raise
         finally:
             for process in reversed(processes):
                 if os.name=='nt':

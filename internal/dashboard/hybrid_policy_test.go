@@ -114,14 +114,14 @@ func TestWithHostVulkanPrependsHostDeviceAndClearsLocalLayers(t *testing.T) {
 }
 
 func TestHostGPUDiscoveryUsesNativeNameAndFallback(t *testing.T) {
-	output := "Available devices:\n  MetalCustom: Apple GPU (8192 MiB, 4096 MiB free)\n"
+	output := "Available devices:\n  MTL2: Apple GPU (8192 MiB, 4096 MiB free)\n"
 	device := parseHostGPU(output, "metal")
 	plan := RPCDevicePlacement{Devices: []string{"RPC0"}, Split: []uint64{10}}
 	got, local := withHostGPU(plan, 20, 40, "metal", device, "auto")
-	if local != 0 || got.DeviceArg() != "MetalCustom,RPC0" || got.Modes["host"] != "metal" {
+	if local != 0 || got.DeviceArg() != "MTL2,RPC0" || got.Modes["host"] != "metal" {
 		t.Fatalf("wrong confirmed Metal device: %+v %d", got, local)
 	}
-	if name := parseHostGPU(output+"  MetalOther: GPU (4096 MiB, 2048 MiB free)\n", "metal"); name != "" {
+	if name := parseHostGPU(output+"  MTL3: GPU (4096 MiB, 2048 MiB free)\n", "metal"); name != "" {
 		t.Fatal("ambiguous multi-GPU device must not be guessed")
 	}
 	unchanged, local := withHostGPU(plan, 20, 40, "metal", parseHostGPU("Available devices:\n  (none)\n", "metal"), "auto")
