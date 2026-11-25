@@ -68,6 +68,8 @@ jobs:
             printf 'Go files needing gofmt:\n%s\n' "$unformatted"
             exit 1
           fi
+      - name: Android build scope regression
+        run: python3 scripts/test-native-revision-changed.py
       - run: go test -race ./... -timeout 120s
       - run: node --check internal/dashboard/static/app.js && node scripts/test-dashboard-models.cjs
       - run: sh scripts/test-install.sh
