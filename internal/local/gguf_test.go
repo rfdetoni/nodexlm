@@ -5,6 +5,7 @@ package local
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -111,5 +112,40 @@ func TestMoEOptions(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(args, " "), "--no-webui") {
 		t.Fatalf("missing default args: %v", args)
+	}
+}
+
+func TestInspectGGUFTensorBytes(t *testing.T) {
+	raw := ggufTestFile("llama", 0, 0)
+	binary.LittleEndian.PutUint64(raw[8:16], 33)
+	var b bytes.Buffer
+	b.Write(raw)
+	write := func(v any) { _ = binary.Write(&b, binary.LittleEndian, v) }
+	var offset uint64
+	for i := 0; i < 33; i++ {
+		name := fmt.Sprintf("blk.%d.weight", i)
+		n := uint64(32)
+		if i == 0 {
+			n = 64
+		}
+		if i == 32 {
+			name = "token_embd.weight"
+		}
+		write(uint64(len(name)))
+		b.WriteString(name)
+		write(uint32(1))
+		write(n)
+		write(uint32(2))
+		write(offset)
+		offset += n / 32 * 18
+	}
+	b.Write(make([]byte, offset+32))
+	path := filepath.Join(t.TempDir(), "layers.gguf")
+	if err := os.WriteFile(path, b.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := InspectGGUF(path)
+	if err != nil || len(meta.BlockBytes) != 32 || meta.BlockBytes[0] != 36 || meta.BlockBytes[1] != 18 || meta.NonBlockBytes != 18 {
+		t.Fatalf("unexpected tensor sizes: %+v %v", meta, err)
 	}
 }

@@ -1,10 +1,14 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
@@ -106,6 +110,14 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		if i != len(selection.Guests)-1 {
 			layers = int(uint64(remainingLayers) * chosen.CapacityBytes / remainingBudget)
 		}
+		detailed := len(selection.GuestLayers) == len(selection.Guests)
+		if detailed {
+			layers = selection.GuestLayers[i]
+			if layers <= 0 || layers > remainingLayers || len(meta.BlockBytes) != int(meta.BlockCount) {
+				return RPCDevicePlacement{}
+			}
+		}
+		start := int(meta.BlockCount) - remainingLayers
 		remainingLayers -= layers
 		remainingBudget -= chosen.CapacityBytes
 
@@ -114,6 +126,63 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 			return RPCDevicePlacement{}
 		}
 		weight := modelBytes * uint64(layers) / uint64(meta.BlockCount)
+		if detailed {
+			// Use real per-layer weights plus context, with the same 115% margin.
+			fits := func(offset, count int, budget uint64) bool {
+				w := blockWeight(meta, offset, count)
+				if w > ^uint64(0)/115 {
+					return false
+				}
+				need := w * 115 / 100
+				if transient != nil {
+					if *transient > ^uint64(0)/uint64(count) {
+						return false
+					}
+					kv := *transient * uint64(count) / uint64(meta.BlockCount)
+					if kv > ^uint64(0)-need {
+						return false
+					}
+					need += kv
+				}
+				return need <= budget
+			}
+			first := "RPC" + fmt.Sprint(rpcIndex)
+			switch {
+			case guest.RPCDeviceKinds[0] == "cpu":
+				if !fits(start, layers, guest.RAMBudgetBytes) {
+					return RPCDevicePlacement{}
+				}
+				result.Devices = append(result.Devices, first)
+				result.Split = append(result.Split, uint64(layers))
+				result.Modes[guest.ID] = "ram"
+			case fits(start, layers, guest.GPUBudgetBytes):
+				result.Devices = append(result.Devices, first)
+				result.Split = append(result.Split, uint64(layers))
+				result.Modes[guest.ID] = "gpu"
+			case len(guest.RPCDeviceKinds) == 2:
+				gpuLayers := 0
+				for gpuLayers < layers-1 && fits(start, gpuLayers+1, guest.GPUBudgetBytes) {
+					gpuLayers++
+				}
+				if !fits(start+gpuLayers, layers-gpuLayers, guest.RAMBudgetBytes) {
+					return RPCDevicePlacement{}
+				}
+				if gpuLayers > 0 {
+					result.Devices = append(result.Devices, first)
+					result.Split = append(result.Split, uint64(gpuLayers))
+				}
+				result.Devices = append(result.Devices, "RPC"+fmt.Sprint(rpcIndex+1))
+				result.Split = append(result.Split, uint64(layers-gpuLayers))
+				result.Modes[guest.ID] = "ram"
+				if gpuLayers > 0 {
+					result.Modes[guest.ID] = "gpu+ram"
+				}
+			default:
+				return RPCDevicePlacement{}
+			}
+			rpcIndex += len(guest.RPCDeviceKinds)
+			continue
+		}
 		if weight > ^uint64(0)/105 {
 			return RPCDevicePlacement{}
 		}
@@ -169,17 +238,70 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 
 func effectiveHostRuntimeBackend(hostGPU string) string {
 	switch hostGPU {
-	case "vulkan", "cpu":
+	case "vulkan", "cpu", "metal":
 		return hostGPU
 	default:
 		return "auto"
 	}
 }
 
-// withHostVulkan prepends the Host's Vulkan0 device to an RPC placement when
-// explicitly requested, proportional to local vs remote layer counts.
-func withHostVulkan(plan RPCDevicePlacement, localLayers int, blocks uint32, hostGPU, gpuLayers string) (RPCDevicePlacement, int) {
-	if hostGPU != "vulkan" || gpuLayers == "0" || localLayers <= 0 || int(blocks) <= localLayers || len(plan.Devices) == 0 {
+// discoverHostGPU uses the resolved llama-server registry rather than guessed names.
+func discoverHostGPU(ctx context.Context, binary, backend string) string {
+	if backend != "vulkan" && backend != "metal" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "--list-devices")
+	cmd.Env = llamaruntime.NativeEnvironment(binary)
+	out, err := cmd.CombinedOutput()
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	return parseHostGPU(string(out), backend)
+}
+
+func parseHostGPU(output, backend string) string {
+	if backend != "vulkan" && backend != "metal" {
+		return ""
+	}
+	inList := false
+	found := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "Available devices:" {
+			inList = true
+			continue
+		}
+		if !inList {
+			continue
+		}
+		name, description, ok := strings.Cut(line, ":")
+		if !ok || !strings.Contains(description, "MiB free)") {
+			if found != "" {
+				break
+			}
+			continue
+		}
+		// Pinned ggml-metal-device.m names devices MTL<n>.
+		prefix := backend
+		if backend == "metal" {
+			prefix = "mtl"
+		}
+		if !strings.HasPrefix(strings.ToLower(name), prefix) || strings.ContainsAny(name, " \t,\r\n") {
+			continue
+		}
+		if found != "" && found != name {
+			return "" // do not guess multi-GPU mapping
+		}
+		found = name
+	}
+	return found
+}
+
+// withHostGPU prepends only a confirmed native device, preserving split math.
+func withHostGPU(plan RPCDevicePlacement, localLayers int, blocks uint32, backend, device, gpuLayers string) (RPCDevicePlacement, int) {
+	if (backend != "vulkan" && backend != "metal") || device == "" || gpuLayers == "0" || localLayers <= 0 || int(blocks) <= localLayers || len(plan.Devices) == 0 {
 		return plan, localLayers
 	}
 	remoteLayers := uint64(int(blocks) - localLayers)
@@ -194,10 +316,18 @@ func withHostVulkan(plan RPCDevicePlacement, localLayers int, blocks uint32, hos
 	} else {
 		plan.Split = []uint64{uint64(localLayers), remoteLayers}
 	}
-	plan.Devices = append([]string{"Vulkan0"}, plan.Devices...)
+	plan.Devices = append([]string{device}, plan.Devices...)
 	if plan.Modes == nil {
 		plan.Modes = make(map[string]string)
 	}
-	plan.Modes["host"] = "vulkan"
+	plan.Modes["host"] = backend
 	return plan, 0
+}
+
+func blockWeight(meta local.GGUFInfo, start, count int) uint64 {
+	var total uint64
+	for _, weight := range meta.BlockBytes[start : start+count] {
+		total += weight
+	}
+	return total
 }

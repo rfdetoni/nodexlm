@@ -243,7 +243,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 		cmd.Env = append(cmd.Env, smolEnv...)
 		// A candidate patch is not evidence that the pinned release uses it.
 		// Only verified bundles may automatically opt into parallel uploads.
-		if len(m.RPCServers) > 1 && llamaruntime.BundledParallelRPCUploadsSupported() &&
+		if m.parallelRPCUploadEligible() && llamaruntime.BundledParallelRPCUploadsSupported() &&
 			os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_PARALLEL_RPC_UPLOAD=1")
 		}
@@ -422,6 +422,9 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 
 	if m.SpeculativeMode == "ngram" {
 		args = append(args, "--spec-type", "ngram-simple")
+		if m.SpeculativeTokens > 0 {
+			args = append(args, "--spec-ngram-simple-size-m", strconv.Itoa(m.SpeculativeTokens))
+		}
 	} else if m.SpeculativeMode == "draft" && m.DraftModelPath != "" {
 		// Draft stays on Host CPU to avoid allocating another model on the
 		// active RPC Guest backends. GGML validates vocabulary compatibility.
@@ -475,4 +478,22 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 	}
 
 	return args
+}
+
+func (m *Managed) parallelRPCUploadEligible() bool {
+	if len(m.RPCServers) > 1 {
+		return true
+	}
+	if len(m.RPCServers) != 1 {
+		return false
+	}
+	// The pinned loader keys workers by ggml_backend_dev_t, not endpoint.
+	// Count only explicitly selected RPC devices, not a local GPU.
+	count := 0
+	for _, name := range m.RPCDeviceNames {
+		if strings.HasPrefix(name, "RPC") {
+			count++
+		}
+	}
+	return count > 1
 }

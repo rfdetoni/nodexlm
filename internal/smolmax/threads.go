@@ -103,3 +103,21 @@ func Threads(requested int, policy string) (int, error) {
 		return 0, errors.New("NODEXLM_SMOLMAX_THREADS must be performance or unset")
 	}
 }
+
+// GuestThreads keeps the historical physical-core default and gives explicit
+// numeric limits priority over the opt-in performance policy.
+func GuestThreads(requested, physical int, policy string) (int, error) {
+	if policy != "" && policy != "auto" && policy != "performance" {
+		return 0, errors.New("--thread-policy must be auto or performance")
+	}
+	if requested < 0 || requested > 256 {
+		return 0, errors.New("--threads must be 0..256")
+	}
+	if requested > 0 {
+		return requested, nil
+	}
+	if policy == "performance" {
+		return min(256, RecommendedThreads("/sys/devices/system/cpu", runtime.NumCPU())), nil
+	}
+	return min(256, max(1, physical)), nil
+}

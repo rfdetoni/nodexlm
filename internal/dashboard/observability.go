@@ -3,7 +3,9 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -37,6 +39,7 @@ type InferenceSample struct {
 	Fingerprint                string               `json:"fingerprint,omitempty"`
 	NativeSystemInfo           string               `json:"native_system_info,omitempty"`
 	BenchmarkTopology          string               `json:"benchmark_topology,omitempty"`
+	Suspect                    bool                 `json:"suspect,omitempty"`
 	RPCTraffic                 *InferenceRPCTraffic `json:"rpc_traffic,omitempty"`
 }
 
@@ -159,6 +162,28 @@ func (m *Manager) recordInferenceWithLatency(model string, raw []byte, elapsed t
 		sample.NativeSystemInfo = m.nativeSystemInfo
 		if len(m.engine.RPCServers) > 0 {
 			sample.Model += "@cluster"
+			// Only compare the controlled cluster sample with equivalent
+			// native decode measurements, never a single Guest's rate.
+			key := model + "@bench-cluster"
+			topology := strings.Join(m.loadRPCNodes, ":") + ":" + fmt.Sprint(m.engine.RPCLocalLayers) + ":" + strings.Join(m.engine.RPCDeviceNames, ",") + ":" + m.engine.RPCTensorSplit
+			if baseline, ok := m.samples[key]; ok && baseline.Kind == "benchmark" &&
+				model == m.current && m.loadFingerprint != "" && baseline.Fingerprint == m.loadFingerprint &&
+				baseline.BenchmarkTopology == topology && len(m.loadRPCNodes) > 0 &&
+				baseline.RateBasis == "native_decode" && sample.RateBasis == baseline.RateBasis &&
+				baseline.TokensPerSecond > 0 && !math.IsNaN(baseline.TokensPerSecond) && !math.IsInf(baseline.TokensPerSecond, 0) &&
+				!baseline.MeasuredAt.After(time.Now()) && time.Since(baseline.MeasuredAt) < 24*time.Hour {
+				if sample.TokensPerSecond < baseline.TokensPerSecond*0.7 || sample.TokensPerSecond > baseline.TokensPerSecond*1.3 {
+					m.microbenchDrift++
+				} else {
+					m.microbenchDrift = 0
+				}
+				if m.microbenchDrift >= 3 {
+					baseline.Suspect = true
+					m.samples[key] = baseline
+				}
+			} else {
+				m.microbenchDrift = 0
+			}
 		} else {
 			sample.Model += "@live-host"
 		}

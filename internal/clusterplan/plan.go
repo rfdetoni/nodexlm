@@ -328,3 +328,56 @@ func LocalLayerCount(blocks uint32, modelBytes, hostBudget uint64, guests []uint
 	}
 	return local, nil
 }
+
+// LayerAllocation finds a contiguous assignment nearest to the existing Host
+// split, with 15% per-node headroom and non-block weights charged to Host.
+// Uniform or incomplete metadata uses the caller's historical planner.
+func LayerAllocation(weights []uint64, nonBlock, host uint64, guests []uint64, preferred int) ([]int, bool) {
+	if len(weights) < 2 || len(weights) > 4096 || len(guests) == 0 || len(guests) > len(weights) {
+		return nil, false
+	}
+	prefix := make([]uint64, len(weights)+1)
+	for i, weight := range weights {
+		if weight == 0 || weight > ^uint64(0)/115 || prefix[i] > ^uint64(0)/115-weight {
+			return nil, false
+		}
+		prefix[i+1] = prefix[i] + weight
+	}
+	if nonBlock > ^uint64(0)/115-prefix[len(weights)] {
+		return nil, false
+	}
+	fits := func(weight, budget uint64) bool { return weight*115/100 <= budget }
+	bestDistance := len(weights) + 1
+	var best []int
+	for local := 0; local <= len(weights)-len(guests); local++ {
+		if !fits(nonBlock+prefix[local], host) {
+			break
+		}
+		assignment := make([]int, len(guests)+1)
+		assignment[0] = local
+		start := local
+		for i, budget := range guests {
+			end := start
+			limit := len(weights) - len(guests) + i + 1
+			for end < limit && fits(prefix[end+1]-prefix[start], budget) {
+				end++
+			}
+			if end == start {
+				break
+			}
+			assignment[i+1] = end - start
+			start = end
+		}
+		if start != len(weights) {
+			continue
+		}
+		distance := local - preferred
+		if distance < 0 {
+			distance = -distance
+		}
+		if distance < bestDistance {
+			best, bestDistance = assignment, distance
+		}
+	}
+	return best, best != nil
+}

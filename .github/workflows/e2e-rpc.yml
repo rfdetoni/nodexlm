@@ -1,7 +1,9 @@
 name: Real RPC end-to-end
 
-# Explicit dispatch keeps native model tests out of routine PR/build minutes.
+# Explicit dispatch and targeted E2E changes keep native tests out of routine PR builds.
 on:
+  pull_request:
+    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/e2e-rpc.py']
   workflow_dispatch:
   push:
     branches: [main]
@@ -43,8 +45,10 @@ jobs:
           tar --no-same-owner -xzf rpc.tar.gz -C native
           go build -o nodexlm ./cmd/nodexlm
       - name: Real LAN multicast discovery
+        if: github.event_name != 'pull_request'
         run: NODEXLM_TEST_MDNS=1 go test ./internal/mdns -run TestLANMulticastDiscovery -count=1 -timeout=15s
       - name: Install browser test runtime
+        if: github.event_name != 'pull_request'
         run: |
           npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.56.1
           "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
@@ -53,9 +57,12 @@ jobs:
           NODEXLM_RPC_DIR: ${{ github.workspace }}/native
           NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
           NODE_PATH: ${{ runner.temp }}/browser/node_modules
-          NODEXLM_UI_CHECK: ${{ github.workspace }}/scripts/test-console.cjs
+          NODEXLM_UI_CHECK: ${{ github.event_name != 'pull_request' && format('{0}/scripts/test-console.cjs', github.workspace) || '' }}
+          NODEXLM_TEST_DEVICE_MICROBENCH: '1'
+          NODEXLM_TEST_GUEST_COUNT: ${{ github.event_name == 'pull_request' && '2' || '1' }}
         run: python3 scripts/e2e-rpc.py
       - name: Official OpenAI SDK chat and agent acceptance
+        if: github.event_name != 'pull_request'
         env:
           NODEXLM_RPC_DIR: ${{ github.workspace }}/native
           NODEXLM_TEST_MODEL: ${{ runner.temp }}/agent-acceptance.gguf
@@ -77,9 +84,24 @@ jobs:
           PYCODE
           PYTHONPATH="$RUNNER_TEMP/openai-sdk" python3 scripts/test-openai-sdk.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         with:
           name: console-browser-screenshots
           path: ui-artifacts/
           if-no-files-found: ignore
           retention-days: 7
+
+  windows-cross-build:
+    name: Windows full cross-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build all Windows packages
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...

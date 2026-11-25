@@ -157,7 +157,7 @@
     <string name="node_paired">Paired with a Host</string>
     <string name="rpc_memory_cap">Maximum RAM contribution (MiB; 0 = automatic)</string>
     <string name="rpc_memory_reserve">RAM reserve for Android (MiB; 0 = automatic, or 512–65536)</string>
-    <string name="rpc_cpu_threads">Native CPU threads (0 = automatic; restart Guest to apply)</string>
+    <string name="rpc_cpu_threads">Native CPU threads (0 = automatic, prefers fast cores; restart Guest to apply)</string>
     <string name="rpc_diagnostics_copy">Copy sanitized RPC diagnostic</string>
     <string name="rpc_diagnostics_copied">Diagnostic copied (no credentials or prompts)</string>
     <string name="rpc_diagnostics_failed">Could not collect device diagnostic</string>

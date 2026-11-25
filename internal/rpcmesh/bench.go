@@ -6,15 +6,20 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
+	"slices"
 	"time"
 )
 
 type Measurement struct {
-	NodeID       string    `json:"node_id"`
-	MeasuredAt   time.Time `json:"measured_at"`
-	RoundTripMS  float64   `json:"round_trip_ms"`
-	MiBPerSecond float64   `json:"mib_per_second"`
-	Bytes        int       `json:"bytes"`
+	NodeID                 string    `json:"node_id"`
+	MeasuredAt             time.Time `json:"measured_at"`
+	RoundTripMS            float64   `json:"round_trip_ms"`
+	MiBPerSecond           float64   `json:"mib_per_second"`
+	Bytes                  int       `json:"bytes"`
+	Samples                int       `json:"samples,omitempty"`
+	RTTSpreadMS            float64   `json:"rtt_spread_ms,omitempty"`
+	EchoSpreadMiBPerSecond float64   `json:"echo_spread_mib_per_second,omitempty"`
 }
 
 // Benchmark uses an idle authenticated TLS tunnel, never the native GGML
@@ -26,16 +31,51 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 	if r == nil {
 		return Measurement{}, ErrTunnelUnavailable
 	}
-	conn := r.takeIdle()
-	if conn == nil {
-		return Measurement{}, errors.New("no idle tunnel; stop inference before benchmarking")
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	// Each legacy marker-2 session accepts exactly two exchanges.
+	// Use fresh authenticated tunnels for warmup and each measured pair.
+	var rtt, rates []float64
+	var last Measurement
+	for i := 0; i < 4; i++ {
+		var conn net.Conn
+		for conn == nil {
+			if candidate := r.takeIdle(); candidate != nil {
+				conn = candidate
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return Measurement{}, ctx.Err()
+			case <-r.closed:
+				return Measurement{}, ErrTunnelUnavailable
+			case <-r.ready:
+			}
+		}
+		sample, err := benchmarkPair(ctx, id, conn)
+		r.finish(conn)
+		if err != nil {
+			return Measurement{}, err
+		}
+		if i > 0 {
+			rtt = append(rtt, sample.RoundTripMS)
+			rates = append(rates, sample.MiBPerSecond)
+			last = sample
+		}
 	}
-	defer r.finish(conn)
-	deadline := time.Now().Add(15 * time.Second)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
+	slices.Sort(rtt)
+	slices.Sort(rates)
+	last.RoundTripMS, last.MiBPerSecond = rtt[1], rates[1]
+	last.RTTSpreadMS, last.EchoSpreadMiBPerSecond = rtt[2]-rtt[0], rates[2]-rates[0]
+	last.Samples, last.Bytes = 3, 6<<20
+	return last, nil
+}
+
+func benchmarkPair(ctx context.Context, id string, conn net.Conn) (Measurement, error) {
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return Measurement{}, err
 	}
-	_ = conn.SetDeadline(deadline)
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	if _, err := conn.Write([]byte{2}); err != nil {

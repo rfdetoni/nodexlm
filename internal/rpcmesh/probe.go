@@ -36,6 +36,23 @@ func ProbeTensorUpload(ctx context.Context, endpoint string) (uint32, error) {
 }
 
 func probeNativeRPC(ctx context.Context, endpoint string, verifyTensor bool) (uint32, error) {
+	timeout := 6 * time.Second
+	if verifyTensor {
+		timeout = 20 * time.Second
+	}
+	return withRPCProbe(ctx, endpoint, timeout, func(conn net.Conn, count uint32) error {
+		if verifyTensor {
+			for device := uint32(0); device < count; device++ {
+				if err := probeNativeTensor(conn, device); err != nil {
+					return fmt.Errorf("RPC device %d failed tensor upload/readback: %w", device, err)
+				}
+			}
+		}
+		return ctx.Err()
+	})
+}
+
+func withRPCProbe(ctx context.Context, endpoint string, timeout time.Duration, run func(net.Conn, uint32) error) (uint32, error) {
 	if err := ValidateRPCAddress(endpoint); err != nil {
 		return 0, fmt.Errorf("invalid private RPC relay: %w", err)
 	}
@@ -48,10 +65,9 @@ func probeNativeRPC(ctx context.Context, endpoint string, verifyTensor bool) (ui
 		return 0, fmt.Errorf("connect RPC relay: %w", err)
 	}
 	defer conn.Close()
-	deadline := time.Now().Add(6 * time.Second)
-	if verifyTensor {
-		deadline = time.Now().Add(20 * time.Second)
-	}
+	deadline := time.Now().Add(timeout)
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
@@ -101,17 +117,8 @@ func probeNativeRPC(ctx context.Context, endpoint string, verifyTensor bool) (ui
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if verifyTensor {
-		// The request is made on the SAME authenticated GGML connection as the
-		// protocol handshake. A new tunnel would hide a broken upload path.
-		for device := uint32(0); device < count; device++ {
-			if err := probeNativeTensor(conn, device); err != nil {
-				return 0, fmt.Errorf("RPC device %d failed tensor upload/readback: %w", device, err)
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
+	if err := run(conn, count); err != nil {
+		return 0, err
 	}
 	return count, nil
 }
@@ -139,19 +146,24 @@ const (
 )
 
 func probeNativeTensor(conn net.Conn, device uint32) error {
-	const tensorElements = rpcProbeTensorBytes / 4 // GGML_TYPE_F32
+	_, err := measureNativeTensor(conn, device, rpcProbeTensorBytes)
+	return err
+}
+
+func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasurement, error) {
+	tensorElements := tensorBytes / 4 // GGML_TYPE_F32
 	// ALLOC_BUFFER (0) carries {uint32 device, uint64 size} packed.
 	var alloc [12]byte
 	binary.LittleEndian.PutUint32(alloc[:4], device)
-	binary.LittleEndian.PutUint64(alloc[4:], rpcProbeTensorBytes)
+	binary.LittleEndian.PutUint64(alloc[4:], uint64(tensorBytes))
 	response, err := rpcProbeRoundtrip(conn, 0, alloc[:], 16)
 	if err != nil {
-		return fmt.Errorf("ALLOC_BUFFER: %w", err)
+		return TensorMeasurement{}, fmt.Errorf("ALLOC_BUFFER: %w", err)
 	}
 	buffer := binary.LittleEndian.Uint64(response[:8])
 	size := binary.LittleEndian.Uint64(response[8:])
-	if buffer == 0 || size < rpcProbeTensorBytes {
-		return fmt.Errorf("ALLOC_BUFFER returned no usable %d-byte allocation", rpcProbeTensorBytes)
+	if buffer == 0 || size < uint64(tensorBytes) {
+		return TensorMeasurement{}, fmt.Errorf("ALLOC_BUFFER returned no usable %d-byte allocation", tensorBytes)
 	}
 	var pointer [8]byte
 	binary.LittleEndian.PutUint64(pointer[:], buffer)
@@ -161,11 +173,11 @@ func probeNativeTensor(conn net.Conn, device uint32) error {
 	}()
 	response, err = rpcProbeRoundtrip(conn, 3, pointer[:], 8) // BUFFER_GET_BASE
 	if err != nil {
-		return fmt.Errorf("BUFFER_GET_BASE: %w", err)
+		return TensorMeasurement{}, fmt.Errorf("BUFFER_GET_BASE: %w", err)
 	}
 	base := binary.LittleEndian.Uint64(response)
-	if base == 0 || base > ^uint64(0)-rpcProbeTensorBytes {
-		return errors.New("BUFFER_GET_BASE returned an invalid native address")
+	if base == 0 || base > ^uint64(0)-uint64(tensorBytes) {
+		return TensorMeasurement{}, errors.New("BUFFER_GET_BASE returned an invalid native address")
 	}
 
 	// rpc_tensor's packed layout on GGML RPC v9 (see pinned b12255 source):
@@ -178,41 +190,83 @@ func probeNativeTensor(conn net.Conn, device uint32) error {
 	for i, n := range []uint32{tensorElements, 1, 1, 1} {
 		binary.LittleEndian.PutUint32(tensor[20+i*4:], n)
 	}
-	for i, n := range []uint32{4, rpcProbeTensorBytes, rpcProbeTensorBytes, rpcProbeTensorBytes} {
+	for i, n := range []uint32{4, tensorBytes, tensorBytes, tensorBytes} {
 		binary.LittleEndian.PutUint32(tensor[36+i*4:], n)
 	}
 	binary.LittleEndian.PutUint64(tensor[220:], base)
 	copy(tensor[228:292], "nodexlm-rpc-probe")
 
-	pattern := make([]byte, rpcProbeTensorBytes)
+	// Keep Host-side working memory independent of the native tensor size.
+	pattern := make([]byte, min(tensorBytes, uint32(rpcProbeTensorBytes)))
 	for i := range pattern {
 		pattern[i] = byte(i*97 + 11)
 	}
 	// SET_TENSOR (6) carries rpc_tensor, cache_flag, offset, and raw payload.
-	upload := make([]byte, 0, len(tensor)+9+len(pattern))
+	upload := make([]byte, 0, len(tensor)+9)
 	upload = append(upload, tensor...)
-	upload = append(upload, 0)                  // no disk cache or hashing
-	upload = append(upload, make([]byte, 8)...) // offset 0
-	upload = append(upload, pattern...)
-	if err := rpcProbeSend(conn, 6, upload); err != nil {
-		return fmt.Errorf("SET_TENSOR: %w", err)
+	upload = append(upload, make([]byte, 9)...) // no cache, offset 0
+	var header [9]byte
+	header[0] = 6
+	binary.LittleEndian.PutUint64(header[1:], uint64(len(upload))+uint64(tensorBytes))
+	started := time.Now()
+	if err := writeRPCProbe(conn, header[:]); err != nil {
+		return TensorMeasurement{}, fmt.Errorf("SET_TENSOR header: %w", err)
 	}
-	// GET_TENSOR (8) forces native synchronization and proves bytes reached
-	// the allocated GGML backend buffer, rather than only the TLS tunnel.
+	if err := writeRPCProbe(conn, upload); err != nil {
+		return TensorMeasurement{}, fmt.Errorf("SET_TENSOR descriptor: %w", err)
+	}
+	for left := tensorBytes; left > 0; {
+		chunk := min(left, uint32(len(pattern)))
+		if err := writeRPCProbe(conn, pattern[:chunk]); err != nil {
+			return TensorMeasurement{}, fmt.Errorf("SET_TENSOR: %w", err)
+		}
+		left -= chunk
+	}
+	// SET_TENSOR has no reply. An ordered RPC fences timed uploads.
+	// The legacy small preflight needs only the GET_TENSOR readback.
+	if tensorBytes > rpcProbeTensorBytes {
+		if _, err := rpcProbeRoundtrip(conn, 3, pointer[:], 8); err != nil {
+			return TensorMeasurement{}, fmt.Errorf("SET_TENSOR fence: %w", err)
+		}
+	}
+	uploadTime := time.Since(started)
 	read := make([]byte, 0, len(tensor)+16)
 	read = append(read, tensor...)
 	read = append(read, make([]byte, 8)...) // offset 0
 	var count [8]byte
-	binary.LittleEndian.PutUint64(count[:], rpcProbeTensorBytes)
+	binary.LittleEndian.PutUint64(count[:], uint64(tensorBytes))
 	read = append(read, count[:]...)
-	actual, err := rpcProbeRoundtrip(conn, 8, read, rpcProbeTensorBytes)
-	if err != nil {
-		return fmt.Errorf("GET_TENSOR: %w", err)
+	started = time.Now()
+	if err := rpcProbeSend(conn, 8, read); err != nil {
+		return TensorMeasurement{}, fmt.Errorf("GET_TENSOR: %w", err)
 	}
-	if !bytes.Equal(pattern, actual) {
-		return errors.New("GET_TENSOR readback mismatch: native RPC tensor data was corrupted")
+	if _, err := io.ReadFull(conn, count[:]); err != nil {
+		return TensorMeasurement{}, fmt.Errorf("GET_TENSOR header: %w", err)
 	}
-	return nil
+	if n := binary.LittleEndian.Uint64(count[:]); n != uint64(tensorBytes) {
+		return TensorMeasurement{}, fmt.Errorf("GET_TENSOR returned %d bytes, expected %d", n, tensorBytes)
+	}
+	actual := make([]byte, len(pattern))
+	corrupted := false
+	for left := tensorBytes; left > 0; {
+		chunk := min(left, uint32(len(actual)))
+		if _, err := io.ReadFull(conn, actual[:chunk]); err != nil {
+			return TensorMeasurement{}, fmt.Errorf("GET_TENSOR readback: %w", err)
+		}
+		if !bytes.Equal(pattern[:chunk], actual[:chunk]) {
+			corrupted = true
+		}
+		left -= chunk
+	}
+	readTime := time.Since(started)
+	if corrupted {
+		return TensorMeasurement{}, errors.New("GET_TENSOR readback mismatch: native RPC tensor data was corrupted")
+	}
+	result := TensorMeasurement{Device: device, Bytes: tensorBytes}
+	mib := float64(tensorBytes) / (1 << 20)
+	result.UploadMiBPerSecond = mib / uploadTime.Seconds()
+	result.ReadbackMiBPerSecond = mib / readTime.Seconds()
+	return result, nil
 }
 
 func rpcProbeSend(conn net.Conn, cmd byte, payload []byte) error {

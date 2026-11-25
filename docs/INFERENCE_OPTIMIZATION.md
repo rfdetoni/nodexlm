@@ -18,6 +18,17 @@ Use **Medir rede** em cada Guest. Para medir tokens/s individuais, descarregue
 modelos e execute o benchmark real selecionando aquele Guest. Métricas com mais
 de 24 horas expiram; ausência de medição não significa que o nó seja lento.
 
+Para ponderar camadas, benchmarks de Host e Guest precisam ser controlados,
+recentes (menos de 24 horas), do mesmo modelo e fingerprint de opções, e da
+mesma base de taxa (decode nativo ou ponta a ponta). Sem comparabilidade,
+o split permanece proporcional à memória. Com o opt-in explícito no Host
+`NODEXLM_RPC_COST_PLACEMENT=1` (desabilitado por padrão) no modo velocidade,
+quando todos os nós selecionados possuem RTT medido, o planner compara prefixos ranqueados
+e Guests individuais por custo serial estimado: tempo por camada derivado
+de tokens/s do modelo inteiro, mais dois RTTs por segmento remoto por token.
+A distribuição remota segue a proporção de memória; o cálculo não é medição
+de throughput nem garante aceleração. O modo capacidade mantém todos os Guests.
+
 A seleção é executada **antes** do carregamento e reutilizada no endpoint de
 prévia `GET /api/plan`. Ao mudar a conectividade entre a prévia e a
 aplicação, os resultados podem diferir. A divisão calculada é estimativa,
@@ -36,7 +47,7 @@ do llama-server:
 | Batch lógico | 0 (nativo), 1–8192 | Aumenta demanda de memória |
 | Microbatch | 0 (nativo), 1–4096 | Quando ambos definidos, microbatch não pode exceder batch |
 | Especulação | off, ngram, draft | `ngram` usa lookup de tokens; `draft` carrega um GGUF diferente na CPU do Host, com `--spec-type draft-simple` |
-| Tokens por draft | 0 (nativo), 1–32 | `--spec-draft-n-max`, somente com draft; janelas grandes podem aumentar latência e consumo |
+| Tokens por draft | 0 (nativo), 1–32 | `--spec-draft-n-max` para draft GGUF ou `--spec-ngram-simple-size-m` para n-gram; janelas grandes podem aumentar latência e consumo |
 | Reuso parcial de KV/prompt | 0 (desligado), 1–4096 | `--cache-reuse`, tenta reutilizar trechos em prompts similares; requer prompt caching |
 | Cache MoE calculado na CPU | 0–1 | `--moe-cache-cpu-share` define fração dos misses executada na CPU em vez de carregar expert por PCIe; exige `--moe-cache-mib` e MoE em RAM |
 
@@ -50,6 +61,21 @@ deve ser registrado separadamente para **prefill**, **decode**, latência do
 primeiro token e carregamento; os benchmarks atuais ainda não cobrem
 todos esses valores por nó. Um modelo pode não suportar as opções solicitadas;
 nesse caso a inicialização falhará explicitamente.
+
+## Sugestão de n-gram para links RPC
+
+A prévia oferece uma sugestão estruturada quando um Guest com camadas
+remotas tem RTT recente medido de pelo menos 5 ms. Nenhuma configuração é
+alterada. O autotuning explicitamente solicitado mede candidatos de 4, 8 e
+16 tokens usando o mesmo workload e exige mesma base, topologia e aceitação
+de pelo menos 25%. A ideia é verificar vários tokens draft em um forward,
+amortizando round-trips; o ganho depende da taxa real de aceitação.
+
+O flag n-gram correto na revisão fixada é
+`--spec-ngram-simple-size-m` (não `--spec-draft-n-max`, que pertence ao
+draft GGUF). O E2E `scripts/e2e-rpc.py` verifica carregamento e geração
+combinando n-gram e RPC; resultado ainda precisa ser observado no bundle
+b12255/r3. Se incompatível, o load falha explicitamente, sem fallback silencioso.
 
 ## Cache nativo de tensores RPC — opt-in
 
@@ -86,6 +112,34 @@ o conteúdo armazenado no disco dele. O Android não recebeu essa opção.
 
 A revisão do llama.cpp fica fixada em `internal/llamaruntime/revision.json` e os hashes SHA-256 em `internal/llamaruntime/revision.json`. Ao mudar de revisão, os pares Host/Guest RPC devem ser recompilados juntos (inclusive o patch Unix) e os novos binários publicados e verificados antes de preencher `published`. Enquanto os novos hashes não forem publicados, `EnsureDistributed` tenta a compilação local da mesma revisão. **Não é permitido reutilizar bundles publicados de revisões antigas**. Android compila sua própria biblioteca C++ na revisão fixada e precisa de testes físicos específicos.
 
-## Runtime RPC r2
+## Runtime RPC b12255/r3
 
-O r2 é o bundle publicado fixado, com os cinco SHA-256 obtidos dos ativos da release e o build 43231952808 aprovado nas cinco plataformas, incluindo E2E Linux com dois Guests. O cache de instalação é separado por tag. Upload paralelo é ativado apenas nos bundles verificados, não representa ganho garantido no decode. O r3 fica reservado para candidatos de kernels especializados; não promover sem CI, hashes e testes de compatibilidade.
+O bundle fixado para estes WPs é `nodexlm-rpc-b12255-r3`; a revisão, os hashes e os patches permanecem inalterados. O cache de instalação é separado por tag. Upload paralelo é ativado apenas nos bundles verificados, não representa ganho garantido no decode.
+
+## Microbenchmark RPC por dispositivo (WP3)
+
+`NODEXLM_AUTO_RPC_MICROBENCH=1` habilita a coleta experimental em registro/heartbeat autenticado, somente sem modelos residentes e sem outro load/benchmark. A ação Medir dispositivos RPC permite medir sob demanda. São 8 e 32 MiB por dispositivo, no máximo dois dispositivos, 160 MiB de payload bidirecional e 30 s. SET_TENSOR é seguido de uma barreira RPC: a taxa inclui a sincronização; GET_TENSOR mede readback com verificação de dados. As medições auto são separadas do benchmark manual; MiB/s nunca vira tokens/s. Três amostras de decode ao vivo divergentes em mais de 30% do benchmark de cluster sinalizam possível necessidade de re-medição, não provam regressão. Nenhum benchmark de inferência é iniciado automaticamente.
+
+## Prefill e carregamento (WP4)
+
+Autotune usa RTT >15 ms ou eco <25 MiB/s para testar microbatch 128/256, links rápidos medidos testam 2048; sem amostra mantém 512/1024. Sugestão de prefill exige ganho medido e decode sem regressão acima de 10%; ganho de decode tem prioridade. O patch `parallel-rpc-loader.patch` usa `unordered_map<ggml_backend_dev_t,...>`: conta dispositivos RPC selecionados (não GPU local). Um Guest híbrido pode ativar upload paralelo quando o bundle verificado permite; `NODEXLM_PARALLEL_RPC_UPLOAD=0` desativa. Prévia reavalia q8_0 usando estimativa real de KV (inclui overhead de blocos quantizados); sugere apenas se reduz Guests ou permite GPU-only. Qualidade/Flash Attention devem ser verificadas, nada é aplicado automaticamente.
+
+## Estimativa de bytes por camada (WP5)
+
+`NODEXLM_GGUF_LAYER_BYTES=1` ativa o cálculo experimental por descritores de tensores GGUF, sem carregar pesos. Tipos quantizados conhecidos são contabilizados por tamanho de bloco; embeddings/output e outros tensores não-blk são reservados no Host. Metadados incompletos, tipos desconhecidos e shards mantêm fallback uniforme. A alocação contígua com margem de 15% é estimativa; validação física do tensor split nativo é necessária antes de usar em produção.
+
+## Transporte (WP6)
+
+O marcador 2 legado aceita dois exchanges; o Host usa quatro túneis autenticados separados (warmup descartado + três pares medidos), com mediana, amplitude e deadline total de 15 s. Sem novo marcador. O watcher ocioso bloqueia em Read e o claim interrompe por deadline antes de entregar o socket; TLS 1.3 pode reutilizar sessões por cliente pareado, preservando VerifyConnection e ALPN HTTP/1.1. Medições separadas up/down exigem negociação futura.
+
+## GPU do Host (WP9)
+
+Metal é uma opção explícita para macOS. Em cargas distribuídas e benchmarks de cluster, a enumeração `--list-devices` do próprio llama-server resolvido confirma o nome da GPU Vulkan ou Metal antes de inseri-la no split. Sem confirmação ou com múltiplas GPUs, mantém a distribuição CPU/RPC; não presume Vulkan0 ou Metal0. CUDA e mapeamento multi-GPU ficam fora do escopo. Testes físicos em Mac permanecem necessários.
+
+## Aceitação integrada dos nove WPs
+
+O workflow `Real RPC end-to-end` executa um teste focado nas alterações de E2E, com dois Guests CPU reais no runner e o bundle pinado verificado por SHA-256, mais `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...`. Não recompila nem publica o runtime. Verifica eco mediano, microbenchmark nativo, recusa durante residência e n-gram+RPC. O teste em runner não estabelece aceitação física.
+
+Para a coleta física, mantenha o mesmo GGUF (confira `sha256sum`), configurações, topologia e temperatura inicial. Descarregue todos os modelos e execute `python3 scripts/hardware-acceptance.py --model MODELO.gguf --repeat 3 --output host.json`, depois o mesmo com `--node ID_DO_GUEST --output guest.json` e `--node cluster --output cluster.json`. Para cluster, selecione o GGUF e habilite distribuição; use capacity se precisar forçar o teste distribuído. O coletor salva settings, plano de cluster, métricas nativas, estatísticas RPC antes/depois e rede por Guest. Repita com cada opt-in isolado, mesmo contexto, batch, ubatch, KV/FA e temperatura. Compare apenas bases de taxa e topologias equivalentes. Hardware, consumo e qualidade exigem validação do operador.
+
+A revisão final rejeita bases de taxa mistas na ausência de benchmark do Host, exige fingerprint da carga e topologia compatíveis para o alerta de divergência, não ignora um link lento medido quando outro ainda não tem amostra e contabiliza os pesos não-blk na prévia do Host. O coletor interrompe sessões com topologia alterada entre rodadas.

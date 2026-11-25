@@ -3,6 +3,8 @@ package dashboard
 import (
 	"errors"
 	"fmt"
+	"math"
+	"os"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
@@ -18,10 +20,46 @@ func effectivePlacementStrategy(value string) string {
 	return value
 }
 
+// placementBenchmarks accepts only fresh, comparable controlled measurements.
+func placementBenchmarks(samples []InferenceSample, fingerprint string, now time.Time) map[string]InferenceSample {
+	valid := make(map[string]InferenceSample)
+	for _, sample := range samples {
+		if fingerprint == "" || sample.Fingerprint != fingerprint || sample.Kind != "benchmark" ||
+			(sample.RateBasis != "native_decode" && sample.RateBasis != "end_to_end") ||
+			sample.TokensPerSecond <= 0 || math.IsNaN(sample.TokensPerSecond) || math.IsInf(sample.TokensPerSecond, 0) ||
+			sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour {
+			continue
+		}
+		if previous, ok := valid[sample.Model]; !ok || sample.MeasuredAt.After(previous.MeasuredAt) {
+			valid[sample.Model] = sample
+		}
+	}
+	return valid
+}
+
 // chooseRPC is used both for preview and actual native model loading.
 func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest) (clusterplan.Selection, error) {
-	samples := m.InferenceSamples()
-	now := time.Now()
+	samples := placementBenchmarks(m.InferenceSamples(), m.benchmarkSignature(s, s.Model), time.Now())
+	hostSample := samples[s.Model]
+	hostSpeed := hostSample.TokensPerSecond
+	basis := hostSample.RateBasis
+	if hostSpeed == 0 {
+		// Without a Host reference, never compare native decode with end-to-end rates.
+		for _, guest := range guests {
+			if guest.CapacityBytes == 0 {
+				continue
+			}
+			sample, ok := samples[s.Model+"@"+guest.ID]
+			if !ok {
+				continue
+			}
+			if basis != "" && basis != sample.RateBasis {
+				basis = ""
+				break
+			}
+			basis = sample.RateBasis
+		}
+	}
 	strategy := effectivePlacementStrategy(s.PlacementStrategy)
 	// A connected Guest is optional for local inference, even when an older
 	// runtime.json explicitly saved "capacity" with distributed=true.
@@ -54,26 +92,6 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		size*115/100 <= hostBudget &&
 		validatePlacementMemory(meta, s, size, hostBudget, nil) == nil &&
 		meta.BlockCount > 0 {
-		var hostSpeed float64
-		var hostBasis string
-		guestSpeed := make(map[string]float64, len(guests))
-		guestBasis := make(map[string]string, len(guests))
-		for _, sample := range samples {
-			if sample.Kind != "benchmark" || sample.TokensPerSecond <= 0 ||
-				sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour {
-				continue
-			}
-			if sample.Model == s.Model {
-				hostSpeed = sample.TokensPerSecond
-				hostBasis = sample.RateBasis
-			}
-			for _, guest := range guests {
-				if sample.Model == s.Model+"@"+guest.ID {
-					guestSpeed[guest.ID] = sample.TokensPerSecond
-					guestBasis[guest.ID] = sample.RateBasis
-				}
-			}
-		}
 		var best *RPCGuest
 		var bestSpeed float64
 		// Require 15% headroom before claiming an RPC advantage. Small
@@ -82,9 +100,10 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			required := size * 115 / 100
 			for i := range guests {
 				guest := &guests[i]
-				measured := guestSpeed[guest.ID]
+				sample := samples[s.Model+"@"+guest.ID]
+				measured := sample.TokensPerSecond
 				if measured <= hostSpeed*1.15 || measured <= bestSpeed ||
-					guestBasis[guest.ID] != hostBasis || guest.CapacityBytes < required {
+					sample.RateBasis != hostSample.RateBasis || guest.CapacityBytes < required {
 					continue
 				}
 				candidate := clusterplan.Candidate{ID: guest.ID, CapacityBytes: guest.CapacityBytes}
@@ -138,27 +157,34 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			candidate.Performance.RoundTripMS = network.RoundTripMS
 			candidate.Performance.MiBPerSecond = network.MiBPerSecond
 		}
-		for _, sample := range samples {
-			if sample.Model == s.Model+"@"+guest.ID && !sample.MeasuredAt.After(now) && now.Sub(sample.MeasuredAt) < 24*time.Hour && sample.TokensPerSecond > 0 {
-				candidate.Performance.TokensPerSecond = sample.TokensPerSecond
-				break
+		if sample, ok := samples[s.Model+"@"+guest.ID]; ok &&
+			basis != "" && sample.RateBasis == basis {
+			candidate.Performance.TokensPerSecond = sample.TokensPerSecond
+		}
+		if micro := m.microbenchSample(guest.ID); micro != nil {
+			for _, sample := range micro.Devices {
+				if sample.Bytes == 32<<20 {
+					rate := min(sample.UploadMiBPerSecond, sample.ReadbackMiBPerSecond)
+					if rate > 0 && (candidate.Performance.MicrobenchMiBPerSecond == 0 || rate < candidate.Performance.MicrobenchMiBPerSecond) {
+						candidate.Performance.MicrobenchMiBPerSecond = rate
+					}
+				}
 			}
 		}
 		candidates = append(candidates, candidate)
 	}
-	var hostSpeed float64
-	for _, sample := range samples {
-		if sample.Kind == "benchmark" && sample.Model == s.Model &&
-			sample.TokensPerSecond > 0 && !sample.MeasuredAt.After(now) && now.Sub(sample.MeasuredAt) < 24*time.Hour {
-			hostSpeed = sample.TokensPerSecond
-			break
-		}
+	selectPlacement := clusterplan.SelectWithHostSpeed
+	if strategy == "speed" && os.Getenv("NODEXLM_RPC_COST_PLACEMENT") == "1" {
+		selectPlacement = clusterplan.SelectWithHostSpeedAndRTT
 	}
-	selection, err := clusterplan.SelectWithHostSpeed(meta.BlockCount, size, hostBudget, hostSpeed, candidates, strategy)
+	selection, err := selectPlacement(meta.BlockCount, size, hostBudget, hostSpeed, candidates, strategy)
 	if err != nil {
 		return selection, err
 	}
 	if err = validatePlacementMemory(meta, s, size, hostBudget, selection.Guests); err == nil {
+		err = applyLayerBytes(meta, s, size, hostBudget, guests, &selection)
+	}
+	if err == nil {
 		selection.Excluded = append(selection.Excluded, unavailable...)
 		if len(unavailable) > 0 {
 			selection.Reason += "; excluded Guests with no allocatable RAM"
@@ -177,7 +203,54 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 	if contextErr := validatePlacementMemory(meta, s, size, hostBudget, full.Guests); contextErr != nil {
 		return clusterplan.Selection{}, contextErr
 	}
-	full.Reason = "Context/batch memory requires additional RPC Guests; speed subset rejected"
+	if err := applyLayerBytes(meta, s, size, hostBudget, guests, &full); err != nil {
+		return clusterplan.Selection{}, err
+	}
+	full.Reason += "; memory admission requires additional RPC Guests; speed subset rejected"
 	full.Excluded = append(full.Excluded, unavailable...)
 	return full, nil
+}
+
+func applyLayerBytes(meta local.GGUFInfo, s Settings, size, host uint64, available []RPCGuest, selection *clusterplan.Selection) error {
+	if os.Getenv("NODEXLM_GGUF_LAYER_BYTES") != "1" || len(meta.BlockBytes) < 2 || len(meta.BlockBytes) != int(meta.BlockCount) || len(selection.Guests) == 0 {
+		return nil
+	}
+	uniform := true
+	for _, weight := range meta.BlockBytes[1:] {
+		if weight != meta.BlockBytes[0] {
+			uniform = false
+			break
+		}
+	}
+	if uniform {
+		return nil
+	}
+	// Without explicit native device ordering, the exact layer split cannot
+	// be expressed safely. Keep the historical legacy placement.
+	byID := make(map[string]RPCGuest, len(available))
+	for _, guest := range available {
+		byID[guest.ID] = guest
+	}
+	for _, chosen := range selection.Guests {
+		if !validRPCDeviceKinds(byID[chosen.ID]) {
+			return nil
+		}
+	}
+	budgets := make([]uint64, len(selection.Guests))
+	for i, guest := range selection.Guests {
+		budgets[i] = guest.CapacityBytes
+	}
+	allocation, ok := clusterplan.LayerAllocation(meta.BlockBytes, meta.NonBlockBytes, host, budgets, selection.LocalLayers)
+	if !ok {
+		return errors.New("estimated contiguous GGUF layers do not fit selected node budgets")
+	}
+	candidate := *selection
+	candidate.LocalLayers = allocation[0]
+	candidate.GuestLayers = allocation[1:]
+	if plan := planRPCDevices(candidate, available, meta, s, size); len(plan.Devices) == 0 {
+		return errors.New("estimated GGUF layer split exceeds native device budgets")
+	}
+	*selection = candidate
+	selection.Reason += "; estimated actual GGUF tensor bytes"
+	return nil
 }

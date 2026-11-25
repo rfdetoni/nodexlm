@@ -120,6 +120,14 @@ def main():
             # Exercise the benchmark marker through a genuine enrolled TLS tunnel.
             measurement = json.load(api('/v1/bench/'+nodes[0]['id'],'POST',{}))
             assert measurement['mib_per_second'] > 0
+            if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                assert measurement.get('samples') == 3, measurement
+                for node in nodes:
+                    sample = json.load(api('/api/bench/rpc-device/'+node['id'],'POST',{}))
+                    assert sample['source'] == 'auto', sample
+                    assert {d['bytes'] for d in sample['devices']} == {8 << 20, 32 << 20}, sample
+                    assert all(d['upload_mib_per_second'] > 0 and d['readback_mib_per_second'] > 0 for d in sample['devices']), sample
+                print('PASS: legacy echo median and native per-device tensor upload/readback')
             settings = json.load(api('/api/status'))['settings']
             settings.update(model=model.name,distributed=True,context_tokens=256,threads=2,gpu_layers=os.environ.get('NODEXLM_TEST_GPU_LAYERS','auto'),placement_strategy='capacity')
             api('/api/settings','PUT',settings).close()
@@ -130,6 +138,12 @@ def main():
                     raise AssertionError(state['error'])
                 return state['loaded']
             wait_for(loaded,120)
+            if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                try:
+                    api('/api/bench/rpc-device/'+nodes[0]['id'],'POST',{}).close()
+                    raise AssertionError('microbenchmark admitted with a resident model')
+                except AssertionError as exc:
+                    assert 'HTTP 409' in str(exc), exc
             listed = json.load(api('/v1/models',key=env['NODEXLM_API_KEY']))
             assert listed['data'][0]['id'] == model.name
             chunks = []
@@ -165,6 +179,22 @@ def main():
             report=acceptance.collect(base,token,model.name,nodes[0]['id'],2,'ci')
             assert report['physical_acceptance']=='not-established' and len(report['measurements'])==2
             assert all(p['inference']['tokens_per_second']>0 for p in report['measurements'])
+            if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                cluster_report = acceptance.collect(base,token,model.name,'cluster',2,'ci')
+                assert cluster_report['plan'] and cluster_report['physical_acceptance'] == 'not-established'
+                assert all(p['networks'] and p['inference']['benchmark_topology'] for p in cluster_report['measurements'])
+                print('PASS: controlled whole-cluster collection with RPC statistics')
+            # Confirm pinned ngram-simple + RPC can actually load and generate.
+            # Failure is explicit: never silently retry without speculation.
+            ngram = {**settings, 'speculative_mode':'ngram','speculative_tokens':8}
+            api('/api/settings','PUT',ngram).close()
+            api('/api/load','POST',{}).close()
+            wait_for(loaded,120)
+            reply=json.load(api('/v1/chat/completions','POST',{'model':model.name,'messages':[{'role':'user','content':'Once upon a time, once upon a time'}],'max_tokens':16},key=env['NODEXLM_API_KEY']))
+            assert reply.get('choices') and reply.get('usage',{}).get('completion_tokens',0)>0,reply
+            api('/api/unload','POST',{}).close()
+            api('/api/settings','PUT',settings).close()
+            print('PASS: pinned ngram-simple + RPC load and generation (not a speed claim)')
             # An inference key must not access administrative resources.
             try:
                 api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])
@@ -177,6 +207,11 @@ def main():
                 result=subprocess.run(['node',os.environ['NODEXLM_UI_CHECK'],base,token],timeout=90)
                 assert result.returncode==0,'Browser console verification failed'
             print(f'PASS: {guest_count} Guests, pairing, TLS benchmark, native RPC, resident model pool, inference benchmark, SSE and restricted API key')
+        except Exception:
+            print('Host log tail:', log_path.read_text()[-12000:])
+            for path in root.glob('guest*.log'):
+                print(path.name, path.read_text()[-6000:])
+            raise
         finally:
             for process in reversed(processes):
                 if os.name=='nt':

@@ -149,3 +149,33 @@ func TestDecisionCapabilityRejectsWildcardAndMalformedPayloads(t *testing.T) {
 		}
 	}
 }
+
+func TestAdaptiveDecisionRoutingAvoidsHotAndBusyWorkers(t *testing.T) {
+	t.Setenv("NODEXLM_DECISION_ADAPTIVE", "1")
+	s, err := New(adminSecret, joinSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.CloseRPC()
+	hot := decisionTestNode(t, s, "hot")
+	cold := decisionTestNode(t, s, "cold")
+	temperature := 4
+	s.mu.Lock()
+	s.nodes[hot.NodeID].device.ThermalStatus = &temperature
+	s.decisionTimings[hot.NodeID] = []time.Duration{100 * time.Millisecond}
+	s.decisionTimings[cold.NodeID] = []time.Duration{200 * time.Millisecond}
+	s.nodes[hot.NodeID].decisionEWMA = 100 * time.Millisecond
+	s.nodes[cold.NodeID].decisionEWMA = 200 * time.Millisecond
+	s.mu.Unlock()
+	choices := s.decisionCandidates("ollaya/laya:multilingual")
+	if len(choices) != 2 || choices[0].id != cold.NodeID {
+		t.Fatalf("hot worker outranked cold equivalent: %+v", choices)
+	}
+	s.mu.Lock()
+	s.nodes[cold.NodeID].active = "busy"
+	s.mu.Unlock()
+	choices = s.decisionCandidates("ollaya/laya:multilingual")
+	if choices[0].id != hot.NodeID || choices[0].inFlight != 0 {
+		t.Fatalf("busy worker outranked idle: %+v", choices)
+	}
+}

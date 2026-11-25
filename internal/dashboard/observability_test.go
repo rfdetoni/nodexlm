@@ -94,3 +94,32 @@ func TestParseInferenceSampleKeepsPrefillSeparateFromDecode(t *testing.T) {
 		t.Fatalf("unreliable native timing breakdown: %+v valid=%v", got, ok)
 	}
 }
+
+func TestClusterDriftRequiresLoadedFingerprintAndTopology(t *testing.T) {
+	const model = "small.gguf"
+	key := model + "@bench-cluster"
+	m := &Manager{
+		current: model, loadFingerprint: "current", loadRPCNodes: []string{"guest"},
+		samples: map[string]InferenceSample{
+			key: {Model: key, Kind: "benchmark", RateBasis: "native_decode", TokensPerSecond: 10,
+				Fingerprint: "old", BenchmarkTopology: "guest:0::", MeasuredAt: time.Now()},
+		},
+		engine: &local.Managed{RPCServers: []string{"127.0.0.1:50052"}},
+	}
+	raw := []byte(`{"usage":{"completion_tokens":8},"timings":{"predicted_ms":16000}}`)
+	for range 3 {
+		m.recordInference(model, raw, 18*time.Second)
+	}
+	if m.samples[key].Suspect {
+		t.Fatal("stale benchmark fingerprint triggered a drift advisory")
+	}
+	baseline := m.samples[key]
+	baseline.Fingerprint = "current"
+	m.samples[key] = baseline
+	for range 3 {
+		m.recordInference(model, raw, 18*time.Second)
+	}
+	if !m.samples[key].Suspect {
+		t.Fatal("comparable divergent cluster samples did not trigger an advisory")
+	}
+}

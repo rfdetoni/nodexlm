@@ -2,6 +2,50 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Aceitação integrada dos WPs
+
+- E2E RPC pinado focalizado em PRs e cross-build Windows completo; coleta física suporta cluster, plano e estatísticas RPC por rodada. Corrige identificação Metal MTL<n> conforme a revisão nativa.
+- Endurece comparabilidade de benchmarks, fingerprint carregado, identificação de links lentos e prévia de pesos não-blk; testes de regressão na revisão integrada.
+
+## GPU do Host — WP9
+
+- Metal opt-in e enumeração do dispositivo nativo confirmado para Vulkan/Metal no load e benchmark de cluster; fallback CPU quando não confirmado.
+
+## Decision workers — WP8
+
+- Ranking opt-in com EWMA, p95, in-flight e prioridade de nós ociosos; preserva penalidades térmicas/bateria e leases.
+
+## Política de threads — WP7
+
+- CLI Guest expõe política performance opt-in; Android já seleciona núcleos rápidos em modo automático, interface esclarecida sem mudar default. Afinidade permanece follow-up.
+
+## Transporte RPC — WP6
+
+- Mediana de três pares após warmup em túneis legados, watcher ocioso sem poll e cache TLS por cliente pareado, sem alteração de protocolo.
+
+## Bytes por camada — WP5
+
+- Parser GGUF contabiliza tensores conhecidos sem ler pesos e planner opt-in estima alocação contígua não uniforme; fallback uniforme preservado para metadados incompletos.
+
+## Prefill e carregamento — WP4
+
+- Autotune por link, recomendação de prefill com guard de decode, gate de upload por dispositivo RPC confirmado no patch e sugestão opt-in de KV q8_0.
+
+## Microbenchmark por dispositivo — WP3
+
+- Mede transferências nativas RPC de 8 e 32 MiB por dispositivo com orçamento e cancelamento, cache separado e ranking sem conversão em tokens/s; coleta automática opt-in.
+- Sinaliza divergência de decode ao vivo para re-medição explícita.
+
+## Especulação orientada por RTT — WP2
+
+- Prévia sugere n-gram com RTT medido de pelo menos 5 ms em camadas remotas; autotune explícito testa janelas de 4, 8 e 16 tokens, com gates de aceitação e topologia preservados.
+- Adiciona E2E ngram-simple + RPC no runtime pinado; resultado físico ainda pendente.
+
+## Planejamento de clusters mistos — WP1
+
+- O planner utiliza somente benchmarks controlados, recentes e de fingerprint e base de taxa compatíveis para ponderar Host e Guests.
+- Com opt-in `NODEXLM_RPC_COST_PLACEMENT=1` no modo velocidade, compara subconjuntos por custo serial estimado com penalidade de RTT e limites de memória; ganhos exigem A/B físico.
+
 ## Atualização do llama.cpp e inferência adaptativa — 2026-11-10
 
 - Revisão experimental nativa atualizada de `b12143` para `b12255` (commit `940a30ee3b5593e1a66fe0aadc3b731989022552`), com SHA-256 dos dez arquivos oficiais desktop verificados pelo manifesto da release upstream.

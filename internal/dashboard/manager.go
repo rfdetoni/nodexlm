@@ -90,6 +90,10 @@ type Manager struct {
 	residents             map[string]*Manager
 	closed                bool
 	samples               map[string]InferenceSample
+	microbenchAttempts    map[string]time.Time
+	microbenchDrift       int
+	loadFingerprint       string
+	microbenchNode        string
 	generationTokens      uint64
 	generationBuckets     [8]uint64
 	generationCount       uint64
@@ -248,8 +252,8 @@ func (m *Manager) validate(s Settings) error {
 	if s.CacheReuseTokens < 0 || s.CacheReuseTokens > 4096 {
 		return errors.New("cache_reuse_tokens must be 0..4096")
 	}
-	if s.SpeculativeTokens < 0 || s.SpeculativeTokens > 32 || (s.SpeculativeTokens > 0 && s.SpeculativeMode != "draft") {
-		return errors.New("speculative_tokens must be 0..32 and requires draft mode")
+	if s.SpeculativeTokens < 0 || s.SpeculativeTokens > 32 || (s.SpeculativeTokens > 0 && s.SpeculativeMode != "draft" && s.SpeculativeMode != "ngram") {
+		return errors.New("speculative_tokens must be 0..32 and requires draft or ngram mode")
 	}
 	if s.FlashAttention != "" && s.FlashAttention != "auto" && s.FlashAttention != "on" && s.FlashAttention != "off" {
 		return errors.New("flash_attention must be auto, on or off")
@@ -261,8 +265,8 @@ func (m *Manager) validate(s Settings) error {
 		(s.BatchSize > 0 && s.UBatchSize > s.BatchSize) {
 		return errors.New("invalid batch_size or ubatch_size")
 	}
-	if s.HostGPU != "" && s.HostGPU != "auto" && s.HostGPU != "cpu" && s.HostGPU != "vulkan" {
-		return errors.New("host_gpu must be auto, cpu or vulkan")
+	if s.HostGPU != "" && s.HostGPU != "auto" && s.HostGPU != "cpu" && s.HostGPU != "vulkan" && s.HostGPU != "metal" {
+		return errors.New("host_gpu must be auto, cpu, vulkan or metal")
 	}
 	if s.SpeculativeMode != "" && s.SpeculativeMode != "off" && s.SpeculativeMode != "ngram" && s.SpeculativeMode != "draft" {
 		return errors.New("speculative_mode must be off, ngram or draft")
@@ -408,6 +412,8 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.phaseStartedAt = m.loadStartedAt
 	m.loadRPCNodes = nil
 	m.loadRPCBaseline = nil
+	m.loadFingerprint = ""
+	m.microbenchDrift = 0
 	if m.rpcStatsProvider != nil {
 		m.loadRPCBaseline = m.rpcStatsProvider()
 	}
@@ -481,6 +487,7 @@ func (m *Manager) load(ctx context.Context) error {
 	rpcEndpoints := []string(nil)
 	localLayers := 0
 	var devicePlacement RPCDevicePlacement
+	var modelBlocks uint32
 	if s.Distributed {
 		m.setPhase("selecting_guests")
 		// The Host can still load locally if there are no RPC Guests,
@@ -511,7 +518,7 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		localLayers = selection.LocalLayers
 		devicePlacement = planRPCDevices(selection, guests, model, s, uint64(size))
-		devicePlacement, localLayers = withHostVulkan(devicePlacement, localLayers, model.BlockCount, s.HostGPU, s.GPULayers)
+		modelBlocks = model.BlockCount
 		selectedIDs := make([]string, 0, len(selection.Guests))
 		for _, candidate := range selection.Guests {
 			selectedIDs = append(selectedIDs, candidate.ID)
@@ -577,8 +584,8 @@ func (m *Manager) load(ctx context.Context) error {
 		resolved = ""
 	} else if usingRPC && (m.binary == "" || m.binary == "llama-server") {
 		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, effectiveHostRuntimeBackend(s.HostGPU))
-	} else if (m.binary == "" || m.binary == "llama-server") && effectiveHostRuntimeBackend(s.HostGPU) == "vulkan" {
-		resolved, _, err = llamaruntime.Ensure(ctx, m.dir, "vulkan")
+	} else if (m.binary == "" || m.binary == "llama-server") && (s.HostGPU == "vulkan" || s.HostGPU == "metal") {
+		resolved, _, err = llamaruntime.Ensure(ctx, m.dir, s.HostGPU)
 	} else {
 		resolved, err = llamaruntime.AutoExecutable(ctx, m.dir, m.binary)
 	}
@@ -587,6 +594,10 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	if usingRPC && !llamaruntime.SupportsRPC(ctx, resolved) {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
+	}
+	if usingRPC && len(devicePlacement.Devices) > 0 && localLayers > 0 && s.GPULayers != "0" {
+		device := discoverHostGPU(ctx, resolved, s.HostGPU)
+		devicePlacement, localLayers = withHostGPU(devicePlacement, localLayers, modelBlocks, s.HostGPU, device, s.GPULayers)
 	}
 	draftPath, err := m.resolveDraftModel(s)
 	if err != nil {
@@ -603,6 +614,7 @@ func (m *Manager) load(ctx context.Context) error {
 			engine.GPULayers = "all"
 		}
 	}
+	loadFingerprint := m.benchmarkSignature(s, s.Model)
 	if err = engine.Load(ctx); err != nil {
 		engine.Close()
 		return err
@@ -618,6 +630,7 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
+	m.loadFingerprint = loadFingerprint
 	m.nativeSystemInfo = systemInfo
 	m.current = s.Model
 	m.mu.Unlock()

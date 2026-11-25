@@ -27,3 +27,7 @@ Older ARM64 devices without `dotprod`/`i8mm` and physical `armeabi-v7a` devices 
 ## Publication guard
 
 PR debug artifacts use the isolated name `nodexlm-android-pr-test-only`. They are not update-compatible with the permanently signed application and are never public beta replacements. Main and tag builds require all four existing Android signing secrets and verify the keystore certificate against `android/signing-certificate.sha256` before SDK/NDK installation; the checked-in certificate hash remains authoritative.
+
+## Política de threads do Guest (WP7)
+
+Divergência reconfirmada: Android já aplica `NativeRpc.recommendedThreads` quando `rpc_threads=0`, tanto em ComputeService como RpcGuestService, e JNI usa sched_getaffinity somente para amostrar o cpuset. O campo existente foi esclarecido, sem mudar o padrão nem duplicar o seletor. Em desktop, `nodexlm guest --thread-policy performance` escolhe a contagem recomendada; `--threads N` é prioritário. Afinidade real de workers permanece follow-up: risco de herança por threads do runtime/driver não validado. O A/B acima (38,23 vs 70,19 t/s) motiva testes, não promete ganho no cluster.

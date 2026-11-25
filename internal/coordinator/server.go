@@ -37,6 +37,7 @@ type nodeState struct {
 	signal       chan struct{}
 	active       string
 	decisionSeen time.Time
+	decisionEWMA time.Duration
 }
 
 type Server struct {
@@ -54,6 +55,8 @@ type Server struct {
 	pair            *pairing.Session
 	certDER         []byte
 	rpcHub          *rpcmesh.Hub
+	rpcMicrobench   func(string)
+	rpcDrain        func(string)
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
@@ -479,7 +482,13 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		j.Status = "completed"
 	}
 	if j.Kind == "decision" && j.Status == "completed" && j.Started != nil {
-		series := append(s.decisionTimings[id], now.Sub(*j.Started))
+		elapsed := now.Sub(*j.Started)
+		if n.decisionEWMA == 0 {
+			n.decisionEWMA = elapsed
+		} else {
+			n.decisionEWMA = time.Duration(0.7*float64(n.decisionEWMA) + 0.3*float64(elapsed))
+		}
+		series := append(s.decisionTimings[id], elapsed)
 		if len(series) > 64 {
 			series = series[len(series)-64:]
 		}
@@ -648,6 +657,12 @@ func (s *Server) RPCNodes() map[string]string              { return s.rpcHub.Rea
 func (s *Server) RPCIdleNodes() map[string]string          { return s.rpcHub.IdleNodes() }
 func (s *Server) RPCStats() map[string]rpcmesh.TunnelStats { return s.rpcHub.Stats() }
 func (s *Server) CloseRPC()                                { s.rpcHub.Close() }
+func (s *Server) SetRPCMicrobenchCallbacks(start, drain func(string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rpcMicrobench, s.rpcDrain = start, drain
+}
+
 func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 	_, id := s.identify(r)
 	if id == "" {
@@ -672,7 +687,9 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 	n.device.LastSeen = time.Now()
 	n.device.Status = "online"
 	s.rpcHub.ServeTunnel(w, r, id)
-
+	if s.rpcMicrobench != nil {
+		go s.rpcMicrobench(id)
+	}
 }
 
 // heartbeat retains the authenticated node identity while updating live
@@ -715,7 +732,13 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	// RPCReady is asserted only when a tunnel is authenticated, not by a guest.
 	profile.Runtime.RPCReady = false
 	n.device = profile
+	start, drain := s.rpcMicrobench, s.rpcDrain
 	s.mu.Unlock()
+	if profile.Status == "draining" && drain != nil {
+		drain(id)
+	} else if start != nil {
+		go start(id)
+	}
 	respond(w, 200, map[string]string{"status": "online"})
 }
 
