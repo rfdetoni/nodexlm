@@ -58,6 +58,7 @@ class RpcGuestService : Service() {
         const val EXTRA_MODE = "mode"
         const val EXTRA_RUST_TRANSPORT = "rust_transport"
         const val EXTRA_EFFICIENT_CORES = "efficient_cores"
+        const val EXTRA_WEIGHT_CACHE = "rpc_weight_cache"
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
 
@@ -151,14 +152,21 @@ class RpcGuestService : Service() {
                 val socketFile=File(filesDir,"rpc.sock")
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
                 rpcSocket=socketFile.absolutePath
+                val cert = PinnedHostTls.certificate(this)
+                val cachePath = runCatching {
+                    RpcWeightCache.prepare(cacheDir, cert, node, token, NativeRpc.VERSION,
+                        intent.getBooleanExtra(EXTRA_WEIGHT_CACHE, false))?.absolutePath.orEmpty()
+                }.getOrElse {
+                    Log.w(LOG, "Private RPC weight cache unavailable; continuing without cache")
+                    ""
+                }
                 NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
-                val message = NativeRpc.start(threads, mode, rpcSocket)
+                val message = NativeRpc.start(threads, mode, rpcSocket, cachePath)
                 check(message.isEmpty()) { message }
                 nativeStarted = true
                 awaitNativeRPC()
                 recordGuestEvent("ready")
                 Log.i(LOG, "Native GGML RPC socket ready; requested=$mode, selected=${NativeRpc.selectedBackends()}, threads=$threads")
-                val cert = PinnedHostTls.certificate(this)
                 val sslContext = PinnedHostTls.context(cert)
                 // Share measured Vulkan heap counters; on mobile GPUs memory can
                 // be shared with RAM and must never be counted twice by the Host.

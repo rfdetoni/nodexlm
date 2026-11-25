@@ -1,0 +1,140 @@
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -1800,17 +1800,64 @@
+-    if (cache_dir && cache_flag) {
+-        // the whole data is needed to compute the hash
+-        std::vector<uint8_t> data(size);
+-        if (!sock->recv_data(data.data(), size)) {
+-            return false;
+-        }
+-        uint64_t hash = fnv_hash(data.data(), size);
+-        char hash_str[17];
+-        snprintf(hash_str, sizeof(hash_str), "%016" PRIx64, hash);
+-        // save to cache_dir/hash_str
+-        fs::path cache_file = fs::path(cache_dir) / hash_str;
+-        std::ofstream ofs(cache_file, std::ios::binary);
+-        ofs.write((const char *)data.data(), size);
+-        LOG_INFO("[%s] saved to '%s'\n", __func__, cache_file.string().c_str());
+-        ggml_backend_tensor_set(tensor, data.data(), offset, size);
+-        return true;
+-    }
++    // Android persistent cache is opt-in, private to one pairing, and
++    // deliberately bounded. Larger tensors use upstream's streaming path.
++    constexpr size_t cache_entry_limit = 16 * 1024 * 1024;
++    if (cache_dir && cache_flag && size > 0 && size <= cache_entry_limit) {
++        std::vector<uint8_t> data(size);
++        if (!sock->recv_data(data.data(), size)) {
++            return false;
++        }
++        uint64_t hash = fnv_hash(data.data(), size);
++        char hash_str[17];
++        snprintf(hash_str, sizeof(hash_str), "%016" PRIx64, hash);
++        // The server handles one cache directory. Serialize cache mutations
++        // across connections; never exceed the configured fixed disk budget.
++        static std::mutex cache_mutex;
++        {
++            std::lock_guard<std::mutex> lock(cache_mutex);
++            const fs::path dir(cache_dir);
++            const fs::path target = dir / hash_str;
++            std::error_code ec;
++            constexpr uint64_t quota = 512ULL * 1024 * 1024;
++            constexpr uint64_t free_reserve = 512ULL * 1024 * 1024;
++            uint64_t used = 0;
++            size_t entries = 0;
++            bool safe = fs::is_directory(fs::symlink_status(dir, ec)) && !ec;
++            if (safe) {
++                fs::directory_iterator it(dir, ec), end;
++                for (; !ec && it != end; it.increment(ec)) {
++                    const auto status = it->symlink_status(ec);
++                    if (ec || !fs::is_regular_file(status) || ++entries > 1024) {
++                        safe = false;
++                        break;
++                    }
++                    const auto bytes = it->file_size(ec);
++                    if (ec || bytes > quota || used > quota - bytes) {
++                        safe = false;
++                        break;
++                    }
++                    used += bytes;
++                }
++                safe = safe && !ec;
++            }
++            if (safe && used <= quota - size && entries < 1024 &&
++                fs::space(dir, ec).available >= free_reserve + size && !ec &&
++                !fs::exists(target, ec) && !ec) {
++                const fs::path temp = target.string() + ".tmp";
++                // Stale incomplete files are removed before writing.
++                fs::remove(temp, ec);
++                if (!ec) {
++                    std::ofstream ofs(temp, std::ios::binary | std::ios::trunc);
++                    ofs.write(reinterpret_cast<const char *>(data.data()), size);
++                    ofs.close();
++                    if (ofs) {
++                        fs::rename(temp, target, ec);
++                    }
++                    if (!ofs || ec) {
++                        std::error_code ignored;
++                        fs::remove(temp, ignored);
++                    }
++                }
++            }
++        }
++        ggml_backend_tensor_set(tensor, data.data(), offset, size);
++        return true;
++    }
+@@ -1896,19 +1896,25 @@
+-bool rpc_server::get_cached_file(uint64_t hash, std::vector<uint8_t> & data) {
+-    if (!cache_dir) {
+-        return false;
+-    }
+-    char hash_str[17];
+-    snprintf(hash_str, sizeof(hash_str), "%016" PRIx64, hash);
+-    fs::path cache_file = fs::path(cache_dir) / hash_str;
+-    std::error_code ec;
+-    if (!fs::exists(cache_file, ec)) {
+-        return false;
+-    }
+-    std::ifstream ifs(cache_file, std::ios::binary);
+-    ifs.seekg(0, std::ios::end);
+-    size_t size = ifs.tellg();
+-    ifs.seekg(0, std::ios::beg);
+-    data.resize(size);
+-    ifs.read((char *)data.data(), size);
+-    return true;
+-}
++bool rpc_server::get_cached_file(uint64_t hash, std::vector<uint8_t> & data) {
++    if (!cache_dir) {
++        return false;
++    }
++    char hash_str[17];
++    snprintf(hash_str, sizeof(hash_str), "%016" PRIx64, hash);
++    const fs::path cache_file = fs::path(cache_dir) / hash_str;
++    std::error_code ec;
++    if (!fs::is_regular_file(fs::symlink_status(cache_file, ec)) || ec) {
++        return false;
++    }
++    const auto size = fs::file_size(cache_file, ec);
++    if (ec || size == 0 || size > 16 * 1024 * 1024) {
++        return false;
++    }
++    std::ifstream ifs(cache_file, std::ios::binary);
++    data.resize(static_cast<size_t>(size));
++    if (!ifs.read(reinterpret_cast<char *>(data.data()), data.size()) ||
++        ifs.peek() != std::char_traits<char>::eof() ||
++        fnv_hash(data.data(), data.size()) != hash) {
++        data.clear();
++        return false;
++    }
++    return true;
++}
+@@ -1940,2 +1940,7 @@
+-    size_t size = cached_file.size();
+-    LOG_DBG2("[%s] tensor: %s, buffer: %p, data: %p, offset: %" PRIu64 ", size: %s, hash: 0x%" PRIx64 ", cache hit\n",
++    size_t size = cached_file.size();
++    // Cache data must also fit the expected tensor, not merely the buffer.
++    if (request.offset > ggml_nbytes(tensor) || size != ggml_nbytes(tensor) - request.offset) {
++        response.result = 0;
++        return true;
++    }
++    LOG_DBG2("[%s] tensor: %s, buffer: %p, data: %p, offset: %" PRIu64 ", size: %s, hash: 0x%" PRIx64 ", cache hit\n",

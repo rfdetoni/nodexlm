@@ -9,6 +9,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Runtime experimental
 
+- Cache persistente Android opt-in, isolado por pareamento/revisão e limitado por entrada, quota e espaço livre; verificação FNV e tamanho antes do uso. Sem garantia criptográfica do protocolo de hash upstream.
+
 - Batching nativo experimental (candidato r5): coalescência imediata de comandos sem resposta já enfileirados, preservando RPC 10 e barreiras. Sem ganho alegado.
 
 - Benchmark direcional negociado por conexão (Go/Rust), opt-in, com mediana de upload/download independentes e fallback legado.

@@ -684,6 +684,10 @@ class MainActivity : Activity() {
             text = getString(R.string.rpc_efficient_cores)
             isChecked = prefs.getBoolean("rpc_efficient_cores", false)
         }
+        val weightCache = CheckBox(this).apply {
+            text = getString(R.string.rpc_weight_cache)
+            isChecked = prefs.getBoolean("rpc_weight_cache", false)
+        }
         val dedicatedGuest = CheckBox(this).apply {
             text = getString(R.string.rpc_dedicated_guest)
             isChecked = prefs.getBoolean("rpc_dedicated_guest", false)
@@ -692,6 +696,7 @@ class MainActivity : Activity() {
             settings.addView(rustTransport)
             settings.addView(efficientCores)
         }
+        settings.addView(weightCache)
         settings.addView(dedicatedGuest)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
@@ -714,6 +719,7 @@ class MainActivity : Activity() {
                     .putInt("rpc_threads",threads)
                     .putBoolean("rpc_rust_transport", BuildConfig.RUST_RPC_ENABLED && rustTransport.isChecked)
                     .putBoolean("rpc_efficient_cores", efficientCores.isChecked)
+                    .putBoolean("rpc_weight_cache", weightCache.isChecked)
                     .putBoolean("rpc_dedicated_guest", dedicatedGuest.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
@@ -799,6 +805,7 @@ class MainActivity : Activity() {
                 .putExtra(RpcGuestService.EXTRA_MODE,prefs.getString("rpc_mode", "auto") ?: "auto")
                 .putExtra(RpcGuestService.EXTRA_RUST_TRANSPORT, BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false))
                 .putExtra(RpcGuestService.EXTRA_EFFICIENT_CORES, prefs.getBoolean("rpc_efficient_cores", false))
+                .putExtra(RpcGuestService.EXTRA_WEIGHT_CACHE, prefs.getBoolean("rpc_weight_cache", false))
             startForegroundService(intent)
             setStatus(getString(R.string.ui_69873d9d8387))
             // Foreground RPC service lives in :rpc. Closing this task releases
