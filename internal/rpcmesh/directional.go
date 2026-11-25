@@ -11,6 +11,15 @@ import (
 
 const directionalSize = 1 << 20
 
+var errBenchmarkClock = errors.New("benchmark clock did not advance")
+
+func measuredRate(bytes int, elapsed time.Duration) (float64, error) {
+	if elapsed <= 0 {
+		return 0, errBenchmarkClock
+	}
+	return float64(bytes) / (1 << 20) / elapsed.Seconds(), nil
+}
+
 func directionalPayload() []byte {
 	return bytes.Repeat([]byte{0xa5}, 16<<10)
 }
@@ -77,8 +86,10 @@ func directionalHost(conn net.Conn) (float64, float64, error) {
 		return 0, 0, err
 	}
 	download := time.Since(start)
-	if upload <= 0 || download <= 0 {
-		return 0, 0, errors.New("invalid directional measurement duration")
+	up, err := measuredRate(directionalSize, upload)
+	if err != nil {
+		return 0, 0, err
 	}
-	return 1 / upload.Seconds(), 1 / download.Seconds(), nil
+	down, err := measuredRate(directionalSize, download)
+	return up, down, err
 }
