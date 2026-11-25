@@ -232,9 +232,11 @@ func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasu
 	if !bytes.Equal(pattern, actual) {
 		return TensorMeasurement{}, errors.New("GET_TENSOR readback mismatch: native RPC tensor data was corrupted")
 	}
-	return TensorMeasurement{Device: device, Bytes: tensorBytes,
-		UploadMiBPerSecond: float64(tensorBytes) / (1 << 20) / uploadTime.Seconds(),
-		ReadbackMiBPerSecond: float64(tensorBytes) / (1 << 20) / readTime.Seconds()}, nil
+	result := TensorMeasurement{Device: device, Bytes: tensorBytes}
+	mib := float64(tensorBytes) / (1 << 20)
+	result.UploadMiBPerSecond = mib / uploadTime.Seconds()
+	result.ReadbackMiBPerSecond = mib / readTime.Seconds()
+	return result, nil
 }
 
 func rpcProbeSend(conn net.Conn, cmd byte, payload []byte) error {
