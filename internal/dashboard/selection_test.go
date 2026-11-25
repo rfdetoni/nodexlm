@@ -318,6 +318,7 @@ func TestPlacementBenchmarksRejectIncompatibleSamples(t *testing.T) {
 		Fingerprint: "current", TokensPerSecond: 10, MeasuredAt: now}
 	for _, mutate := range []func(*InferenceSample){
 		func(s *InferenceSample) { s.Kind = "live" },
+		func(s *InferenceSample) { s.Suspect = true },
 		func(s *InferenceSample) { s.RateBasis = "" },
 		func(s *InferenceSample) { s.Fingerprint = "" },
 		func(s *InferenceSample) { s.Fingerprint = "old" },
@@ -373,5 +374,34 @@ func TestChooseRPCRejectsMixedGuestRatesWithoutHostBenchmark(t *testing.T) {
 	got, err := m.chooseRPC(s, local.GGUFInfo{BlockCount: 40}, 3*gib, gib, guests)
 	if err != nil || len(got.Guests) != 1 || got.Guests[0].ID != "large" || got.Guests[0].Performance.TokensPerSecond != 0 {
 		t.Fatalf("mixed rate bases must fall back to memory: %+v %v", got, err)
+	}
+}
+
+func TestChooseRPCSuspectRateFallsBackUntilRemeasured(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	s := Settings{Model: "small.gguf", PlacementStrategy: "speed"}
+	fingerprint := placementTestFingerprint(t, m, s)
+	now := time.Now()
+	m.samples[s.Model] = InferenceSample{Model: s.Model, Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint, TokensPerSecond: 10, MeasuredAt: now}
+	key := s.Model + "@guest"
+	sample := InferenceSample{Model: key, Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint, TokensPerSecond: 100, MeasuredAt: now, Suspect: true}
+	m.samples[key] = sample
+	guests := []RPCGuest{{ID: "guest", CapacityBytes: 8 * gib}}
+	meta := local.GGUFInfo{BlockCount: 40}
+	got, err := m.chooseRPC(s, meta, 3*gib, 8*gib, guests)
+	if err != nil || len(got.Guests) != 0 || !strings.Contains(got.Reason, "medição suspeita") {
+		t.Fatalf("suspect rate changed placement: %+v %v", got, err)
+	}
+	sample.Suspect = false
+	sample.MeasuredAt = time.Now()
+	m.samples[key] = sample
+	got, err = m.chooseRPC(s, meta, 3*gib, 8*gib, guests)
+	if err != nil || len(got.Guests) != 1 || got.LocalLayers != 0 {
+		t.Fatalf("fresh controlled rate not admitted: %+v %v", got, err)
 	}
 }

@@ -24,7 +24,7 @@ func effectivePlacementStrategy(value string) string {
 func placementBenchmarks(samples []InferenceSample, fingerprint string, now time.Time) map[string]InferenceSample {
 	valid := make(map[string]InferenceSample)
 	for _, sample := range samples {
-		if fingerprint == "" || sample.Fingerprint != fingerprint || sample.Kind != "benchmark" ||
+		if fingerprint == "" || sample.Fingerprint != fingerprint || sample.Kind != "benchmark" || sample.Suspect ||
 			(sample.RateBasis != "native_decode" && sample.RateBasis != "end_to_end") ||
 			sample.TokensPerSecond <= 0 || math.IsNaN(sample.TokensPerSecond) || math.IsInf(sample.TokensPerSecond, 0) ||
 			sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour {
@@ -38,8 +38,29 @@ func placementBenchmarks(samples []InferenceSample, fingerprint string, now time
 }
 
 // chooseRPC is used both for preview and actual native model loading.
-func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest) (clusterplan.Selection, error) {
-	samples := placementBenchmarks(m.InferenceSamples(), m.benchmarkSignature(s, s.Model), time.Now())
+func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest) (result clusterplan.Selection, resultErr error) {
+	allSamples := m.InferenceSamples()
+	fingerprint := m.benchmarkSignature(s, s.Model)
+	samples := placementBenchmarks(allSamples, fingerprint, time.Now())
+	// A suspect aggregate cluster rate is not a per-node placement rate.
+	for _, sample := range allSamples {
+		if !sample.Suspect || sample.Fingerprint != fingerprint || sample.Kind != "benchmark" {
+			continue
+		}
+		relevant := sample.Model == s.Model
+		for _, guest := range guests {
+			relevant = relevant || sample.Model == s.Model+"@"+guest.ID
+		}
+		if relevant {
+			clear(samples)
+			defer func() {
+				if resultErr == nil {
+					result.Reason += "; medição suspeita; re-medir benchmark controlado (sem ponderação por tokens/s)"
+				}
+			}()
+			break
+		}
+	}
 	hostSample := samples[s.Model]
 	hostSpeed := hostSample.TokensPerSecond
 	basis := hostSample.RateBasis

@@ -21,7 +21,7 @@ de 24 horas expiram; ausência de medição não significa que o nó seja lento.
 Para ponderar camadas, benchmarks de Host e Guest precisam ser controlados,
 recentes (menos de 24 horas), do mesmo modelo e fingerprint de opções, e da
 mesma base de taxa (decode nativo ou ponta a ponta). Sem comparabilidade,
-o split permanece proporcional à memória. Com o opt-in explícito no Host
+o split permanece proporcional à memória. Uma medição suspeita de Host/Guest desativa a ponderação por tokens/s para a decisão até nova medição controlada; a amostra de cluster permanece visível para diagnóstico. Com o opt-in explícito no Host
 `NODEXLM_RPC_COST_PLACEMENT=1` (desabilitado por padrão) no modo velocidade,
 quando todos os nós selecionados possuem RTT medido, o planner compara prefixos ranqueados
 e Guests individuais por custo serial estimado: tempo por camada derivado
