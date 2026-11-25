@@ -52,8 +52,11 @@ NODEXLM_SMOLMAX_MODE=stream NODEXLM_SMOLMAX_RESIDENT_MB=512 \
   nodexlm host --llama-bin /opt/smolmax/llama-server
 ```
 
-Para testar diretamente o streaming de pesos mapeados, use `--no-repack`
-no servidor nativo. Sem mapeamento ou com todos os pesos repacked, a
+O launcher gerenciado usa `--no-repack` nos perfis de paginação/streaming
+quando não há cache de repacking explícito. Para uso nativo direto,
+configure a mesma flag. O pager e streaming exigem páginas OS de 4 KiB,
+um slot, sem speculative decoding e load mode padrão. Sem mapeamento ou
+com todos os pesos repacked, a
 existência de uma zona de streaming não é garantida. Use
 `NODEXLM_SMOLMAX_VERIFY=1` para diagnóstico, não para benchmark de latência.
 O cache opcional `NODEXLM_SMOLMAX_REPACK_CACHE` precisa ser um caminho
