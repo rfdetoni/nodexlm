@@ -32,6 +32,68 @@ const consoleViews=[
  {id:'decisions',name:'Decisões',description:'Perguntas tipadas e probabilidades via System One.'},
  {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'}
 ];
+
+// High-frequency sampling is request-driven: only while the inference
+// workspace is visible and the server has an admitted generation.
+let activityTimer=null,activityRequest=null,topologySnapshot=null,activityHistory=[];
+function activityVisible(){return !!token&&!document.hidden&&!$('app').hidden&&!$('view-inference').hidden}
+function stopActivity(){if(activityTimer!==null)clearTimeout(activityTimer);activityTimer=null;if(activityRequest)activityRequest.abort();activityRequest=null;activityHistory=[]}
+function renderTopology(activity=null){
+ const area=$('loadedTopology'),topology=topologySnapshot;
+ area.replaceChildren();
+ if(!topology?.loaded){area.append(el('p','muted','Nenhum modelo carregado.'));return;}
+ area.append(el('p','',topology.model+' · '+topology.blocks+' blocos'+(topology.aggregated?' · slots agregados':'')),el('p','muted',topology.notice));
+ const bar=el('div','loaded-split');bar.setAttribute('role','img');bar.setAttribute('aria-label','Participação estimada das camadas por nó');
+ for(const node of topology.nodes){
+  if(node.layers>0){const segment=el('progress','split-segment'+(node.node_id==='host'?' host-segment':''));segment.max=Math.max(1,topology.blocks);segment.value=node.layers;segment.setAttribute('aria-label',node.name+': '+node.layers+' camadas');bar.append(segment);}
+  const live=activity?.nodes?.find(n=>n.node_id===node.node_id);
+  const active=node.node_id==='host'?activity?.host_inferred:live?.active;
+  const range=node.first_block>=0?'blk.'+node.first_block+'–'+node.last_block:'sem blocos';
+  const text=node.name+' · '+range+' · '+node.layers+' camadas · '+node.mode+(node.devices?.length?' ('+node.devices.join(', ')+')':'')+' · '+fmt(node.weight_bytes)+' de pesos ('+node.weight_method+')'+(node.estimated_kv_bytes!=null?' · KV ~'+fmt(node.estimated_kv_bytes):'')+' · RAM/VRAM: '+fmt(node.ram_budget_bytes)+' / '+fmt(node.vram_budget_bytes);
+  area.append(el('p',active?'topology-active':'muted',text+(active?(node.node_id==='host'?' · Host (inferido)':' · tráfego recente'):'')));
+ }
+ area.prepend(bar);
+}
+function renderActivity(data){
+ const area=$('inferenceActivity');area.replaceChildren();
+ if(!data?.in_flight){area.append(el('p','muted','Sem geração em andamento.'));renderTopology();return;}
+ area.append(el('p','',data.in_flight+' geração(ões) · fase '+data.phase),el('p','muted',data.notice+' Resolução nominal '+data.sampling_ms+' ms.'));
+ const active=[];
+ for(const node of data.nodes||[]){
+  const name=topologySnapshot?.nodes?.find(n=>n.node_id===node.node_id)?.name||node.node_id;
+  if(node.active)active.push(name);
+  area.append(el('p','muted',name+': '+(node.available?node.mib_per_second_window.toFixed(2)+' MiB/s · '+node.share_percent_window.toFixed(1)+'% dos bytes RPC na janela':'sem delta comparável')));
+ }
+ if(data.host_inferred)active.push('Host (inferido)');
+ activityHistory.push(active.length?active.join(' + '):'sem amostra comparável');activityHistory=activityHistory.slice(-10);
+ area.append(el('p','muted','Últimos intervalos: '+activityHistory.join(' | ')));
+ renderTopology(data);
+}
+async function pollActivity(){
+ activityTimer=null;
+ if(!activityVisible()||activityRequest||!latestStatus?.runtime?.in_flight)return;
+ const controller=new AbortController();activityRequest=controller;
+ try{
+  const response=await fetch('/api/inference/activity',{headers:{Authorization:'Bearer '+token},cache:'no-store',signal:controller.signal});
+  if(!response.ok)throw Error('HTTP '+response.status);
+  const data=await response.json();
+  if(!activityVisible()||controller.signal.aborted)return;
+  renderActivity(data);
+  if(!data.in_flight){latestStatus.runtime.in_flight=0;activityHistory=[];return;}
+ }catch(error){if(!controller.signal.aborted)$('inferenceActivity').textContent='Atividade indisponível: '+error.message;}
+ finally{if(activityRequest===controller)activityRequest=null;}
+ if(activityVisible()&&latestStatus?.runtime?.in_flight&&!controller.signal.aborted)activityTimer=setTimeout(pollActivity,200);
+}
+async function refreshTopology(){
+ if(!activityVisible()){stopActivity();return;}
+ const data=await api('/api/inference/topology');
+ if(!activityVisible())return;
+ topologySnapshot=data;renderTopology();
+ if(latestStatus?.runtime?.in_flight){if(activityTimer===null&&!activityRequest)pollActivity();}
+ else {stopActivity();renderActivity(null);}
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopActivity();else if(activityVisible())guard(refresh);});
+
 function activateConsoleView(view){
  const chosen=consoleViews.find(item=>item.id===view)||consoleViews[0];
  for(const item of consoleViews){
@@ -43,6 +105,7 @@ function activateConsoleView(view){
  $('workspaceDescription').textContent=chosen.description;
  $('consoleMain').scrollTop=0;
  try{sessionStorage.setItem('nodexlm-console-view',chosen.id)}catch{}
+ if(chosen.id==='inference' && token)guard(refresh);else stopActivity();
  if(chosen.id==='observability' && token)guard(refreshObservations);
  if(chosen.id==='decisions' && token)guard(refreshDecisionWorkers);
 }
@@ -368,6 +431,7 @@ async function refresh(){
  renderResidentModels(resident);
  $('residentCount').textContent=resident.length;
  latestStatus=status;localModels=models;
+ if(activityVisible())await refreshTopology();else stopActivity();
  renderLoadStatus(status);
  await updateLoadingPlan(status);
  renderNodeResources(cluster.devices);
@@ -449,7 +513,7 @@ async function sendChat(){
  const prompt=$('prompt').value.trim();if(!prompt)return;
  const model=$('chatModel').value||latestStatus?.runtime?.model;if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
- const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let done=false;let reader;
+ const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let rpcTraffic=null;let done=false;let reader;
  renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');const details=el('details','reasoning-details');const summary=el('summary','','Raciocínio do modelo');const thoughts=el('p','reasoning-content');details.append(summary,thoughts);details.hidden=true;output.append(details,reply);
  try{
   const effort=$('chatEffort').value;
@@ -474,6 +538,7 @@ async function sendChat(){
     if(!data)continue;if(data==='[DONE]'){done=true;break}
     const event=JSON.parse(data);if(event.error)throw Error(event.error.message||event.error);
     if(event.usage)usage=event.usage;
+    if(event.nodexlm_rpc_traffic)rpcTraffic=event.nodexlm_rpc_traffic;
     const timing=event.timings;
     if(Number(timing?.predicted_ms)>0&&Number(timing?.predicted_n)>0){
      nativeDecode=1000*Number(timing.predicted_n)/Number(timing.predicted_ms);
@@ -499,6 +564,7 @@ async function sendChat(){
   if(nativeDecode!==null)metrics+=' · Decode nativo: '+nativeDecode.toFixed(1)+' t/s';
   else if(estimatedRate>0)metrics+=' · Geração após 1º evento (estimativa): '+estimatedRate.toFixed(1)+' t/s';
   if(usage?.completion_tokens_details?.reasoning_tokens)metrics+=' · Thinking: '+usage.completion_tokens_details.reasoning_tokens+' tokens';
+  if(rpcTraffic?.nodes?.length)metrics+=' · RPC nesta resposta: '+rpcTraffic.nodes.map(n=>n.name+': '+fmt(n.bytes)).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
   $('chatMetrics').textContent=metrics;
  }catch(error){
   const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;

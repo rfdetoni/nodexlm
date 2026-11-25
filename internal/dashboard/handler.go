@@ -112,6 +112,12 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, report)
 	}))
+	mux.HandleFunc("GET /api/inference/topology", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, d.Manager.InferenceTopology())
+	}))
+	mux.HandleFunc("GET /api/inference/activity", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, d.Manager.InferenceActivity())
+	}))
 	mux.HandleFunc("GET /api/observability", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"inference": d.Manager.InferenceSamples(), "nodes": d.Cluster.Observations()})
 	}))

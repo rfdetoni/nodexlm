@@ -27,14 +27,14 @@ func (m *Manager) inferenceTimeout(model string) time.Duration {
 }
 
 // Admission is cancellable and tied to the loaded engine generation.
-func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, generate func(context.Context, *local.Managed, protocol.ChatRequest) error) error {
+func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, generate func(context.Context, *local.Managed, protocol.ChatRequest) error, onTraffic ...func(*InferenceRPCTraffic)) error {
 	m.mu.Lock()
 	child := m.residents[req.Model]
 	engine, admission := m.engine, m.admission
 	m.mu.Unlock()
 	if child != nil {
 		start := time.Now()
-		err := child.withGeneration(ctx, req, generate)
+		err := child.withGeneration(ctx, req, generate, onTraffic...)
 		m.recordGeneration(time.Since(start), err)
 		return err
 	}
@@ -61,6 +61,14 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 		m.generations = make(map[uint64]context.CancelFunc)
 	}
 	m.generations[id] = cancel
+	if len(m.generations) == 1 {
+		m.activityWindow = nil
+	}
+	if m.generationPhases == nil {
+		m.generationPhases = make(map[uint64]string)
+	}
+	m.generationPhases[id] = "unknown"
+	generationCtx = context.WithValue(generationCtx, generationActivityKey{}, generationActivity{manager: m, id: id})
 	req.Model = m.current
 	provider := m.rpcStatsProvider
 	nodes := append([]string(nil), m.loadRPCNodes...)
@@ -68,6 +76,10 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	defer func() {
 		m.mu.Lock()
 		delete(m.generations, id)
+		delete(m.generationPhases, id)
+		if len(m.generations) == 0 {
+			m.activityWindow = nil
+		}
 		m.mu.Unlock()
 		cancel()
 	}()
@@ -76,7 +88,10 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 		baseline := provider()
 		err := generate(generationCtx, engine, req)
 		if err == nil {
-			m.recordRPCTraffic(req.Model, start, nodes, baseline, provider())
+			traffic := m.recordRPCTraffic(req.Model, start, nodes, baseline, provider())
+			for _, callback := range onTraffic {
+				callback(traffic)
+			}
 		}
 		m.recordGeneration(time.Since(start), err)
 		return err
@@ -85,14 +100,35 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	m.recordGeneration(time.Since(start), err)
 	return err
 }
-func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, emit func([]byte) error) error {
+type generationActivityKey struct{}
+type generationActivity struct {
+	manager *Manager
+	id      uint64
+}
+
+func setGenerationPhase(ctx context.Context, phase string) {
+	if activity, ok := ctx.Value(generationActivityKey{}).(generationActivity); ok {
+		activity.manager.mu.Lock()
+		if _, exists := activity.manager.generations[activity.id]; exists {
+			activity.manager.generationPhases[activity.id] = phase
+		}
+		activity.manager.mu.Unlock()
+	}
+}
+
+func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, emit func([]byte) error, onTraffic ...func(*InferenceRPCTraffic)) error {
 	return m.withGeneration(ctx, req, func(ctx context.Context, engine *local.Managed, req protocol.ChatRequest) error {
 		start := time.Now()
 		var usage []byte
 		latency := streamLatency{start: start}
+		setGenerationPhase(ctx, "prefill")
 		err := engine.GenerateStream(ctx, req, func(frame []byte) error {
 			payload := bytes.TrimSpace(bytes.TrimPrefix(frame, []byte("data: ")))
+			first := latency.first.IsZero()
 			latency.observe(payload, time.Now())
+			if first && !latency.first.IsZero() {
+				setGenerationPhase(ctx, "decode")
+			}
 			if bytes.Contains(payload, []byte(`"usage"`)) {
 				usage = append([]byte(nil), payload...)
 			}
@@ -102,7 +138,7 @@ func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, 
 			m.recordInferenceWithLatency(req.Model, usage, time.Since(start), latency)
 		}
 		return err
-	})
+	}, onTraffic...)
 }
 func (m *Manager) Complete(ctx context.Context, req protocol.ChatRequest) (json.RawMessage, error) {
 	var raw json.RawMessage
@@ -151,7 +187,9 @@ func (d *Dashboard) chat(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if req.Stream {
 		started := false
-		err := d.Manager.GenerateStream(ctx, req, func(frame []byte) error {
+		var traffic *InferenceRPCTraffic
+		var doneFrame []byte
+		emit := func(frame []byte) error {
 			if !started {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("X-Accel-Buffering", "no")
@@ -162,7 +200,24 @@ func (d *Dashboard) chat(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			return http.NewResponseController(w).Flush()
-		})
+		}
+		err := d.Manager.GenerateStream(ctx, req, func(frame []byte) error {
+			if r.URL.Path == "/api/chat" && bytes.Equal(bytes.TrimSpace(frame), []byte("data: [DONE]")) {
+				doneFrame = append([]byte(nil), frame...)
+				return nil
+			}
+			return emit(frame)
+		}, func(value *InferenceRPCTraffic) { traffic = value })
+		if err == nil && len(doneFrame) > 0 {
+			if traffic != nil {
+				if raw, marshalErr := json.Marshal(map[string]any{"nodexlm_rpc_traffic": traffic}); marshalErr == nil {
+					err = emit(append(append([]byte("data: "), raw...), '\n', '\n'))
+				}
+			}
+			if err == nil {
+				err = emit(doneFrame)
+			}
+		}
 		if err != nil && ctx.Err() == nil {
 			if !started {
 				failure(w, 502, err)

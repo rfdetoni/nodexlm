@@ -82,3 +82,5 @@ O contador de `última comunicação` é um heartbeat, não a latência da rede.
 Dispositivos offline não exibem valores antigos como leituras atuais.
 
 Durante o carregamento, **Cancelar carregamento** solicita o encerramento real do processo nativo pela API administrativa. O painel mantém estado cancelando até o cleanup; arquivos GGUF permanecem intactos. Não cancela benchmark/autotune/microbenchmark. Ctrl+C no CLI cancela o contexto do serviço.
+
+A área Topologia carregada usa os argumentos do runtime que efetivamente iniciou, com faixas/bytes estimados por camadas (metadados GGUF quando disponíveis). Atividade é amostrada a cada 200 ms, por demanda, somente no workspace Inferência visível e quando há geração admitida; janela de 2 s, participação de bytes RPC (não utilização de GPU). Host inferido apenas sem delta remoto comparável; fase desconhecida em fluxos sem primeiro evento observado. O Chat mostra bytes por Guest da resposta quando disponíveis. Não é rastreamento por token.

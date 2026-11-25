@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/catalog"
+	"github.com/rfdetoni/nodexlm/internal/clusterplan"
 	"github.com/rfdetoni/nodexlm/internal/hardware"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
@@ -93,6 +94,9 @@ type Manager struct {
 	microbenchAttempts    map[string]time.Time
 	microbenchDrift       int
 	loadFingerprint       string
+	loadedTopology        *inferenceTopology
+	activityWindow        []activityObservation
+	generationPhases      map[uint64]string
 	microbenchNode        string
 	generationTokens      uint64
 	generationBuckets     [8]uint64
@@ -189,7 +193,7 @@ func (m *Manager) State() map[string]any {
 	if phase == "" {
 		phase = "idle"
 	}
-	state := map[string]any{"backend": local.EffectiveBackend(m.settings.Backend), "model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError}
+	state := map[string]any{"backend": local.EffectiveBackend(m.settings.Backend), "model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError, "in_flight": len(m.generations)}
 	if m.nativeSystemInfo != "" {
 		state["native_system_info"] = m.nativeSystemInfo
 	}
@@ -523,6 +527,10 @@ func (m *Manager) load(ctx context.Context) error {
 	localLayers := 0
 	var devicePlacement RPCDevicePlacement
 	var modelBlocks uint32
+	var loadedMeta local.GGUFInfo
+	var loadedSize, loadedBudget uint64
+	var loadedSelection clusterplan.Selection
+	var loadedGuests []RPCGuest
 	if s.Distributed {
 		m.setPhase("selecting_guests")
 		// The Host can still load locally if there are no RPC Guests,
@@ -554,6 +562,8 @@ func (m *Manager) load(ctx context.Context) error {
 		localLayers = selection.LocalLayers
 		devicePlacement = planRPCDevices(selection, guests, model, s, uint64(size))
 		modelBlocks = model.BlockCount
+		loadedMeta, loadedSize, loadedBudget = model, uint64(size), hostCapacity
+		loadedSelection, loadedGuests = selection, guests
 		selectedIDs := make([]string, 0, len(selection.Guests))
 		for _, candidate := range selection.Guests {
 			selectedIDs = append(selectedIDs, candidate.ID)
@@ -605,6 +615,7 @@ func (m *Manager) load(ctx context.Context) error {
 		if budgetErr != nil {
 			return budgetErr
 		}
+		loadedMeta, loadedSize, loadedBudget = meta, uint64(size), hostCapacity
 		if inspectErr = validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
 			return inspectErr
 		}
@@ -665,6 +676,8 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
+	m.loadedTopology = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
+	m.activityWindow = nil
 	m.loadFingerprint = loadFingerprint
 	m.nativeSystemInfo = systemInfo
 	m.current = s.Model
@@ -691,6 +704,8 @@ func (m *Manager) Unload() {
 	m.mu.Lock()
 	engine := m.engine
 	m.engine = nil
+	m.loadedTopology = nil
+	m.activityWindow = nil
 	m.nativeSystemInfo = ""
 	m.current = ""
 	m.loadPhase = "idle"
