@@ -29,7 +29,7 @@ def checked_model(path, expected):
     return path
 
 
-def generate(server, model, profile=None):
+def generate(server, model, profile=None, no_repack=False):
     # Ignore inherited experimental switches: validate a reproducible profile.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GGML_", "LLAMA_", "NODEXLM_SMOLMAX_"))}
     env.update(profile or {})
@@ -44,7 +44,7 @@ def generate(server, model, profile=None):
         with log.open("wb") as out:
             proc = subprocess.Popen(
                 [str(server), "-m", str(model), "--host", "127.0.0.1", "--port", str(port),
-                 "--parallel", "1", "-c", "256", "-t", "2", "-ngl", "0"],
+                 "--parallel", "1", "-c", "256", "-t", "2", "-ngl", "0"] + (["--no-repack"] if no_repack else []),
                 env=env, stdout=out, stderr=out)
             try:
                 deadline = time.monotonic() + 180
@@ -104,14 +104,14 @@ def main():
         if not args.stream_sha256:
             parser.error("--stream-sha256 required")
         dense = checked_model(args.stream_model, args.stream_sha256)
-        normal, _ = generate(candidate, dense)
+        normal, _ = generate(candidate, dense, no_repack=True)
         streamed, log = generate(candidate, dense, {
             "LLAMA_STREAM_RESIDENT_MB": "64",
             "GGML_STREAM_WINDOW_MB": "32",
             "GGML_STREAM_READERS": "2",
             "GGML_STREAM_VERIFY": "1",
             "GGML_STREAM_STATS": "1",
-        })
+        }, no_repack=True)
         zones = re.findall(r"([0-9.]+) MB in stream zones", log)
         if not any(float(x) > 0 for x in zones):
             raise RuntimeError("streaming did not allocate a real stream zone")
