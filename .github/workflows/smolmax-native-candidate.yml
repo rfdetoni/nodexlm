@@ -1,8 +1,9 @@
 name: Smolmax ARM64 native candidate
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
     paths:
-      - 'experiments/smolmax/**'
+      - 'experiments/smolmax/test-single-row.cpp'
       - 'internal/llamaruntime/patches/smolmax-single-row.patch'
       - '.github/workflows/smolmax-native-candidate.yml'
   workflow_dispatch:
@@ -13,6 +14,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   arm64:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
