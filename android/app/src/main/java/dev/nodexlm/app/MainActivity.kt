@@ -265,6 +265,7 @@ class MainActivity : Activity() {
         worker.addView(gpuStatus)
         thread(name="nodexlm-vulkan-probe") {
             val report = try {
+                NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
                 val devices = org.json.JSONObject(NativeRpc.inspect()).optJSONArray("gpus")
                 if(devices == null || devices.length() == 0) getString(R.string.gpu_unavailable)
                 else buildString {

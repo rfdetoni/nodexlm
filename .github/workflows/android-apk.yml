@@ -274,6 +274,13 @@ jobs:
               grep -Fqx "lib/${abi}/${lib}" <<< "$apk_entries" || { echo "::error::Missing $abi/$lib"; exit 1; }
             done
           done
+          for lib in libggml.so libggml-base.so libllama.so libggml-vulkan.so \
+            libggml-cpu-android_armv8.0_1.so libggml-cpu-android_armv8.2_1.so \
+            libggml-cpu-android_armv8.2_2.so libggml-cpu-android_armv8.6_1.so \
+            libggml-cpu-android_armv9.0_1.so libggml-cpu-android_armv9.2_1.so \
+            libggml-cpu-android_armv9.2_2.so; do
+            grep -Fqx "lib/arm64-v8a/${lib}" <<< "$apk_entries" || { echo "::error::Missing arm64-v8a/${lib}"; exit 1; }
+          done
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep -Fq "sdkVersion:'29'"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify "$apk"
           bash scripts/verify-android-pages.sh "$apk"
@@ -308,6 +315,7 @@ jobs:
             -PnodexVersionName='${{ steps.version.outputs.name }}' \
             -PnodexVersionCode='${{ steps.version.outputs.code }}' \
             -PnodexRustRpc='true' \
+            -PnodexKleidiAi='true' \
             :app:assembleRelease
 
       - name: Verify permanent APK identity and package update
@@ -322,6 +330,13 @@ jobs:
             for lib in libnodexlm.so libnodexlm_rpc.so libdjl_tokenizer.so libonnxruntime.so libonnxruntime4j_jni.so; do
               grep -Fqx "lib/${abi}/${lib}" <<< "$apk_entries" || { echo "::error::Release APK is missing ${abi}/${lib}"; exit 1; }
             done
+          done
+          for lib in libggml.so libggml-base.so libllama.so libggml-vulkan.so \
+            libggml-cpu-android_armv8.0_1.so libggml-cpu-android_armv8.2_1.so \
+            libggml-cpu-android_armv8.2_2.so libggml-cpu-android_armv8.6_1.so \
+            libggml-cpu-android_armv9.0_1.so libggml-cpu-android_armv9.2_1.so \
+            libggml-cpu-android_armv9.2_2.so; do
+            grep -Fqx "lib/arm64-v8a/${lib}" <<< "$apk_entries" || { echo "::error::Release APK is missing arm64-v8a/${lib}"; exit 1; }
           done
           tools="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS"
           badging="$("$tools/aapt" dump badging "$apk")"
