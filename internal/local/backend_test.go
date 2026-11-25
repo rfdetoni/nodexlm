@@ -118,3 +118,23 @@ func TestMistralModelNormalizationPreservesTools(t *testing.T) {
 		t.Fatal("llama.cpp request must remain unchanged")
 	}
 }
+
+func TestSmolmaxManagedMappedWeights(t *testing.T) {
+	t.Setenv("NODEXLM_SMOLMAX_MODE", "stream")
+	t.Setenv("NODEXLM_SMOLMAX_REPACK_CACHE", "")
+	m := &Managed{ModelPath: "/tmp/model.gguf", Alias: "demo", GPULayers: "0"}
+	spec, err := m.backendLaunch(12345, 1024, 2, "0", GGUFInfo{})
+	if os.Getpagesize() != 4096 {
+		if err == nil {
+			t.Fatal("accepted unsupported page size")
+		}
+		return
+	}
+	if err != nil || !strings.Contains(strings.Join(spec.Args, " "), "--no-repack") {
+		t.Fatalf("mapped mode: %v %v", spec.Args, err)
+	}
+	m.ParallelSlots = 2
+	if _, err := m.backendLaunch(12345, 1024, 2, "0", GGUFInfo{}); err == nil {
+		t.Fatal("accepted unvalidated parallel paging")
+	}
+}
