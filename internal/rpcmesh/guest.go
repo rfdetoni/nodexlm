@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -88,7 +89,12 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 	}
 	req.Header.Set("Authorization", "Bearer "+client.Token)
 	req.Header.Set("X-Nodex-Node", client.NodeID)
-	req.Header.Set("X-Nodex-RPC-Capabilities", "directional-v1")
+	compression := os.Getenv("NODEXLM_RPC_COMPRESSION") == "1"
+	caps := "directional-v1"
+	if compression {
+		caps += ",deflate-v1"
+	}
+	req.Header.Set("X-Nodex-RPC-Capabilities", caps)
 	// A stalled Host must not consume a tunnel slot indefinitely during CONNECT.
 	if err = secured.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return err
@@ -130,7 +136,7 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 		}
 		return nil
 	}
-	if marker != 1 {
+	if marker != 1 && (marker != compressedNativeMarker || !compression) {
 		return errors.New("invalid RPC relay handshake")
 	}
 	network, address := "tcp", rpcAddress
@@ -143,7 +149,11 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 		return fmt.Errorf("local rpc-server: %w", err)
 	}
 	defer native.Close()
-	bridge(native, &buffered{Conn: secured, reader: reader})
+	var stream net.Conn = &buffered{Conn: secured, reader: reader}
+	if marker == compressedNativeMarker {
+		stream = &framedConn{Conn: stream}
+	}
+	bridge(native, stream)
 	return nil
 }
 
