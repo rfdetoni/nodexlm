@@ -15,10 +15,24 @@ REVISION = "internal/llamaruntime/revision.json"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--android", action="store_true")
+    parser.add_argument("--android-pr", action="store_true", help="Check all native APK inputs for a PR")
     args = parser.parse_args()
     patch_paths = ["internal/llamaruntime/patches"]
-    if args.android:
+    if args.android or args.android_pr:
         patch_paths = ["internal/llamaruntime/patches/unix-rpc.patch", "internal/llamaruntime/patches/arm32-rpc-wire.patch"]
+    if args.android_pr:
+        patch_paths += [
+            "android/app/src/main/cpp/",
+            "android/rpc-rust/",
+            ":(glob)android/**/build.gradle.kts",
+            "android/settings.gradle.kts",
+            "android/gradle.properties",
+            "scripts/apply-rpc-patch.cmake",
+            "scripts/verify-android-pages.sh",
+            "scripts/fetch-android-tokenizer.py",
+            "scripts/native-revision-changed.py",
+            ".github/workflows/android-apk.yml",
+        ]
     current = json.loads(pathlib.Path(REVISION).read_text(encoding="utf-8"))
     try:
         old = json.loads(subprocess.check_output(["git", "show", "HEAD^:" + REVISION], text=True))

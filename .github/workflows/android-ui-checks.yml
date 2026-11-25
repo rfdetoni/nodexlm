@@ -4,6 +4,7 @@ name: Android UI checks
 # llama.cpp and packaging both ABIs for a UI-only change.
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
     paths:
       - 'android/app/src/main/java/**/*.kt'
       - 'android/app/src/test/**'
@@ -25,6 +26,7 @@ concurrency:
 
 jobs:
   android-ui:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -37,9 +39,8 @@ jobs:
         run: |
           set -euo pipefail
           skip=false
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]] && git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
-            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/android-changes"
-            if grep -Eq '^(android/app/src/main/cpp/|android/rpc-rust/|android/([^/]+/)*build\.gradle\.kts$|android/settings\.gradle\.kts$|android/gradle\.properties$|internal/llamaruntime/(revision\.json|patches/(unix-rpc|arm32-rpc-wire)\.patch)$|scripts/(apply-rpc-patch\.cmake|verify-android-pages\.sh|fetch-android-tokenizer\.py)$|\.github/workflows/android-apk\.yml$)' "$RUNNER_TEMP/android-changes"; then skip=true; fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            skip="$(python3 scripts/native-revision-changed.py --android-pr)"
           fi
           echo "full_apk=$skip" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6

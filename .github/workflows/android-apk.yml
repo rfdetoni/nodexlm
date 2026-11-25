@@ -7,6 +7,7 @@ name: Android APK
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
     paths:
       - 'android/app/src/main/cpp/**'
       - 'android/rpc-rust/**'
@@ -19,6 +20,7 @@ on:
       - 'scripts/apply-rpc-patch.cmake'
       - 'scripts/verify-android-pages.sh'
       - 'scripts/fetch-android-tokenizer.py'
+      - 'scripts/native-revision-changed.py'
       - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
@@ -30,6 +32,7 @@ on:
       - 'scripts/apply-rpc-patch.cmake'
       - 'scripts/verify-android-pages.sh'
       - 'scripts/fetch-android-tokenizer.py'
+      - 'scripts/native-revision-changed.py'
       - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
@@ -43,6 +46,7 @@ permissions:
 
 jobs:
   detect:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.native.outputs.changed }}
@@ -52,11 +56,15 @@ jobs:
       - id: native
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" == refs/tags/* ]]; then
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            native="$(python3 scripts/native-revision-changed.py --android-pr)"
+            echo "changed=$native" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" == refs/tags/* ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             native="$(python3 scripts/native-revision-changed.py --android)"
-            app_changes="$(git diff --name-only HEAD^ HEAD -- android/ internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/arm32-rpc-wire.patch scripts/apply-rpc-patch.cmake scripts/verify-android-pages.sh scripts/fetch-android-tokenizer.py .github/workflows/android-apk.yml)"
+            app_changes="$(git diff --name-only HEAD^ HEAD -- android/ internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/arm32-rpc-wire.patch scripts/apply-rpc-patch.cmake scripts/verify-android-pages.sh scripts/fetch-android-tokenizer.py scripts/native-revision-changed.py .github/workflows/android-apk.yml)"
             if [[ "$native" == "true" || -n "$app_changes" ]]; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
               {
