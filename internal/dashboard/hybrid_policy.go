@@ -106,8 +106,12 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		if i != len(selection.Guests)-1 {
 			layers = int(uint64(remainingLayers) * chosen.CapacityBytes / remainingBudget)
 		}
-		if len(selection.GuestLayers) == len(selection.Guests) {
+		detailed := len(selection.GuestLayers) == len(selection.Guests)
+		if detailed {
 			layers = selection.GuestLayers[i]
+			if layers <= 0 || layers > remainingLayers || len(meta.BlockBytes) != int(meta.BlockCount) {
+				return RPCDevicePlacement{}
+			}
 		}
 		start := int(meta.BlockCount) - remainingLayers
 		remainingLayers -= layers
@@ -118,8 +122,62 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 			return RPCDevicePlacement{}
 		}
 		weight := modelBytes * uint64(layers) / uint64(meta.BlockCount)
-		if len(selection.GuestLayers) == len(selection.Guests) {
-			weight = blockWeight(meta, start, layers)
+		if detailed {
+			// Use real per-layer weights plus context, with the same 115% margin.
+			fits := func(offset, count int, budget uint64) bool {
+				w := blockWeight(meta, offset, count)
+				if w > ^uint64(0)/115 {
+					return false
+				}
+				need := w * 115 / 100
+				if transient != nil {
+					if *transient > ^uint64(0)/uint64(count) {
+						return false
+					}
+					kv := *transient * uint64(count) / uint64(meta.BlockCount)
+					if kv > ^uint64(0)-need {
+						return false
+					}
+					need += kv
+				}
+				return need <= budget
+			}
+			first := "RPC" + fmt.Sprint(rpcIndex)
+			switch {
+			case guest.RPCDeviceKinds[0] == "cpu":
+				if !fits(start, layers, guest.RAMBudgetBytes) {
+					return RPCDevicePlacement{}
+				}
+				result.Devices = append(result.Devices, first)
+				result.Split = append(result.Split, uint64(layers))
+				result.Modes[guest.ID] = "ram"
+			case fits(start, layers, guest.GPUBudgetBytes):
+				result.Devices = append(result.Devices, first)
+				result.Split = append(result.Split, uint64(layers))
+				result.Modes[guest.ID] = "gpu"
+			case len(guest.RPCDeviceKinds) == 2:
+				gpuLayers := 0
+				for gpuLayers < layers-1 && fits(start, gpuLayers+1, guest.GPUBudgetBytes) {
+					gpuLayers++
+				}
+				if !fits(start+gpuLayers, layers-gpuLayers, guest.RAMBudgetBytes) {
+					return RPCDevicePlacement{}
+				}
+				if gpuLayers > 0 {
+					result.Devices = append(result.Devices, first)
+					result.Split = append(result.Split, uint64(gpuLayers))
+				}
+				result.Devices = append(result.Devices, "RPC"+fmt.Sprint(rpcIndex+1))
+				result.Split = append(result.Split, uint64(layers-gpuLayers))
+				result.Modes[guest.ID] = "ram"
+				if gpuLayers > 0 {
+					result.Modes[guest.ID] = "gpu+ram"
+				}
+			default:
+				return RPCDevicePlacement{}
+			}
+			rpcIndex += len(guest.RPCDeviceKinds)
+			continue
 		}
 		if weight > ^uint64(0)/105 {
 			return RPCDevicePlacement{}
@@ -168,22 +226,6 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 			result.Devices = append(result.Devices, first, "RPC"+fmt.Sprint(rpcIndex+1))
 			result.Split = append(result.Split, gpuMiB, remainingMiB)
 			result.Modes[guest.ID] = "gpu+ram"
-		}
-		if len(selection.GuestLayers) == len(selection.Guests) {
-			// Tensor split expresses layer proportions, not physical bytes.
-			n := len(result.Split)
-			if result.Modes[guest.ID] == "gpu+ram" {
-				gpuLayers := 0
-				for gpuLayers < layers-1 && blockWeight(meta, start, gpuLayers+1)*115/100 <= guest.GPUBudgetBytes {
-					gpuLayers++
-				}
-				if gpuLayers == 0 || blockWeight(meta, start+gpuLayers, layers-gpuLayers)*115/100 > guest.RAMBudgetBytes {
-					return RPCDevicePlacement{}
-				}
-				result.Split[n-2], result.Split[n-1] = uint64(gpuLayers), uint64(layers-gpuLayers)
-			} else {
-				result.Split[n-1] = uint64(layers)
-			}
 		}
 		rpcIndex += len(guest.RPCDeviceKinds)
 	}
