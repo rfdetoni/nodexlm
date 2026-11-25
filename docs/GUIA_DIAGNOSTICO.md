@@ -295,3 +295,6 @@ de pesos ou desempenho de inferência.
 Se um Guest Linux receber HTTP **401/403** ao abrir o túnel, as retentativas encerram e o CLI informa que é necessário novo pareamento (`nodexlm guest --rejoin` com um novo código autorizado). O token inválido não é registrado nos logs.
 
 Em HTTP **503**, o Host pode estar com o limite de túneis ocupado ou o nó pode estar em `draining`. O cliente faz retentativas com jitter para não sincronizar oito conexões simultâneas, chegando a no máximo 30 segundos de atraso base por 503. Falhas de rede ordinárias mantêm o limite de 10 segundos. O Host ainda pode encerrar streams ativos quando um Guest deixar de responder; não existe migração transparente da sessão GGML.
+
+
+O benchmark de rede usa um túnel TLS ocioso por par marker-2 (warmup + 1–3 pares medidos); recomenda-se quatro túneis ociosos. Com apenas um, aguarda a reconexão autenticada para medir o segundo par. Cada par tem limite de 5 s, operação inteira de 15 s. `samples` informa a quantidade real; dispersão zero com uma amostra não demonstra estabilidade. Não mede tokens/s.

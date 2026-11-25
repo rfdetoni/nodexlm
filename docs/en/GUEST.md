@@ -19,3 +19,5 @@ Check the Host console for RPC readiness. Heartbeat/enrollment alone do not esta
 Use `--rpc-device CPU` to force the native CPU device even in a GPU-capable bundle. This is useful on VMs/drivers missing required model operations. The macOS CI bundle test uses this CPU fallback because the paravirtual GPU does not support RMS_NORM; it does not establish physical Metal compatibility.
 
 Use `nodexlm guest --thread-policy performance` to opt into the recommended fast-core thread count; default physical-core behavior and explicit `--threads N` are preserved. On homogeneous CPUs or without reliable topology telemetry, the Guest performance policy also uses physical cores (capped at 256). No worker affinity is changed.
+
+Network echo uses one idle TLS tunnel per pair (one warmup and one to three measured pairs). Four idle tunnels are recommended; a single slot must reconnect after warmup. Each pair has a five-second limit within a fifteen-second overall budget. Sample count is reported; zero spread with one sample does not establish stability.

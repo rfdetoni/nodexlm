@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Correções da auditoria
 
+- FIX5: benchmark de rede adapta quantidade de pares aos túneis ociosos, limita cada par a 5 s dentro do orçamento total e informa amostras reais.
+
 - FIX4: amostras suspeitas não ponderam placement; motivo de re-medição explícito, sem confundir benchmark agregado com taxa individual.
 
 - FIX1: política performance do Guest preserva cores físicas em topologia homogênea ou sem telemetria; Host/smolmax mantém fallback anterior.

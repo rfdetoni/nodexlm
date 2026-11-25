@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -37,7 +38,10 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 	// Use fresh authenticated tunnels for warmup and each measured pair.
 	var rtt, rates []float64
 	var last Measurement
-	for i := 0; i < 4; i++ {
+	// Leave existing busy sessions alone. With just one idle slot, wait
+	// for its normal authenticated replacement after warmup.
+	pairs := min(3, max(1, r.idleCount()-1))
+	for i := 0; i <= pairs; i++ {
 		var conn net.Conn
 		for conn == nil {
 			if candidate := r.takeIdle(); candidate != nil {
@@ -46,16 +50,18 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 			}
 			select {
 			case <-ctx.Done():
-				return Measurement{}, ctx.Err()
+				return Measurement{}, fmt.Errorf("RPC benchmark: waiting for fresh idle tunnel: %w", ctx.Err())
 			case <-r.closed:
 				return Measurement{}, ErrTunnelUnavailable
 			case <-r.ready:
 			}
 		}
-		sample, err := benchmarkPair(ctx, id, conn)
+		pairCtx, pairCancel := context.WithTimeout(ctx, 5*time.Second)
+		sample, err := benchmarkPair(pairCtx, id, conn)
+		pairCancel()
 		r.finish(conn)
 		if err != nil {
-			return Measurement{}, err
+			return Measurement{}, fmt.Errorf("RPC benchmark pair %d/%d (5s limit, 15s total): %w", i+1, pairs+1, err)
 		}
 		if i > 0 {
 			rtt = append(rtt, sample.RoundTripMS)
@@ -65,10 +71,14 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 	}
 	slices.Sort(rtt)
 	slices.Sort(rates)
-	last.RoundTripMS, last.MiBPerSecond = rtt[1], rates[1]
-	last.RTTSpreadMS, last.EchoSpreadMiBPerSecond = rtt[2]-rtt[0], rates[2]-rates[0]
-	last.Samples, last.Bytes = 3, 6<<20
+	last.RoundTripMS, last.MiBPerSecond = medianSorted(rtt), medianSorted(rates)
+	last.RTTSpreadMS, last.EchoSpreadMiBPerSecond = rtt[len(rtt)-1]-rtt[0], rates[len(rates)-1]-rates[0]
+	last.Samples, last.Bytes = len(rtt), len(rtt)*(2<<20)
 	return last, nil
+}
+
+func medianSorted(values []float64) float64 {
+	return (values[(len(values)-1)/2] + values[len(values)/2]) / 2
 }
 
 func benchmarkPair(ctx context.Context, id string, conn net.Conn) (Measurement, error) {
