@@ -347,7 +347,7 @@ func TestChooseRPCIncompatibleRateBasisFallsBackToMemory(t *testing.T) {
 	now := time.Now()
 	m.samples[s.Model] = InferenceSample{Model: s.Model, Kind: "benchmark", RateBasis: "native_decode",
 		Fingerprint: fingerprint, TokensPerSecond: 100, MeasuredAt: now}
-	m.samples[s.Model+"@guest"] = InferenceSample{Model: s.Model+"@guest", Kind: "benchmark", RateBasis: "end_to_end",
+	m.samples[s.Model+"@guest"] = InferenceSample{Model: s.Model + "@guest", Kind: "benchmark", RateBasis: "end_to_end",
 		Fingerprint: fingerprint, TokensPerSecond: 1, MeasuredAt: now}
 	got, err := m.chooseRPC(s, local.GGUFInfo{BlockCount: 40}, 8*gib, 6*gib, []RPCGuest{{ID: "guest", CapacityBytes: 6 * gib}})
 	if err != nil || got.LocalLayers != 20 {
