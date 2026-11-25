@@ -393,8 +393,10 @@ static void preferPerformanceRPCThreads(int threads) {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jstring socketValue, jboolean performanceAffinity) {
+Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring modeValue, jstring socketValue, jboolean performanceAffinity, jstring cacheValue) {
     const std::string socketPath=utf(env,socketValue);
+    const std::string cachePath=utf(env,cacheValue);
+    if (!cachePath.empty() && cachePath[0] != '/') return env->NewStringUTF("Invalid private cache path");
     if(socketPath.empty() || socketPath[0]!='/' || socketPath.size()>100) return env->NewStringUTF("Invalid private RPC socket path");
     if(threads < 1 || threads > 8)
         return env->NewStringUTF("RPC CPU threads must be between 1 and 8");
@@ -474,11 +476,11 @@ Java_dev_nodexlm_app_NativeRpc_start(JNIEnv *env, jobject, jint threads, jstring
         "RPC devices selected: %zu, Vulkan: %s, CPU: %s",
         devices.size(),useGPU?"yes":"no",useCPU?"yes":"no");
     try {
-        rpcThread = std::thread([threads, devices, socketPath, performanceAffinity, useCPU, useGPU] {
+        rpcThread = std::thread([threads, devices, socketPath, performanceAffinity, useCPU, useGPU, cachePath] {
             try {
                 if (performanceAffinity && useCPU && !useGPU) preferPerformanceRPCThreads(threads);
                 const std::string address = "unix:" + socketPath;
-                ggml_backend_rpc_start_server(address.c_str(), nullptr,
+                ggml_backend_rpc_start_server(address.c_str(), cachePath.empty() ? nullptr : cachePath.c_str(),
                     static_cast<size_t>(threads), devices.size(),
                     const_cast<ggml_backend_dev_t*>(devices.data()));
             } catch(const std::exception& e) {

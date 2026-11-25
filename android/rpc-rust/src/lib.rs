@@ -30,6 +30,7 @@ use tokio::{
 use tokio_rustls::TlsConnector;
 
 mod affinity;
+mod compression;
 
 const MAX_SLOTS: usize = 8;
 const STANDBY: usize = 2;
@@ -82,13 +83,14 @@ struct Config {
     socket: String,
     server_name: ServerName<'static>,
     efficient_cores: bool,
+    compression: bool,
     tls: TlsConnector,
 }
 
 fn safe_header(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|b| (33..=126).contains(&b))
 }
-fn config(host: String, port: u16, node: String, token: String, cert: Vec<u8>, socket: String, efficient_cores: bool)
+fn config(host: String, port: u16, node: String, token: String, cert: Vec<u8>, socket: String, efficient_cores: bool, compression: bool)
     -> Result<Config, &'static str>
 {
     if !safe_header(&host) || !safe_header(&node) || !safe_header(&token)
@@ -115,8 +117,9 @@ fn config(host: String, port: u16, node: String, token: String, cert: Vec<u8>, s
     // Do not cache TLS session secrets or enable early data. Each tunnel
     // authenticates the exact currently enrolled Host.
     tls.resumption = rustls::client::Resumption::disabled();
-    let request = format!("CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nX-Nodex-Node: {node}\r\nX-Nodex-RPC-Capabilities: directional-v1\r\n\r\n").into_bytes();
-    Ok(Config { host, port, request, socket, server_name, efficient_cores, tls: TlsConnector::from(Arc::new(tls)) })
+    let caps = if compression { "directional-v1,deflate-v1" } else { "directional-v1" };
+    let request = format!("CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nX-Nodex-Node: {node}\r\nX-Nodex-RPC-Capabilities: {caps}\r\n\r\n").into_bytes();
+    Ok(Config { host, port, request, socket, server_name, efficient_cores, compression, tls: TlsConnector::from(Arc::new(tls)) })
 }
 
 struct Control {
@@ -276,18 +279,20 @@ async fn relay(cfg: &Config, c: Arc<Control>) -> Result<(), RelayError> {
         connect_status(&mut remote).await
     }).await.map_err(|_| timed_out())??;
     // No idle read timeout: Host can keep an authenticated tunnel waiting.
-    match remote.read_u8().await? {
+    let marker = remote.read_u8().await?;
+    match marker {
         2 => timeout(Duration::from_secs(15), benchmark(&mut remote))
             .await.map_err(|_| timed_out())?,
         3 => timeout(Duration::from_secs(15), async {
             benchmark(&mut remote).await?;
             directional(&mut remote).await
         }).await.map_err(|_| timed_out())?,
-        1 => {
+        1 | 4 if marker == 1 || cfg.compression => {
             let _claim = Claim::new(c);
             let local = timeout(Duration::from_secs(3), UnixStream::connect(&cfg.socket))
                 .await.map_err(|_| timed_out())??;
-            bridge(remote, local).await?;
+            if marker == 4 { compression::bridge(remote, local).await?; }
+            else { bridge(remote, local).await?; }
             Ok(())
         }
         _ => Err(RelayError::Protocol),
@@ -391,7 +396,7 @@ fn response(env: &mut JNIEnv<'_>, s: &str) -> jstring {
 #[no_mangle]
 pub extern "system" fn Java_dev_nodexlm_app_NativeRustRpc_start(
     mut env: JNIEnv<'_>, _: JObject<'_>, host: JString<'_>, port: jint,
-    node: JString<'_>, token: JString<'_>, cert: JByteArray<'_>, socket: JString<'_>, efficient: jboolean,
+    node: JString<'_>, token: JString<'_>, cert: JByteArray<'_>, socket: JString<'_>, efficient: jboolean, compressed: jboolean,
 ) -> jstring {
     let result = (|| {
         let host = java_string(&mut env, &host)?;
@@ -400,7 +405,7 @@ pub extern "system" fn Java_dev_nodexlm_app_NativeRustRpc_start(
         let socket = java_string(&mut env, &socket)?;
         let cert = env.convert_byte_array(&cert).map_err(|_| "Invalid JNI certificate")?;
         let port = u16::try_from(port).map_err(|_| "Invalid Host port")?;
-        start(config(host, port, node, token, cert, socket, efficient != JNI_FALSE)?)
+        start(config(host, port, node, token, cert, socket, efficient != JNI_FALSE, compressed != JNI_FALSE)?)
     })();
     response(&mut env, result.err().unwrap_or(""))
 }

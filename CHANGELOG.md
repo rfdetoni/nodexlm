@@ -10,9 +10,11 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 ## Runtime v1.0.0 (r4)
 
 - Ativa RPC 10.0 com seis bundles publicados e verificados. Atualize Host e Guests juntos; não há compatibilidade RPC 9.
-- Android Java: compressão RPC negociada e afinidade opt-in do servidor CPU-only. Rust permanece sem compressão.
+- Android Java: compressão RPC negociada e afinidade opt-in do servidor CPU-only. Rust também oferece compressão negociada opcional.
 
 ## Runtime experimental
+
+- Android: cache privado de pesos com quota de 512 MiB e entradas de até 16 MiB; transporte Rust suporta deflate-v1 via zlib NDK, sem dependência Cargo adicional. Ambos experimentais, desabilitados por padrão.
 
 - CUDA multi-GPU experimental: seleção de todas as placas dedicadas com telemetria NVIDIA completa, orçamento por placa limitado ao mínimo medido, split de camadas por dispositivo e verificação RPC de contagem/memória. Não presume ordem nvidia-smi = GGML. Testes físicos pendentes.
 
