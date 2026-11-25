@@ -19,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -492,7 +493,13 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		return "", "", err
 	}
 	build := filepath.Join(stage, "build")
-	flags := []string{"-S", src, "-B", build, "-DGGML_RPC=ON", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=ON", "-DLLAMA_BUILD_SERVER=ON", "-DCMAKE_BUILD_TYPE=Release"}
+	flags := []string{
+		"-S", src, "-B", build,
+		"-DGGML_RPC=ON", "-DGGML_RPC_RDMA=OFF", "-DGGML_OPENMP=OFF",
+		"-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=ON", "-DLLAMA_BUILD_SERVER=ON",
+		"-DLLAMA_BUILD_UI=OFF", "-DLLAMA_USE_PREBUILT_UI=OFF",
+		"-DCMAKE_BUILD_TYPE=Release",
+	}
 	switch backend {
 	case "vulkan":
 		flags = append(flags, "-DGGML_VULKAN=ON")
@@ -505,7 +512,8 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		return "", "", fmt.Errorf("configure llama.cpp with RPC: %w: %s", err, string(out))
 	}
 	slog.Info("Compiling native RPC runtime fallback", "backend", backend)
-	compile := exec.CommandContext(ctx, "cmake", "--build", build, "--config", "Release", "--parallel", "2")
+	jobs := strconv.Itoa(max(2, min(runtime.NumCPU(), 8)))
+	compile := exec.CommandContext(ctx, "cmake", "--build", build, "--config", "Release", "--parallel", jobs, "--target", "llama-server", "ggml-rpc-server")
 	if out, err := compile.CombinedOutput(); err != nil {
 		return "", "", fmt.Errorf("build llama.cpp with RPC: %w: %s", err, string(out))
 	}

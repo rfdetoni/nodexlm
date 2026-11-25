@@ -155,8 +155,12 @@ func drmDevices(root string) []protocol.GPUDevice {
 		if usedErr == nil && e2 == nil && used <= total {
 			free = total - used
 		}
+		memType := ""
+		if total >= 1<<30 && usedErr == nil && e2 == nil && used <= total && free > 0 {
+			memType = "dedicated"
+		}
 		gpu := protocol.GPUDevice{
-			Name: strings.ToUpper(vendor) + " " + card, Vendor: vendor,
+			Name: strings.ToUpper(vendor) + " " + card, Vendor: vendor, MemoryType: memType,
 			VRAMBytes: total, FreeVRAMBytes: free,
 		}
 		if usedErr == nil && e2 == nil && total > 0 && used <= total {

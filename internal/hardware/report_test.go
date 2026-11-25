@@ -30,11 +30,17 @@ func TestDRMGPU(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected two GPUs, got %+v", got)
 	}
-	if got[0].Vendor != "amd" || got[0].VRAMBytes != 8<<30 || got[0].FreeVRAMBytes != 6<<30 {
+	if got[0].Vendor != "amd" || got[0].MemoryType != "dedicated" || got[0].VRAMBytes != 8<<30 || got[0].FreeVRAMBytes != 6<<30 {
 		t.Fatalf("bad AMD VRAM %+v", got[0])
 	}
-	if got[1].Vendor != "intel" || got[1].FreeVRAMBytes != 0 {
+	if got[1].Vendor != "intel" || got[1].MemoryType != "" || got[1].FreeVRAMBytes != 0 {
 		t.Fatalf("bad Intel GPU %+v", got[1])
+	}
+	host := protocol.Device{Platform: "linux", RAMBytes: 8 * clusterplan.GiB, AvailableRAMBytes: clusterplan.GiB + 512*clusterplan.MiB}
+	withoutGPU := clusterplan.Budget(host)
+	host.GPUs = []protocol.GPUDevice{got[0]}
+	if withGPU := clusterplan.Budget(host); withGPU <= withoutGPU {
+		t.Fatalf("dedicated AMD DRM GPU did not expand cluster budget: with=%d without=%d", withGPU, withoutGPU)
 	}
 }
 func TestDRMUnknownUsedDoesNotInventFreeVRAM(t *testing.T) {
@@ -50,7 +56,7 @@ func TestDRMUnknownUsedDoesNotInventFreeVRAM(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := drmDevices(root)
-	if len(got) != 1 || got[0].VRAMBytes != 1024 || got[0].FreeVRAMBytes != 0 {
+	if len(got) != 1 || got[0].MemoryType != "" || got[0].VRAMBytes != 1024 || got[0].FreeVRAMBytes != 0 {
 		t.Fatalf("unexpected GPU %+v", got)
 	}
 }
@@ -70,7 +76,7 @@ func TestMeasuredGPUUsage(t *testing.T) {
 		}
 	}
 	found := drmDevices(root)
-	if len(found) != 1 || found[0].UsagePercent == nil || *found[0].UsagePercent != 42 ||
+	if len(found) != 1 || found[0].MemoryType != "" || found[0].UsagePercent == nil || *found[0].UsagePercent != 42 ||
 		found[0].VRAMUsedBytes == nil || *found[0].VRAMUsedBytes != 250 {
 		t.Fatalf("GPU metrics: %+v", found)
 	}
