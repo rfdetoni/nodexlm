@@ -3,7 +3,7 @@ name: Real RPC end-to-end
 # Explicit dispatch and targeted E2E changes keep native tests out of routine PR builds.
 on:
   pull_request:
-    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/e2e-rpc.py']
+    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/e2e-rpc.py', 'scripts/test-console.cjs']
   workflow_dispatch:
   push:
     branches: [main]
@@ -48,7 +48,6 @@ jobs:
         if: github.event_name != 'pull_request'
         run: NODEXLM_TEST_MDNS=1 go test ./internal/mdns -run TestLANMulticastDiscovery -count=1 -timeout=15s
       - name: Install browser test runtime
-        if: github.event_name != 'pull_request'
         run: |
           npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.56.1
           "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
@@ -57,7 +56,7 @@ jobs:
           NODEXLM_RPC_DIR: ${{ github.workspace }}/native
           NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
           NODE_PATH: ${{ runner.temp }}/browser/node_modules
-          NODEXLM_UI_CHECK: ${{ github.event_name != 'pull_request' && format('{0}/scripts/test-console.cjs', github.workspace) || '' }}
+          NODEXLM_UI_CHECK: ${{ format('{0}/scripts/test-console.cjs', github.workspace) }}
           NODEXLM_TEST_DEVICE_MICROBENCH: '1'
           NODEXLM_TEST_GUEST_COUNT: ${{ github.event_name == 'pull_request' && '2' || '1' }}
         run: python3 scripts/e2e-rpc.py

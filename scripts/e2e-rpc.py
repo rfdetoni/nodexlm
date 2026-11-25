@@ -167,6 +167,10 @@ def main():
                     raise AssertionError(state['error'])
                 return state['loaded']
             wait_for(loaded,120)
+            topology=json.load(api('/api/inference/topology'))
+            assert topology['loaded'] and sum(n['layers'] for n in topology['nodes']) == topology['blocks'],topology
+            assert len(topology['nodes']) == guest_count+1,topology
+            assert json.load(api('/api/inference/activity'))['in_flight'] == 0
             if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
                 try:
                     api('/api/bench/rpc-device/'+nodes[0]['id'],'POST',{}).close()
@@ -224,6 +228,20 @@ def main():
             api('/api/unload','POST',{}).close()
             api('/api/settings','PUT',settings).close()
             print('PASS: pinned ngram-simple + RPC load and generation (not a speed claim)')
+            if guest_count == 2 and os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                # Explicit primary bypasses the benchmark advantage guard, but not memory.
+                primary={**settings,'primary_node':nodes[0]['id'],'placement_strategy':'speed'}
+                api('/api/settings','PUT',primary).close()
+                plan=json.load(api('/api/plan'))
+                chosen=[n for n in plan['nodes'] if n.get('node_id')]
+                assert len(chosen)==1 and chosen[0]['node_id']==primary['primary_node'] and chosen[0]['layers']==plan['blocks'],plan
+                api('/api/load','POST',{}).close()
+                wait_for(loaded,120)
+                topology=json.load(api('/api/inference/topology'))
+                assert any(n['node_id']==primary['primary_node'] and n['layers']==plan['blocks'] for n in topology['nodes']),topology
+                api('/api/unload','POST',{}).close()
+                api('/api/settings','PUT',settings).close()
+                print('PASS: explicit whole-Guest primary, preview and loaded topology agree')
             # An inference key must not access administrative resources.
             try:
                 api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])
