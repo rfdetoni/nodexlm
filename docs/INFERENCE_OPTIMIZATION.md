@@ -18,6 +18,16 @@ Use **Medir rede** em cada Guest. Para medir tokens/s individuais, descarregue
 modelos e execute o benchmark real selecionando aquele Guest. Métricas com mais
 de 24 horas expiram; ausência de medição não significa que o nó seja lento.
 
+Para ponderar camadas, benchmarks de Host e Guest precisam ser controlados,
+recentes (menos de 24 horas), do mesmo modelo e fingerprint de opções, e da
+mesma base de taxa (decode nativo ou ponta a ponta). Sem comparabilidade,
+o split permanece proporcional à memória. No modo velocidade, quando todos
+os nós selecionados possuem RTT medido, o planner compara prefixos ranqueados
+e Guests individuais por custo serial estimado: tempo por camada derivado
+de tokens/s do modelo inteiro, mais dois RTTs por segmento remoto por token.
+A distribuição remota segue a proporção de memória; o cálculo não é medição
+de throughput nem garante aceleração. O modo capacidade mantém todos os Guests.
+
 A seleção é executada **antes** do carregamento e reutilizada no endpoint de
 prévia `GET /api/plan`. Ao mudar a conectividade entre a prévia e a
 aplicação, os resultados podem diferir. A divisão calculada é estimativa,

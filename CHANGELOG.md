@@ -2,6 +2,11 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Planejamento de clusters mistos — WP1
+
+- O planner utiliza somente benchmarks controlados, recentes e de fingerprint e base de taxa compatíveis para ponderar Host e Guests.
+- No modo velocidade, compara subconjuntos por custo serial estimado com penalidade de RTT e limites de memória; ganhos exigem A/B físico.
+
 ## Atualização do llama.cpp e inferência adaptativa — 2026-11-10
 
 - Revisão experimental nativa atualizada de `b12143` para `b12255` (commit `940a30ee3b5593e1a66fe0aadc3b731989022552`), com SHA-256 dos dez arquivos oficiais desktop verificados pelo manifesto da release upstream.

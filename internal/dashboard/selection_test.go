@@ -1,12 +1,26 @@
 package dashboard
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/local"
 )
+
+func placementTestFingerprint(t *testing.T, m *Manager, s Settings) string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(m.modelDir, s.Model), []byte("GGUF"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := m.benchmarkSignature(s, s.Model)
+	if fingerprint == "" {
+		t.Fatal("missing benchmark fingerprint")
+	}
+	return fingerprint
+}
 
 func TestChooseRPCUsesMeasuredInference(t *testing.T) {
 	const gib = uint64(1 << 30)
@@ -15,12 +29,14 @@ func TestChooseRPCUsesMeasuredInference(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
+	settings := Settings{Model: "small.gguf", PlacementStrategy: "speed"}
+	fingerprint := placementTestFingerprint(t, m, settings)
 	slow := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fast := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	m.samples["small.gguf@"+slow] = InferenceSample{Model: "small.gguf@" + slow, Kind: "benchmark", MeasuredAt: time.Now(), TokensPerSecond: 2}
-	m.samples["small.gguf@"+fast] = InferenceSample{Model: "small.gguf@" + fast, Kind: "benchmark", MeasuredAt: time.Now(), TokensPerSecond: 14}
+	m.samples["small.gguf@"+slow] = InferenceSample{Model: "small.gguf@" + slow, Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint, MeasuredAt: time.Now(), TokensPerSecond: 2}
+	m.samples["small.gguf@"+fast] = InferenceSample{Model: "small.gguf@" + fast, Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint, MeasuredAt: time.Now(), TokensPerSecond: 14}
 	guests := []RPCGuest{{ID: slow, CapacityBytes: 8 * gib}, {ID: fast, CapacityBytes: 8 * gib}}
-	selection, err := m.chooseRPC(Settings{Model: "small.gguf", PlacementStrategy: "speed"}, local.GGUFInfo{BlockCount: 40}, 6*gib, gib, guests)
+	selection, err := m.chooseRPC(settings, local.GGUFInfo{BlockCount: 40}, 6*gib, gib, guests)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +130,7 @@ func TestChooseRPCSpeedCanUseHostAlone(t *testing.T) {
 	defer m.Close()
 	node := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	settings := Settings{Model: "small.gguf", PlacementStrategy: "speed"}
+	fingerprint := placementTestFingerprint(t, m, settings)
 	meta := local.GGUFInfo{BlockCount: 40}
 	guest := []RPCGuest{{ID: node, CapacityBytes: 8 * gib}}
 	hostOnly, err := m.chooseRPC(settings, meta, gib, 8*gib, guest)
@@ -121,13 +138,13 @@ func TestChooseRPCSpeedCanUseHostAlone(t *testing.T) {
 		len(hostOnly.Excluded) != 1 || hostOnly.Excluded[0] != node {
 		t.Fatalf("Host-only speed option was not selected: %+v %v", hostOnly, err)
 	}
-	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 10, MeasuredAt: time.Now(), Kind: "benchmark"}
-	m.samples["small.gguf@"+node] = InferenceSample{Model: "small.gguf@" + node, TokensPerSecond: 30, MeasuredAt: time.Now(), Kind: "benchmark"}
+	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 10, MeasuredAt: time.Now(), Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint}
+	m.samples["small.gguf@"+node] = InferenceSample{Model: "small.gguf@" + node, TokensPerSecond: 30, MeasuredAt: time.Now(), Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint}
 	remote, err := m.chooseRPC(settings, meta, gib, 8*gib, guest)
 	if err != nil || len(remote.Guests) != 1 || remote.Guests[0].ID != node {
 		t.Fatalf("faster measured Guest must remain eligible: %+v %v", remote, err)
 	}
-	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 40, MeasuredAt: time.Now(), Kind: "benchmark"}
+	m.samples["small.gguf"] = InferenceSample{Model: "small.gguf", TokensPerSecond: 40, MeasuredAt: time.Now(), Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint}
 	hostOnly, err = m.chooseRPC(settings, meta, gib, 8*gib, guest)
 	if err != nil || len(hostOnly.Guests) != 0 {
 		t.Fatalf("faster measured Host must be eligible: %+v %v", hostOnly, err)
@@ -213,27 +230,28 @@ func TestSpeedRequiresComparableBenchmarksAndRemoteOnlyForFasterGuest(t *testing
 	node := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	guest := []RPCGuest{{ID: node, CapacityBytes: 8 * gib}}
 	settings := Settings{Model: "small.gguf", ContextTokens: 2048, PlacementStrategy: "speed"}
+	fingerprint := placementTestFingerprint(t, m, settings)
 	meta := local.GGUFInfo{BlockCount: 32}
 	hostKey, guestKey := settings.Model, settings.Model+"@"+node
 	m.samples[hostKey] = InferenceSample{Model: hostKey, TokensPerSecond: 30,
 		MeasuredAt: time.Now(), Kind: "live"}
 	m.samples[guestKey] = InferenceSample{Model: guestKey, TokensPerSecond: 40,
-		MeasuredAt: time.Now(), Kind: "benchmark"}
+		MeasuredAt: time.Now(), Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint}
 	choice, err := m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
 	if err != nil || len(choice.Guests) != 0 {
 		t.Fatalf("live Host metrics were treated as controlled benchmark: %+v %v", choice, err)
 	}
 	m.samples[hostKey] = InferenceSample{Model: hostKey, TokensPerSecond: 30,
-		MeasuredAt: time.Now(), Kind: "benchmark"}
+		MeasuredAt: time.Now(), Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint}
 	// 10% is smaller than the minimum speed margin.
 	m.samples[guestKey] = InferenceSample{Model: guestKey, TokensPerSecond: 33,
-		MeasuredAt: time.Now(), Kind: "benchmark"}
+		MeasuredAt: time.Now(), Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint}
 	choice, err = m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
 	if err != nil || len(choice.Guests) != 0 {
 		t.Fatalf("noise-level improvement triggered RPC splitting: %+v %v", choice, err)
 	}
 	m.samples[guestKey] = InferenceSample{Model: guestKey, TokensPerSecond: 45,
-		MeasuredAt: time.Now(), Kind: "benchmark"}
+		MeasuredAt: time.Now(), Kind: "benchmark", RateBasis: "native_decode", Fingerprint: fingerprint}
 	choice, err = m.chooseRPC(settings, meta, 3*gib, 8*gib, guest)
 	if err != nil || choice.LocalLayers != 0 || len(choice.Guests) != 1 {
 		t.Fatalf("faster whole-model Guest was split with slower Host: %+v %v", choice, err)
@@ -291,5 +309,48 @@ func TestNoGuestsOnlyFailsWhenLocalMemoryIsInsufficient(t *testing.T) {
 	got, err := m.chooseRPC(settings, meta, 5*gib, 8*gib, nil)
 	if err != nil || got.LocalLayers != 32 || len(got.Guests) != 0 {
 		t.Fatalf("sufficient Host RAM must lift the error: %+v %v", got, err)
+	}
+}
+
+func TestPlacementBenchmarksRejectIncompatibleSamples(t *testing.T) {
+	now := time.Now()
+	valid := InferenceSample{Model: "model", Kind: "benchmark", RateBasis: "native_decode",
+		Fingerprint: "current", TokensPerSecond: 10, MeasuredAt: now}
+	for _, mutate := range []func(*InferenceSample){
+		func(s *InferenceSample) { s.Kind = "live" },
+		func(s *InferenceSample) { s.RateBasis = "" },
+		func(s *InferenceSample) { s.Fingerprint = "" },
+		func(s *InferenceSample) { s.Fingerprint = "old" },
+		func(s *InferenceSample) { s.MeasuredAt = now.Add(-24 * time.Hour) },
+		func(s *InferenceSample) { s.MeasuredAt = now.Add(time.Second) },
+	} {
+		sample := valid
+		mutate(&sample)
+		if got := placementBenchmarks([]InferenceSample{sample}, "current", now); len(got) != 0 {
+			t.Fatalf("incompatible benchmark admitted: %+v", sample)
+		}
+	}
+	if got := placementBenchmarks([]InferenceSample{valid}, "current", now); len(got) != 1 {
+		t.Fatal("valid benchmark rejected")
+	}
+}
+
+func TestChooseRPCIncompatibleRateBasisFallsBackToMemory(t *testing.T) {
+	const gib = uint64(1 << 30)
+	m, err := NewManager(t.TempDir(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	s := Settings{Model: "small.gguf", PlacementStrategy: "speed"}
+	fingerprint := placementTestFingerprint(t, m, s)
+	now := time.Now()
+	m.samples[s.Model] = InferenceSample{Model: s.Model, Kind: "benchmark", RateBasis: "native_decode",
+		Fingerprint: fingerprint, TokensPerSecond: 100, MeasuredAt: now}
+	m.samples[s.Model+"@guest"] = InferenceSample{Model: s.Model+"@guest", Kind: "benchmark", RateBasis: "end_to_end",
+		Fingerprint: fingerprint, TokensPerSecond: 1, MeasuredAt: now}
+	got, err := m.chooseRPC(s, local.GGUFInfo{BlockCount: 40}, 8*gib, 6*gib, []RPCGuest{{ID: "guest", CapacityBytes: 6*gib}})
+	if err != nil || got.LocalLayers != 20 {
+		t.Fatalf("incompatible measurements changed memory split: %+v %v", got, err)
 	}
 }

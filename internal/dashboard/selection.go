@@ -3,6 +3,7 @@ package dashboard
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
@@ -18,10 +19,28 @@ func effectivePlacementStrategy(value string) string {
 	return value
 }
 
+// placementBenchmarks accepts only fresh, comparable controlled measurements.
+func placementBenchmarks(samples []InferenceSample, fingerprint string, now time.Time) map[string]InferenceSample {
+	valid := make(map[string]InferenceSample)
+	for _, sample := range samples {
+		if fingerprint == "" || sample.Fingerprint != fingerprint || sample.Kind != "benchmark" ||
+			(sample.RateBasis != "native_decode" && sample.RateBasis != "end_to_end") ||
+			sample.TokensPerSecond <= 0 || math.IsNaN(sample.TokensPerSecond) || math.IsInf(sample.TokensPerSecond, 0) ||
+			sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour {
+			continue
+		}
+		if previous, ok := valid[sample.Model]; !ok || sample.MeasuredAt.After(previous.MeasuredAt) {
+			valid[sample.Model] = sample
+		}
+	}
+	return valid
+}
+
 // chooseRPC is used both for preview and actual native model loading.
 func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest) (clusterplan.Selection, error) {
-	samples := m.InferenceSamples()
-	now := time.Now()
+	samples := placementBenchmarks(m.InferenceSamples(), m.benchmarkSignature(s, s.Model), time.Now())
+	hostSample := samples[s.Model]
+	hostSpeed := hostSample.TokensPerSecond
 	strategy := effectivePlacementStrategy(s.PlacementStrategy)
 	// A connected Guest is optional for local inference, even when an older
 	// runtime.json explicitly saved "capacity" with distributed=true.
@@ -54,26 +73,6 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		size*115/100 <= hostBudget &&
 		validatePlacementMemory(meta, s, size, hostBudget, nil) == nil &&
 		meta.BlockCount > 0 {
-		var hostSpeed float64
-		var hostBasis string
-		guestSpeed := make(map[string]float64, len(guests))
-		guestBasis := make(map[string]string, len(guests))
-		for _, sample := range samples {
-			if sample.Kind != "benchmark" || sample.TokensPerSecond <= 0 ||
-				sample.MeasuredAt.After(now) || now.Sub(sample.MeasuredAt) >= 24*time.Hour {
-				continue
-			}
-			if sample.Model == s.Model {
-				hostSpeed = sample.TokensPerSecond
-				hostBasis = sample.RateBasis
-			}
-			for _, guest := range guests {
-				if sample.Model == s.Model+"@"+guest.ID {
-					guestSpeed[guest.ID] = sample.TokensPerSecond
-					guestBasis[guest.ID] = sample.RateBasis
-				}
-			}
-		}
 		var best *RPCGuest
 		var bestSpeed float64
 		// Require 15% headroom before claiming an RPC advantage. Small
@@ -82,9 +81,10 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			required := size * 115 / 100
 			for i := range guests {
 				guest := &guests[i]
-				measured := guestSpeed[guest.ID]
+				sample := samples[s.Model+"@"+guest.ID]
+				measured := sample.TokensPerSecond
 				if measured <= hostSpeed*1.15 || measured <= bestSpeed ||
-					guestBasis[guest.ID] != hostBasis || guest.CapacityBytes < required {
+					sample.RateBasis != hostSample.RateBasis || guest.CapacityBytes < required {
 					continue
 				}
 				candidate := clusterplan.Candidate{ID: guest.ID, CapacityBytes: guest.CapacityBytes}
@@ -138,21 +138,11 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 			candidate.Performance.RoundTripMS = network.RoundTripMS
 			candidate.Performance.MiBPerSecond = network.MiBPerSecond
 		}
-		for _, sample := range samples {
-			if sample.Model == s.Model+"@"+guest.ID && !sample.MeasuredAt.After(now) && now.Sub(sample.MeasuredAt) < 24*time.Hour && sample.TokensPerSecond > 0 {
-				candidate.Performance.TokensPerSecond = sample.TokensPerSecond
-				break
-			}
+		if sample, ok := samples[s.Model+"@"+guest.ID]; ok &&
+			(hostSpeed == 0 || sample.RateBasis == hostSample.RateBasis) {
+			candidate.Performance.TokensPerSecond = sample.TokensPerSecond
 		}
 		candidates = append(candidates, candidate)
-	}
-	var hostSpeed float64
-	for _, sample := range samples {
-		if sample.Kind == "benchmark" && sample.Model == s.Model &&
-			sample.TokensPerSecond > 0 && !sample.MeasuredAt.After(now) && now.Sub(sample.MeasuredAt) < 24*time.Hour {
-			hostSpeed = sample.TokensPerSecond
-			break
-		}
 	}
 	selection, err := clusterplan.SelectWithHostSpeed(meta.BlockCount, size, hostBudget, hostSpeed, candidates, strategy)
 	if err != nil {
