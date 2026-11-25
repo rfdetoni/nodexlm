@@ -1,0 +1,42 @@
+name: Smolmax ARM64 native candidate
+on:
+  pull_request:
+    paths:
+      - 'experiments/smolmax/**'
+      - '.github/workflows/smolmax-native-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: smolmax-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Fetch exact upstream and apply candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin https://github.com/ggml-org/llama.cpp.git
+          git -C upstream fetch --depth=1 origin b1b770d90d94cad9e9ea5b993bdbc383a522fb28
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = b1b770d90d94cad9e9ea5b993bdbc383a522fb28
+          git -C upstream apply --check "$GITHUB_WORKSPACE/experiments/smolmax/single-row.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/experiments/smolmax/single-row.patch"
+          cat >> upstream/CMakeLists.txt <<'EOF'
+          add_executable(nodexlm-smolmax-test ../experiments/smolmax/test-single-row.cpp)
+          target_link_libraries(nodexlm-smolmax-test PRIVATE ggml ggml-cpu)
+          EOF
+      - name: Build only CPU candidate and numerical test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S upstream -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_BACKEND_DL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+          cmake --build build --target nodexlm-smolmax-test --parallel 2
+          binary="$(find build -type f -name nodexlm-smolmax-test -print -quit)"
+          test -n "$binary"
+          "$binary"
