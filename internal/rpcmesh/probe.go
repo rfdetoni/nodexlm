@@ -12,13 +12,15 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 )
 
 // ProbeHello verifies the *native* GGML RPC worker through an authenticated
 // local relay. Tunnel counts and heartbeats alone do not prove that a Guest can
 // answer the protocol's first request.
 //
-// b12255: HELLO command=14, 24-byte capability payload; the response is
+// v1.0.0: HELLO command=14, 24-byte capability payload; the response is
 // an 8-byte little-endian length followed by 28 bytes. DEVICE_COUNT is
 // command=15, 0-byte payload and an unsigned 32-bit response.
 // Keep this probe in sync with internal/llamaruntime/revision.json.
@@ -92,8 +94,9 @@ func withRPCProbe(ctx context.Context, endpoint string, timeout time.Duration, r
 	if _, err := io.ReadFull(conn, response[:]); err != nil {
 		return 0, fmt.Errorf("incomplete RPC HELLO response: %w", err)
 	}
-	if response[0] != 9 || response[1] != 0 {
-		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires 9.0)", response[0], response[1], response[2])
+	major, minor := llamaruntime.RPCProtocolVersion()
+	if response[0] != major || response[1] != minor {
+		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires %d.%d); update Host and Guest together", response[0], response[1], response[2], major, minor)
 	}
 	var countCommand [9]byte
 	countCommand[0] = 15
@@ -139,7 +142,7 @@ func writeRPCProbe(conn net.Conn, data []byte) error {
 
 const (
 	rpcProbeTensorBytes = 64 << 10
-	// ggml-rpc.cpp b12255 packs rpc_tensor with 4 dimensions, 10 sources,
+	// ggml-rpc.cpp v1.0.0 packs rpc_tensor with 4 dimensions, 10 sources,
 	// 64 bytes of op parameters and a 64-byte name. The fixed layout is 296 B.
 	// Keep in sync with internal/llamaruntime/revision.json.
 	rpcProbeTensorWireSize = 296
@@ -180,7 +183,7 @@ func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasu
 		return TensorMeasurement{}, errors.New("BUFFER_GET_BASE returned an invalid native address")
 	}
 
-	// rpc_tensor's packed layout on GGML RPC v9 (see pinned b12255 source):
+	// rpc_tensor's packed layout on GGML RPC v10 (see pinned v1.0.0 source):
 	// id@0; type@8; buffer@12; ne@20; nb@36; op@52;
 	// op_params@56; flags@120; src@124; view_src@204;
 	// view_offs@212; data@220; name@228; use_count@292.

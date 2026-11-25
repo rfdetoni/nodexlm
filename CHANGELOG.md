@@ -2,6 +2,11 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Runtime v1.0.0 (candidato r4)
+
+- Migração para llama.cpp v1.0.0, commit b1b770d90d94cad9e9ea5b993bdbc383a522fb28. RPC 10.0 incompatível com r3/9.0: atualizar Host e Guests juntos. Candidato sem hashes de artefatos até conclusão dos builds; não publicar em produção antes de validar e fixar os SHA-256.
+- Runtime padrão usa a revisão pinada; binários externos precisam ser escolhidos explicitamente.
+
 ## Runtime experimental
 
 - Benchmark direcional negociado por conexão (Go/Rust), opt-in, com mediana de upload/download independentes e fallback legado.

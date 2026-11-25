@@ -18,6 +18,13 @@ type runtimeRevision struct {
 	Commit             string            `json:"commit"`
 	RPCRelease         string            `json:"rpc_release"`
 	Published          map[string]string `json:"published"`
+	RPCProtocolMajor   byte              `json:"rpc_protocol_major"`
+	RPCProtocolMinor   byte              `json:"rpc_protocol_minor"`
+}
+
+// RPCProtocolVersion is the exact native wire version of the reviewed source.
+func RPCProtocolVersion() (byte, byte) {
+	return revision.RPCProtocolMajor, revision.RPCProtocolMinor
 }
 
 func BundledParallelRPCUploadsSupported() bool {
@@ -32,6 +39,9 @@ func readRevision() runtimeRevision {
 	var r runtimeRevision
 	if err := json.Unmarshal(revisionJSON, &r); err != nil {
 		panic("invalid embedded llama.cpp revision: " + err.Error())
+	}
+	if r.RPCProtocolMajor == 0 {
+		panic("missing native RPC protocol version in embedded revision")
 	}
 	return r
 }

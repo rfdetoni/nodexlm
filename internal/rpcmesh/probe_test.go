@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 )
 
 func startProbeServer(t *testing.T, behavior string) (string, <-chan error) {
@@ -41,9 +43,9 @@ func startProbeServer(t *testing.T, behavior string) (string, <-chan error) {
 		}
 		var response [36]byte
 		binary.LittleEndian.PutUint64(response[:8], 28)
-		response[8] = 9
+		response[8], response[9] = llamaruntime.RPCProtocolVersion()
 		if behavior == "version" {
-			response[8] = 8
+			response[8]--
 		}
 		if err = writeRPCProbe(conn, response[:]); err != nil {
 			done <- err

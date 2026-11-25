@@ -30,18 +30,9 @@ var repoURL = "https://github.com/ggml-org/llama.cpp/releases/download/" + Versi
 
 type Artifact struct{ Name, SHA256 string }
 
-var releases = map[string]Artifact{
-	"linux/amd64/cpu":      {"llama-b12255-bin-ubuntu-x64.tar.gz", "e49f3492de6ca193766f84fa954490a9e32e733be8ac3ec53d08749775461aa7"},
-	"linux/arm64/cpu":      {"llama-b12255-bin-ubuntu-arm64.tar.gz", "8fae47122432322ee942c78c42b17e9940bc46b4e8812f33bacb699ab6d97f75"},
-	"linux/amd64/vulkan":   {"llama-b12255-bin-ubuntu-vulkan-x64.tar.gz", "82443355c8893a15516e760da40c32c99f5fd39825812424dbcadeb6d67baf61"},
-	"linux/arm64/vulkan":   {"llama-b12255-bin-ubuntu-vulkan-arm64.tar.gz", "90a1d37b9be044f1dbfa61e959ae962e06e74693f82577b1bdaae184263e6870"},
-	"windows/amd64/cpu":    {"llama-b12255-bin-win-cpu-x64.zip", "ec06d7b2f3fc4f7cff3e395e3e85c0de5f928b6a62a8647bbf85776351385597"},
-	"windows/arm64/cpu":    {"llama-b12255-bin-win-cpu-arm64.zip", "3808c676240761f6dcf8fb116c080b324029c34658909bc28ab0b19eb9799f2f"},
-	"windows/amd64/vulkan": {"llama-b12255-bin-win-vulkan-x64.zip", "12460d097486a06eb1c3b745194eb1436d315bcc23003a74a40a11e2721167c8"},
-	"windows/arm64/vulkan": {"llama-b12255-bin-win-vulkan-arm64.zip", "84c2692a6a85661ff78fa30e27ddce786db718d2454cc3b37e72f9a7bc8588f5"},
-	"darwin/amd64/metal":   {"llama-b12255-bin-macos-x64.tar.gz", "8cd76dd2c6d67d706dc06f9ef8a33629531b990263a53e1f2986deed4681ab6d"},
-	"darwin/arm64/metal":   {"llama-b12255-bin-macos-arm64.tar.gz", "56074dd37cd369d4c73658d7ce3b1198ec359fb501ad8f2278b4f8fb36178a48"},
-}
+// v1.0.0 is a source release whose only attached asset is nightly-tag.txt.
+// Do not reuse nightly archive names or hashes from a different source commit.
+var releases = map[string]Artifact{}
 
 func Backend(requested string) (string, error) {
 	if requested == "" || requested == "auto" {
@@ -109,7 +100,8 @@ func Ensure(ctx context.Context, home, backend string) (string, string, error) {
 	}
 	a, ok := releases[runtime.GOOS+"/"+runtime.GOARCH+"/"+b]
 	if !ok {
-		return "", "", fmt.Errorf("no verified official llama.cpp binary for %s/%s backend %s; use your own compatible build", runtime.GOOS, runtime.GOARCH, b)
+		// For source-only releases, use the same verified matching pair as RPC.
+		return EnsureDistributed(ctx, home, b)
 	}
 	dir := installDir(home, b)
 	if err = os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
@@ -375,9 +367,8 @@ func AutoExecutable(ctx context.Context, home, requested string) (string, error)
 	if requested != "" && requested != "llama-server" {
 		return requested, nil
 	}
-	if p, err := exec.LookPath("llama-server"); err == nil {
-		return p, nil
-	}
+	// The default must use the reviewed revision, not an unrelated PATH
+	// binary. Custom binaries remain an explicit operator override.
 	s, _, err := Ensure(ctx, home, "auto")
 	return s, err
 }
@@ -448,9 +439,11 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		slog.Warn("Verified RPC runtime unavailable; trying alternate installation", "backend", backend, "error", publishedErr)
 	}
 	// Existing official archives may already include matching RPC binaries.
-	server, rpc, err := Ensure(ctx, home, backend)
-	if err == nil && rpc != "" && SupportsRPC(ctx, server) && (!UnixRPCBundles() || SupportsUnixRPC(ctx, server)) {
-		return server, rpc, nil
+	if _, ok := releases[runtime.GOOS+"/"+runtime.GOARCH+"/"+backend]; ok {
+		server, rpc, err := Ensure(ctx, home, backend)
+		if err == nil && rpc != "" && SupportsRPC(ctx, server) && (!UnixRPCBundles() || SupportsUnixRPC(ctx, server)) {
+			return server, rpc, nil
+		}
 	}
 	// Some official releases omit GGML_RPC. Automatically build the missing
 	// backend from exactly the same signed release source for both executables.

@@ -1,9 +1,10 @@
 diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
 --- a/ggml/include/ggml-rpc.h
 +++ b/ggml/include/ggml-rpc.h
-@@ -27,7 +27,12 @@
- GGML_BACKEND_API void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
-                                                     size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices);
+@@ -32,8 +32,13 @@
+         size_t n_threads,
+         size_t n_devices,
+         ggml_backend_dev_t * devices);
  
 -GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
 +// Android-only cooperative shutdown. Caller resets before starting a new server,
