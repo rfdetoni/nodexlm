@@ -62,7 +62,7 @@ function renderActivity(data){
  if(native.length){
   area.append(el('p','','Atividade nativa · últimos '+native.length+' tokens atribuíveis'));
   for(const item of native.slice(-5)){
-   const splits=(item.splits||[]).map(split=>split.backend+': '+split.count+' envio(s) de grafo').join(' · ');
+   const splits=(item.splits||[]).map(split=>{const node=topologySnapshot?.nodes?.find(n=>n.node_id===split.node_id);return (node?node.name+' / ':split.node_id?split.node_id+' / ':'')+split.backend+': '+split.count+' envio(s) de grafo';}).join(' · ');
    area.append(el('p','muted','Token '+item.ordinal+' · lote '+item.batch+' · '+splits));
   }
   area.append(el('p','muted','Submissões nativas, não utilização, latência ou tempo de GPU. Nomes de backend reportados pelo runtime.'));
