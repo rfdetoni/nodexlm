@@ -30,9 +30,18 @@ func TestAutoGuestPrefersVulkanWithDedicatedGPUAndExposesRAM(t *testing.T) {
 		Name: "NVIDIA GeForce RTX 2060", MemoryType: "dedicated",
 		VRAMBytes: 6 << 30, FreeVRAMBytes: 5 << 30,
 	}}}
-	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" &&
+	if (runtime.GOOS == "linux" || runtime.GOOS == "windows") && runtime.GOARCH == "amd64" &&
 		autoGuestBackend(profile) != "vulkan" {
-		t.Fatalf("dedicated Linux GPU was not selected: %q", autoGuestBackend(profile))
+		t.Fatalf("dedicated GPU was not selected: %q", autoGuestBackend(profile))
+	}
+	if got := autoGuestBackendFor("windows", "amd64", profile); got != "vulkan" {
+		t.Fatalf("dedicated Windows AMD64 GPU did not select vulkan: %q", got)
+	}
+	if got := autoGuestBackendFor("linux", "amd64", profile); got != "vulkan" {
+		t.Fatalf("dedicated Linux AMD64 GPU did not select vulkan: %q", got)
+	}
+	if got := autoGuestBackendFor("darwin", "arm64", profile); got != "metal" {
+		t.Fatalf("macOS ARM64 did not select metal: %q", got)
 	}
 	devices := []string{"Vulkan0", "CPU"}
 	if got := autoRPCDeviceChoice(devices, profile); got != "Vulkan0,CPU" {

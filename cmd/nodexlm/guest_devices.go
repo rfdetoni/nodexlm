@@ -24,13 +24,17 @@ func guestDedicatedGPU(profile protocol.Device) bool {
 }
 
 func autoGuestBackend(profile protocol.Device) string {
-	// The published Linux AMD64 worker has a verified Vulkan + RPC bundle.
+	return autoGuestBackendFor(runtime.GOOS, runtime.GOARCH, profile)
+}
+
+func autoGuestBackendFor(goos, goarch string, profile protocol.Device) string {
+	// Published Linux and Windows AMD64 workers have verified Vulkan + RPC bundles.
 	// Do not force source builds or assume an installed GPU driver on other
 	// systems; explicit --backend vulkan remains available everywhere.
-	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" && guestDedicatedGPU(profile) {
+	if (goos == "linux" || goos == "windows") && goarch == "amd64" && guestDedicatedGPU(profile) {
 		return "vulkan"
 	}
-	if runtime.GOOS == "darwin" {
+	if goos == "darwin" {
 		return "metal"
 	}
 	return "cpu"
