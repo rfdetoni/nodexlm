@@ -1,0 +1,141 @@
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -27,7 +27,11 @@
+     typedef struct ggml_backend * ggml_backend_t;
+     typedef void * ggml_backend_graph_plan_t;
+     typedef struct ggml_backend_reg * ggml_backend_reg_t;
+-    typedef struct ggml_backend_device * ggml_backend_dev_t;
++    typedef struct ggml_backend_device * ggml_backend_dev_t;
++
++    // Optional diagnostic correlation for graph submissions on this thread.
++    // Zero disables tracing. No synchronization or wire changes.
++    GGML_API void ggml_backend_set_trace_batch(uint64_t batch);
+ 
+ 
+     //
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -14,7 +14,8 @@
+ #include "ggml-impl.h"
+ 
+ #include <assert.h>
+-#include <limits.h>
++#include <limits.h>
++#include <inttypes.h>
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -2207,7 +2208,13 @@
+     }
+ }
+ 
+-static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
++static thread_local uint64_t nodexlm_trace_batch = 0;
++
++void ggml_backend_set_trace_batch(uint64_t batch) {
++    nodexlm_trace_batch = batch;
++}
++
++static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
+     GGML_ASSERT(sched);
+     struct ggml_backend_sched_split * splits = sched->splits;
+ 
+@@ -2285,7 +2292,13 @@
+             }
+         }
+ 
+-        // record the event of this split
++        // Diagnostic event: a successful native submission, not GPU execution time.
++        if (nodexlm_trace_batch != 0 && !sched->callback_eval) {
++            fprintf(stderr, "NODEXLM_NATIVE_SPLIT batch=%" PRIu64 " split=%d nodes=%d backend=%s\n",
++                    nodexlm_trace_batch, split_id, split->graph.n_nodes, ggml_backend_name(split_backend));
++        }
++
++        // record the event of this split
+         if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+             ggml_backend_event_record(sched->events[split_backend_id][sched->cur_copy], split_backend);
+         }
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -25,7 +25,10 @@
+ 
+ #include <algorithm>
+ #include <cstddef>
+-#include <cinttypes>
++#include <cinttypes>
++#include <cstdlib>
++#include <cstdio>
++#include "ggml-backend.h"
+ #include <deque>
+ #include <exception>
+ #include <memory>
+@@ -1114,7 +1117,10 @@
+ 
+     std::unique_ptr<server_prompt_cache> prompt_cache;
+ 
+-    server_metrics metrics;
++    server_metrics metrics;
++
++    uint64_t nodexlm_trace_batch_id = 0;
++    bool nodexlm_trace_single = false;
+ 
+     // queued prompt stats - llama_decode() is async, so the timing is only valid after a sync
+     // note: kept out of server_metrics, which is copied as-is into the task result
+@@ -2138,7 +2144,14 @@
+         return true;
+     }
+ 
+-    bool process_token(completion_token_output & result, server_slot & slot) {
++    bool process_token(completion_token_output & result, server_slot & slot) {
++        if (nodexlm_trace_batch_id != 0) {
++            // Accepted native output token ordinal, not text or token vocabulary ID.
++            // Only single-slot, one-input, non-speculative generation is attributed.
++            fprintf(stderr, "NODEXLM_NATIVE_TOKEN batch=%" PRIu64 " task=%d slot=%d ordinal=%" PRIu64 " attributable=%d\n",
++                    nodexlm_trace_batch_id, slot.task->id, slot.id, (uint64_t) slot.stats.n_gen,
++                    int(nodexlm_trace_single && slot.stats.n_gen > 1));
++        }
+         // remember which tokens were sampled - used for repetition penalties during sampling
+         const std::string token_str = result.text_to_send;
+         slot.sampled = result.tok;
+@@ -4712,13 +4725,31 @@
+ 
+         // yield to the queue, so we can still handle metrics tasks while decoding
+         // note: the sync is done here too, so that the wait is also covered by the yield
+-        int ret = 0;
+-        queue_tasks.yield_to_queue([&]() {
+-            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());
+-            if (ret == 0 && has_output) {
+-                llama_synchronize(ctx_tgt);
+-            }
+-        });
++        static const bool trace = []() {
++            const char * v = std::getenv("NODEXLM_NATIVE_TOKEN_TRACE");
++            return v && v[0] == '1' && v[1] == '\0';
++        }();
++        static std::atomic<uint64_t> trace_seq{0};
++        nodexlm_trace_batch_id = trace ? ++trace_seq : 0;
++        nodexlm_trace_single = trace && slots.size() == 1 && !spec && !batch.has_embd() && batch.view.size() == 1 && has_output;
++        int ret = 0;
++        queue_tasks.yield_to_queue([&]() {
++            struct trace_scope {
++                bool active;
++                explicit trace_scope(uint64_t id) : active(id != 0) {
++                    if (active) ggml_backend_set_trace_batch(id);
++                }
++                ~trace_scope() { if (active) ggml_backend_set_trace_batch(0); }
++            } scope(nodexlm_trace_batch_id);
++            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());
++            if (ret == 0 && has_output) {
++                llama_synchronize(ctx_tgt);
++            }
++        });
++        if (nodexlm_trace_batch_id != 0) {
++            fprintf(stderr, "NODEXLM_NATIVE_BATCH batch=%" PRIu64 " inputs=%d status=%d output=%d\n",
++                    nodexlm_trace_batch_id, (int) batch.view.size(), ret, int(has_output));
++        }
+ 
+         if (ret != 0) {
+             {
