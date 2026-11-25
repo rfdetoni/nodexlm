@@ -129,3 +129,29 @@ func TestHostGPUDiscoveryUsesNativeNameAndFallback(t *testing.T) {
 		t.Fatalf("missing GPU must preserve CPU placement: %+v %d", unchanged, local)
 	}
 }
+
+func TestDetailedLayerPlacementChecksIndividualDeviceBudgets(t *testing.T) {
+	const mib = uint64(1 << 20)
+	guest := RPCGuest{ID: "node", CapacityBytes: 200 * mib,
+		RPCDeviceKinds: []string{"gpu", "cpu"}, GPUBudgetBytes: 60 * mib, RAMBudgetBytes: 140 * mib}
+	meta := local.GGUFInfo{BlockCount: 3, BlockBytes: []uint64{40 * mib, 60 * mib, 20 * mib}}
+	selection := clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}, GuestLayers: []int{3}}
+	plan := planRPCDevices(selection, []RPCGuest{guest}, meta, Settings{}, 120*mib)
+	if plan.DeviceArg() != "RPC0,RPC1" || plan.TensorSplitArg() != "1,2" {
+		t.Fatalf("unexpected detailed layer placement: %+v", plan)
+	}
+	guest.RAMBudgetBytes = 70 * mib
+	if plan := planRPCDevices(selection, []RPCGuest{guest}, meta, Settings{}, 120*mib); len(plan.Devices) != 0 {
+		t.Fatalf("unsafe device split was accepted: %+v", plan)
+	}
+}
+
+func TestDetailedLayerPlacementPreservesLegacyTopology(t *testing.T) {
+	t.Setenv("NODEXLM_GGUF_LAYER_BYTES", "1")
+	meta := local.GGUFInfo{BlockCount: 3, BlockBytes: []uint64{10, 20, 30}}
+	guest := RPCGuest{ID: "legacy", CapacityBytes: 100}
+	selection := clusterplan.Selection{LocalLayers: 1, Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}
+	if err := applyLayerBytes(meta, Settings{}, 60, 20, []RPCGuest{guest}, &selection); err != nil || selection.LocalLayers != 1 || len(selection.GuestLayers) != 0 {
+		t.Fatalf("legacy placement changed: %+v, %v", selection, err)
+	}
+}
