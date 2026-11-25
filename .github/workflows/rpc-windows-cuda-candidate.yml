@@ -59,7 +59,7 @@ jobs:
           fi
           git -C upstream apply "$GITHUB_WORKSPACE/scripts/optimized-rpc-backend-search.patch"
           # Turing (RTX 2060) and Ampere; PTX for later compatible devices.
-          cmake -S upstream -B native -G 'Visual Studio 17 2022' -A x64 \
+          cmake -S upstream -B native -G 'Visual Studio 17 2022' -A x64 -T "cuda=$CUDA_PATH" \
             '-DCMAKE_CUDA_ARCHITECTURES=75-real;86-real;86-virtual' \
             -DGGML_CUDA=ON -DGGML_RPC=ON -DGGML_RPC_RDMA=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
             -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
