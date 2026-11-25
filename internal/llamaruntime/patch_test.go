@@ -31,3 +31,51 @@ func TestCustomRuntimeMustAdvertiseUnixTransport(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeTraceAndExperimentalCUDACaches(t *testing.T) {
+	t.Setenv("NODEXLM_NATIVE_TOKEN_TRACE", "")
+	t.Setenv("NODEXLM_EXPERIMENTAL_CUDA", "")
+	home := t.TempDir()
+	normal := distributedDir(home, "cpu")
+	t.Setenv("NODEXLM_NATIVE_TOKEN_TRACE", "1")
+	if !nativeTraceBuild() || normal == distributedDir(home, "cpu") {
+		t.Fatal("trace runtime must use its own cache")
+	}
+	t.Setenv("NODEXLM_EXPERIMENTAL_CUDA", "1")
+	if experimentalCUDASelected("cuda") {
+		t.Fatal("trace cannot use uninstrumented experimental archive")
+	}
+	t.Setenv("NODEXLM_NATIVE_TOKEN_TRACE", "")
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		if experimentalCUDASelected("cuda") {
+			t.Fatal("unsupported experimental CUDA target")
+		}
+		return
+	}
+	if !experimentalCUDASelected("cuda") || experimentalCUDASelected("cpu") {
+		t.Fatal("experimental CUDA must be explicitly selected")
+	}
+	if digest, known := pinnedRPCDigest(experimentalCUDABaseURL, "cuda"); !known || digest != experimentalCUDADigest {
+		t.Fatal("missing pinned experimental checksum")
+	}
+	experimental := distributedDir(home, "cuda")
+	t.Setenv("NODEXLM_EXPERIMENTAL_CUDA", "")
+	if experimental == distributedDir(home, "cuda") {
+		t.Fatal("experimental CUDA must not overwrite normal runtime")
+	}
+}
+
+func TestSmolmaxSingleRowCacheIsolation(t *testing.T) {
+	t.Setenv("NODEXLM_NATIVE_TOKEN_TRACE", "")
+	t.Setenv("NODEXLM_SMOLMAX_SINGLE_ROW", "")
+	home := t.TempDir()
+	base := distributedDir(home, "cpu")
+	t.Setenv("NODEXLM_SMOLMAX_SINGLE_ROW", "1")
+	want := runtime.GOOS == "linux" && runtime.GOARCH == "arm64"
+	if smolmaxSingleRowBuild("cpu") != want || smolmaxSingleRowBuild("cuda") {
+		t.Fatal("unexpected Smolmax build selection")
+	}
+	if (distributedDir(home, "cpu") != base) != want {
+		t.Fatal("Smolmax cache selection mismatch")
+	}
+}

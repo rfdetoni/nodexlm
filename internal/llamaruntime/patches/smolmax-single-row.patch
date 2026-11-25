@@ -1,7 +1,7 @@
 diff --git a/ggml/src/ggml-cpu/binary-ops.cpp b/ggml/src/ggml-cpu/binary-ops.cpp
 --- a/ggml/src/ggml-cpu/binary-ops.cpp
 +++ b/ggml/src/ggml-cpu/binary-ops.cpp
-@@ -58,6 +58,24 @@
+@@ -58,6 +58,25 @@
      GGML_ASSERT( nb0 == sizeof(dst_t));
      GGML_ASSERT(nb00 == sizeof(src0_t));
  
@@ -9,6 +9,7 @@ diff --git a/ggml/src/ggml-cpu/binary-ops.cpp b/ggml/src/ggml-cpu/binary-ops.cpp
 +    // Adapted from smolmaxxing: distribute a long, single row across CPU workers.
 +    // Only same-shape contiguous tensors; retain upstream for views and broadcast.
 +    if (params->nth > 1 && ne00 >= 1024 && ggml_nrows(src0) == 1 &&
++            src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 &&
 +            ggml_are_same_shape(src0, src1) && dst->view_src == nullptr &&
 +            src0->view_src == nullptr && src1->view_src == nullptr &&
 +            ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && ggml_is_contiguous(dst)) {

@@ -395,6 +395,19 @@ func SupportsRPC(ctx context.Context, server string) bool {
 // libraries and must not be reused after upgrading the CLI.
 func distributedDir(home, backend string) string {
 	dir := installDir(home, backend) + "-rpc"
+	if nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
+		dir += "-" + revision.RPCRelease
+		if nativeTraceBuild() {
+			dir += "-native-trace-v1"
+		}
+		if smolmaxSingleRowBuild(backend) {
+			dir += "-smolmax-row-v1"
+		}
+		return dir
+	}
+	if experimentalCUDASelected(backend) {
+		return dir + "-" + experimentalCUDARelease
+	}
 	if publishedRPCSupported(backend) {
 		return dir + "-" + revision.RPCRelease
 	}
@@ -425,7 +438,19 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	// Prefer a ready-to-run, pinned RPC pair: ordinary Linux Guests should not
 	// need CMake, a compiler or root access just to join a trusted cluster.
 	var publishedErr error
-	if publishedRPCSupported(backend) {
+	if experimentalCUDASelected(backend) {
+		s, p, err := fetchPublishedRPC(ctx, home, backend, experimentalCUDABaseURL)
+		if err != nil {
+			return "", "", fmt.Errorf("verified experimental CUDA download: %w", err)
+		}
+		if !SupportsRPC(ctx, s) || !SupportsUnixRPC(ctx, s) {
+			return "", "", errors.New("experimental CUDA runtime failed RPC capability probe; check CUDA dependencies")
+		}
+		return s, p, nil
+	}
+	if nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
+		slog.Info("Opt-in native optimization requires a separate pinned source build")
+	} else if publishedRPCSupported(backend) {
 		slog.Info("Checking verified RPC runtime download", "platform", runtime.GOOS+"/"+runtime.GOARCH, "backend", backend, "release", revision.RPCRelease)
 		var s, p string
 		s, p, publishedErr = fetchPublishedRPC(ctx, home, backend, publishedRPCBaseURL)
@@ -485,7 +510,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	if err != nil || strings.TrimSpace(string(raw)) != SourceCommit {
 		return "", "", errors.New("pinned llama.cpp source commit mismatch")
 	}
-	if err := applyRPCPatch(ctx, src); err != nil {
+	if err := applyRPCPatch(ctx, src, backend); err != nil {
 		return "", "", err
 	}
 	build := filepath.Join(stage, "build")

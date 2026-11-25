@@ -11,4 +11,15 @@ This is a cold handoff, not live failover. No KV cache, running requests, privat
 3. Stop and unload the old Host and stop the destination's Guest. Start the new coordinator with `nodexlm host --dir /local/new-host`. It creates a new TLS identity and pairing code. Verify inference with the staged model; explicitly re-pair remaining Guests, including the former Host using `nodexlm guest --rejoin`.
 4. Rollback: stop the new Host, restart the original Host using its original directory, and re-pair nodes that changed enrollment. Do not run both coordinators as the same logical cluster. The source model and original Host identity were not modified.
 
-The CLI does not automate service shutdown, capacity placement, re-pairing or KV/session migration. No automatic role swap is claimed. A real distributed test on two devices remains required.
+## Optional automated Linux systemd cold switch
+
+For two trusted Linux machines using the stock `deploy/nodexlm.service` and `deploy/nodexlm-guest.service`, stage the model in the new Host's /var/lib/nodexlm/models and ensure the nodexlm service account owns the directory. The destination Host unit must be installed, inactive and disabled; the destination Guest and original Host must be active. Check capacity and drain requests first. Run during an exclusive maintenance window from a machine with trusted SSH host keys and noninteractive administrator access to the two systems:
+
+```sh
+python3 scripts/handoff-systemd.py --old old-host --new new-host \
+  --manifest handoff.json --confirm-cold-switch
+```
+
+This independently re-hashes the staged GGUFs, disables/stops the old Host and destination Guest before starting the destination Host, checks the local Web console and preserves the old Host's boot enablement state on the new Host. On failure it attempts to fence the destination before restoring the original services. If fencing cannot be confirmed, it deliberately does not restart the old Host. No forced reset, SSH host-key bypass or credential copying is performed. Do not use with custom service paths or ports without review.
+
+The script automates the cold service transition only; it does not transfer the model, migrate KV/cache/sessions, fence out-of-band manual starts, re-pair nodes, or verify physical inference. After success verify the model and re-pair Guests including the old Host. Automated rollback tests use mocked SSH/systemd; real two-device validation is still required.

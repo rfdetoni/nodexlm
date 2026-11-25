@@ -58,6 +58,15 @@ function renderActivity(data){
  const area=$('inferenceActivity');area.replaceChildren();
  if(!data?.in_flight){area.append(el('p','muted','Sem geração em andamento.'));renderTopology();return;}
  area.append(el('p','',data.in_flight+' geração(ões) · fase '+data.phase),el('p','muted',data.notice+' Resolução nominal '+data.sampling_ms+' ms.'));
+ const native=data.native_tokens||[];
+ if(native.length){
+  area.append(el('p','','Atividade nativa · últimos '+native.length+' tokens atribuíveis'));
+  for(const item of native.slice(-5)){
+   const splits=(item.splits||[]).map(split=>split.backend+': '+split.count+' envio(s) de grafo').join(' · ');
+   area.append(el('p','muted','Token '+item.ordinal+' · lote '+item.batch+' · '+splits));
+  }
+  area.append(el('p','muted','Submissões nativas, não utilização, latência ou tempo de GPU. Nomes de backend reportados pelo runtime.'));
+ }
  const active=[];
  for(const node of data.nodes||[]){
   const name=topologySnapshot?.nodes?.find(n=>n.node_id===node.node_id)?.name||node.node_id;

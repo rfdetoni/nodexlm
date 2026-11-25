@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/config"
@@ -64,6 +65,7 @@ type Managed struct {
 	endpoint       *Engine
 	idleTimer      *time.Timer
 	systemInfo     string
+	nativeActivity atomic.Pointer[nativeTrace]
 }
 
 // nativeProcessExit ensures the child is reaped exactly once, even if it exits
@@ -162,6 +164,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 			m.endpoint = nil
 		}
 	}
+	m.nativeActivity.Store(nil)
 	if EffectiveBackend(m.Backend) == BackendLlama && (m.Binary == "" || m.Binary == "llama-server") {
 		executable, err := llamaruntime.AutoExecutable(ctx, config.DefaultDir(), m.Binary)
 		if err != nil {
@@ -261,6 +264,11 @@ func (m *Managed) ensure(ctx context.Context) error {
 	stderr := &nativeLogTail{}
 	cmd.Stdout = io.MultiWriter(debuglog.NativeOutput(), stderr)
 	cmd.Stderr = io.MultiWriter(debuglog.NativeOutput(), stderr)
+	var trace *nativeTrace
+	if EffectiveBackend(m.Backend) == BackendLlama && os.Getenv("NODEXLM_NATIVE_TOKEN_TRACE") == "1" {
+		trace = &nativeTrace{}
+		cmd.Stderr = io.MultiWriter(cmd.Stderr, trace)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to launch %s: %w", EffectiveBackend(m.Backend), err)
 	}
@@ -321,6 +329,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 			m.processExit = exit
 			m.endpoint = endpoint
 			m.systemInfo = stderr.SystemInfo()
+			m.nativeActivity.Store(trace)
 			slog.Info("Native inference model ready", "backend", EffectiveBackend(m.Backend),
 				"elapsed_seconds", int(time.Since(startedAt).Seconds()), "rpc_guests", len(m.RPCServers))
 			return nil
@@ -339,6 +348,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	}
 }
 func (m *Managed) stopLocked() {
+	m.nativeActivity.Store(nil)
 	if m.started != nil {
 		_ = m.started.Process.Kill()
 		if m.processExit != nil {
