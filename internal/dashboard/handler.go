@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/rfdetoni/nodexlm/internal/catalog"
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
