@@ -1,10 +1,14 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/local"
 )
 
@@ -192,17 +196,65 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 
 func effectiveHostRuntimeBackend(hostGPU string) string {
 	switch hostGPU {
-	case "vulkan", "cpu":
+	case "vulkan", "cpu", "metal":
 		return hostGPU
 	default:
 		return "auto"
 	}
 }
 
-// withHostVulkan prepends the Host's Vulkan0 device to an RPC placement when
-// explicitly requested, proportional to local vs remote layer counts.
-func withHostVulkan(plan RPCDevicePlacement, localLayers int, blocks uint32, hostGPU, gpuLayers string) (RPCDevicePlacement, int) {
-	if hostGPU != "vulkan" || gpuLayers == "0" || localLayers <= 0 || int(blocks) <= localLayers || len(plan.Devices) == 0 {
+// discoverHostGPU uses the resolved llama-server registry rather than guessed names.
+func discoverHostGPU(ctx context.Context, binary, backend string) string {
+	if backend != "vulkan" && backend != "metal" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "--list-devices")
+	cmd.Env = llamaruntime.NativeEnvironment(binary)
+	out, err := cmd.CombinedOutput()
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	return parseHostGPU(string(out), backend)
+}
+
+func parseHostGPU(output, backend string) string {
+	if backend != "vulkan" && backend != "metal" {
+		return ""
+	}
+	inList := false
+	found := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "Available devices:" {
+			inList = true
+			continue
+		}
+		if !inList {
+			continue
+		}
+		name, description, ok := strings.Cut(line, ":")
+		if !ok || !strings.Contains(description, "MiB free)") {
+			if found != "" {
+				break
+			}
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(name), backend) || strings.ContainsAny(name, " \t,\r\n") {
+			continue
+		}
+		if found != "" && found != name {
+			return "" // do not guess multi-GPU mapping
+		}
+		found = name
+	}
+	return found
+}
+
+// withHostGPU prepends only a confirmed native device, preserving split math.
+func withHostGPU(plan RPCDevicePlacement, localLayers int, blocks uint32, backend, device, gpuLayers string) (RPCDevicePlacement, int) {
+	if (backend != "vulkan" && backend != "metal") || device == "" || gpuLayers == "0" || localLayers <= 0 || int(blocks) <= localLayers || len(plan.Devices) == 0 {
 		return plan, localLayers
 	}
 	remoteLayers := uint64(int(blocks) - localLayers)
@@ -217,11 +269,11 @@ func withHostVulkan(plan RPCDevicePlacement, localLayers int, blocks uint32, hos
 	} else {
 		plan.Split = []uint64{uint64(localLayers), remoteLayers}
 	}
-	plan.Devices = append([]string{"Vulkan0"}, plan.Devices...)
+	plan.Devices = append([]string{device}, plan.Devices...)
 	if plan.Modes == nil {
 		plan.Modes = make(map[string]string)
 	}
-	plan.Modes["host"] = "vulkan"
+	plan.Modes["host"] = backend
 	return plan, 0
 }
 

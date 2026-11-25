@@ -131,3 +131,7 @@ Autotune usa RTT >15 ms ou eco <25 MiB/s para testar microbatch 128/256, links r
 ## Transporte (WP6)
 
 O marcador 2 legado aceita dois exchanges; o Host usa quatro túneis autenticados separados (warmup descartado + três pares medidos), com mediana, amplitude e deadline total de 15 s. Sem novo marcador. O watcher ocioso bloqueia em Read e o claim interrompe por deadline antes de entregar o socket; TLS 1.3 pode reutilizar sessões por cliente pareado, preservando VerifyConnection e ALPN HTTP/1.1. Medições separadas up/down exigem negociação futura.
+
+## GPU do Host (WP9)
+
+Metal é uma opção explícita para macOS. Em cargas distribuídas e benchmarks de cluster, a enumeração `--list-devices` do próprio llama-server resolvido confirma o nome da GPU Vulkan ou Metal antes de inseri-la no split. Sem confirmação ou com múltiplas GPUs, mantém a distribuição CPU/RPC; não presume Vulkan0 ou Metal0. CUDA e mapeamento multi-GPU ficam fora do escopo. Testes físicos em Mac permanecem necessários.

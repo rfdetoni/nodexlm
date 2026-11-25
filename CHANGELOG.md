@@ -2,6 +2,10 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## GPU do Host — WP9
+
+- Metal opt-in e enumeração do dispositivo nativo confirmado para Vulkan/Metal no load e benchmark de cluster; fallback CPU quando não confirmado.
+
 ## Decision workers — WP8
 
 - Ranking opt-in com EWMA, p95, in-flight e prioridade de nós ociosos; preserva penalidades térmicas/bateria e leases.

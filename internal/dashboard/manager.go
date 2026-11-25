@@ -264,8 +264,8 @@ func (m *Manager) validate(s Settings) error {
 		(s.BatchSize > 0 && s.UBatchSize > s.BatchSize) {
 		return errors.New("invalid batch_size or ubatch_size")
 	}
-	if s.HostGPU != "" && s.HostGPU != "auto" && s.HostGPU != "cpu" && s.HostGPU != "vulkan" {
-		return errors.New("host_gpu must be auto, cpu or vulkan")
+	if s.HostGPU != "" && s.HostGPU != "auto" && s.HostGPU != "cpu" && s.HostGPU != "vulkan" && s.HostGPU != "metal" {
+		return errors.New("host_gpu must be auto, cpu, vulkan or metal")
 	}
 	if s.SpeculativeMode != "" && s.SpeculativeMode != "off" && s.SpeculativeMode != "ngram" && s.SpeculativeMode != "draft" {
 		return errors.New("speculative_mode must be off, ngram or draft")
@@ -484,6 +484,7 @@ func (m *Manager) load(ctx context.Context) error {
 	rpcEndpoints := []string(nil)
 	localLayers := 0
 	var devicePlacement RPCDevicePlacement
+	var modelBlocks uint32
 	if s.Distributed {
 		m.setPhase("selecting_guests")
 		// The Host can still load locally if there are no RPC Guests,
@@ -514,7 +515,7 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		localLayers = selection.LocalLayers
 		devicePlacement = planRPCDevices(selection, guests, model, s, uint64(size))
-		devicePlacement, localLayers = withHostVulkan(devicePlacement, localLayers, model.BlockCount, s.HostGPU, s.GPULayers)
+		modelBlocks = model.BlockCount
 		selectedIDs := make([]string, 0, len(selection.Guests))
 		for _, candidate := range selection.Guests {
 			selectedIDs = append(selectedIDs, candidate.ID)
@@ -580,8 +581,8 @@ func (m *Manager) load(ctx context.Context) error {
 		resolved = ""
 	} else if usingRPC && (m.binary == "" || m.binary == "llama-server") {
 		resolved, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, effectiveHostRuntimeBackend(s.HostGPU))
-	} else if (m.binary == "" || m.binary == "llama-server") && effectiveHostRuntimeBackend(s.HostGPU) == "vulkan" {
-		resolved, _, err = llamaruntime.Ensure(ctx, m.dir, "vulkan")
+	} else if (m.binary == "" || m.binary == "llama-server") && (s.HostGPU == "vulkan" || s.HostGPU == "metal") {
+		resolved, _, err = llamaruntime.Ensure(ctx, m.dir, s.HostGPU)
 	} else {
 		resolved, err = llamaruntime.AutoExecutable(ctx, m.dir, m.binary)
 	}
@@ -590,6 +591,10 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	if usingRPC && !llamaruntime.SupportsRPC(ctx, resolved) {
 		return errors.New("llama-server was built without GGML_RPC; use the bundled RPC runtime")
+	}
+	if usingRPC && len(devicePlacement.Devices) > 0 && localLayers > 0 && s.GPULayers != "0" {
+		device := discoverHostGPU(ctx, resolved, s.HostGPU)
+		devicePlacement, localLayers = withHostGPU(devicePlacement, localLayers, modelBlocks, s.HostGPU, device, s.GPULayers)
 	}
 	draftPath, err := m.resolveDraftModel(s)
 	if err != nil {

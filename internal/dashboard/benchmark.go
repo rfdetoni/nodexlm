@@ -105,8 +105,8 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 			binary, _, err = llamaruntime.EnsureDistributed(ctx, m.dir, effectiveHostRuntimeBackend(settings.HostGPU))
 		}
 	} else {
-		if (binary == "" || binary == "llama-server") && effectiveHostRuntimeBackend(settings.HostGPU) == "vulkan" {
-			binary, _, err = llamaruntime.Ensure(ctx, m.dir, "vulkan")
+		if (binary == "" || binary == "llama-server") && (settings.HostGPU == "vulkan" || settings.HostGPU == "metal") {
+			binary, _, err = llamaruntime.Ensure(ctx, m.dir, settings.HostGPU)
 		} else {
 			binary, err = llamaruntime.AutoExecutable(ctx, m.dir, binary)
 		}
@@ -132,7 +132,11 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 		if len(selection.Guests) == 0 {
 			return InferenceSample{}, errors.New("placement selected Host only; choose capacity strategy to measure a cluster")
 		}
-		placement, layers := withHostVulkan(planRPCDevices(selection, guests, meta, settings, uint64(size)), selection.LocalLayers, meta.BlockCount, settings.HostGPU, settings.GPULayers)
+		placement, layers := planRPCDevices(selection, guests, meta, settings, uint64(size)), selection.LocalLayers
+		if len(placement.Devices) > 0 && layers > 0 && settings.GPULayers != "0" {
+			device := discoverHostGPU(ctx, binary, settings.HostGPU)
+			placement, layers = withHostGPU(placement, layers, meta.BlockCount, settings.HostGPU, device, settings.GPULayers)
+		}
 		for _, selected := range selection.Guests {
 			for _, guest := range guests {
 				if selected.ID == guest.ID {

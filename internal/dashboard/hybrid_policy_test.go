@@ -92,7 +92,7 @@ func TestWithHostVulkanPrependsHostDeviceAndClearsLocalLayers(t *testing.T) {
 		Split:   []uint64{4096},
 		Modes:   map[string]string{"guest": "gpu"},
 	}
-	got, local := withHostVulkan(base, 50, 65, "vulkan", "auto")
+	got, local := withHostGPU(base, 50, 65, "vulkan", "Vulkan0", "auto")
 	if local != 0 {
 		t.Fatalf("expected localLayers=0 when Host uses Vulkan0, got %d", local)
 	}
@@ -103,12 +103,29 @@ func TestWithHostVulkanPrependsHostDeviceAndClearsLocalLayers(t *testing.T) {
 		t.Fatalf("expected Host split > remote split for 50/15 layers, got %+v", got.Split)
 	}
 	// Disabled when host_gpu != vulkan or gpu_layers == 0.
-	unchanged, loc2 := withHostVulkan(base, 50, 65, "auto", "auto")
+	unchanged, loc2 := withHostGPU(base, 50, 65, "auto", "", "auto")
 	if loc2 != 50 || unchanged.DeviceArg() != "RPC0" {
 		t.Fatalf("auto host_gpu unexpectedly enabled Vulkan0: %+v %d", unchanged, loc2)
 	}
-	zeroGPU, loc3 := withHostVulkan(base, 50, 65, "vulkan", "0")
+	zeroGPU, loc3 := withHostGPU(base, 50, 65, "vulkan", "Vulkan0", "0")
 	if loc3 != 50 || zeroGPU.DeviceArg() != "RPC0" {
 		t.Fatalf("gpu_layers=0 unexpectedly enabled Vulkan0: %+v %d", zeroGPU, loc3)
+	}
+}
+
+func TestHostGPUDiscoveryUsesNativeNameAndFallback(t *testing.T) {
+	output := "Available devices:\n  MetalCustom: Apple GPU (8192 MiB, 4096 MiB free)\n"
+	device := parseHostGPU(output, "metal")
+	plan := RPCDevicePlacement{Devices: []string{"RPC0"}, Split: []uint64{10}}
+	got, local := withHostGPU(plan, 20, 40, "metal", device, "auto")
+	if local != 0 || got.DeviceArg() != "MetalCustom,RPC0" || got.Modes["host"] != "metal" {
+		t.Fatalf("wrong confirmed Metal device: %+v %d", got, local)
+	}
+	if name := parseHostGPU(output+"  MetalOther: GPU (4096 MiB, 2048 MiB free)\n", "metal"); name != "" {
+		t.Fatal("ambiguous multi-GPU device must not be guessed")
+	}
+	unchanged, local := withHostGPU(plan, 20, 40, "metal", parseHostGPU("Available devices:\n  (none)\n", "metal"), "auto")
+	if local != 20 || unchanged.DeviceArg() != "RPC0" {
+		t.Fatalf("missing GPU must preserve CPU placement: %+v %d", unchanged, local)
 	}
 }
