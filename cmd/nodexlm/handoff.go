@@ -21,15 +21,15 @@ const handoffMaxBytes = 150 << 30
 const handoffManifestLimit = 64 << 10
 
 type handoffPart struct {
-	Name string `json:"name"`
-	Size int64 `json:"size"`
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
 }
 
 type handoffManifest struct {
-	Version int `json:"version"`
-	Model string `json:"model"`
-	Parts []handoffPart `json:"parts"`
+	Version int           `json:"version"`
+	Model   string        `json:"model"`
+	Parts   []handoffPart `json:"parts"`
 }
 
 func handoffNames(model string) ([]string, error) {
@@ -46,7 +46,7 @@ func handoffNames(model string) ([]string, error) {
 
 type handoffReader struct {
 	ctx context.Context
-	r io.Reader
+	r   io.Reader
 }
 
 func (r handoffReader) Read(p []byte) (int, error) {
