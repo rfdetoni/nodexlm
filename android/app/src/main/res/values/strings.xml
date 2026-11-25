@@ -254,4 +254,6 @@
     <string name="rpc_rust_transport">Experimental Rust RPC transport (restart Guest to apply)</string>
     <string name="rpc_efficient_cores">Prefer efficient cores for Rust RPC (experimental)</string>
     <string name="rpc_dedicated_guest">Dedicated Guest: close interface after starting</string>
+    <string name="rpc_compression">Experimental RPC compression (Java transport only; restart Guest)</string>
+    <string name="rpc_cpu_affinity">Prefer performance cores for native CPU-only RPC (experimental; restart Guest)</string>
 </resources>

@@ -46,7 +46,8 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 	// Leave existing busy sessions alone. With just one idle slot, wait
 	// for its normal authenticated replacement after warmup.
 	pairs := min(3, max(1, r.idleCount()-1))
-	for i := 0; i <= pairs; i++ {
+	clockRetries := 0
+	for i := 0; i <= pairs; {
 		var conn net.Conn
 		for conn == nil {
 			if candidate := r.takeIdle(); candidate != nil {
@@ -65,6 +66,12 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 		sample, err := benchmarkPair(pairCtx, id, conn)
 		pairCancel()
 		r.finish(conn)
+		// Some virtualized clocks have coarse resolution or transient zero
+		// deltas. Discard only those samples, never manufacture a throughput.
+		if errors.Is(err, errBenchmarkClock) && clockRetries < 3 && ctx.Err() == nil {
+			clockRetries++
+			continue
+		}
 		if err != nil {
 			return Measurement{}, fmt.Errorf("RPC benchmark pair %d/%d (5s limit, 15s total): %w", i+1, pairs+1, err)
 		}
@@ -77,6 +84,7 @@ func (h *Hub) Benchmark(ctx context.Context, id string) (Measurement, error) {
 			}
 			last = sample
 		}
+		i++
 	}
 	slices.Sort(rtt)
 	slices.Sort(rates)
@@ -146,7 +154,11 @@ func benchmarkPair(ctx context.Context, id string, conn net.Conn) (Measurement, 
 	if err != nil {
 		return Measurement{}, err
 	}
-	sample := Measurement{NodeID: id, MeasuredAt: time.Now(), RoundTripMS: float64(ping) / float64(time.Millisecond), MiBPerSecond: 2 / elapsed.Seconds(), Bytes: 2 << 20}
+	rate, err := measuredRate(2<<20, elapsed)
+	if err != nil || ping < 0 {
+		return Measurement{}, errBenchmarkClock
+	}
+	sample := Measurement{NodeID: id, MeasuredAt: time.Now(), RoundTripMS: float64(ping) / float64(time.Millisecond), MiBPerSecond: rate, Bytes: 2 << 20}
 	if marker == 3 {
 		upload, download, err := directionalHost(conn)
 		if err != nil {

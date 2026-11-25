@@ -254,4 +254,6 @@
     <string name="rpc_rust_transport">Transporte RPC Rust experimental (reinicie o Guest para aplicar)</string>
     <string name="rpc_efficient_cores">Preferir núcleos eficientes para RPC Rust (experimental)</string>
     <string name="rpc_dedicated_guest">Guest dedicado: fechar interface após iniciar</string>
+    <string name="rpc_compression">Compressão RPC experimental (somente transporte Java; reinicie o Guest)</string>
+    <string name="rpc_cpu_affinity">Preferir núcleos rápidos para RPC nativo somente CPU (experimental; reinicie o Guest)</string>
 </resources>

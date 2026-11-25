@@ -14,7 +14,7 @@ internal object NativeRpc {
     external fun initBackends(nativeLibDir: String)
     /** Count faster CPU cores within the current Android cpuset, with safe fallback. */
     external fun recommendedThreads(logical: Int): Int
-    external fun start(threads: Int, mode: String, socketPath: String): String
+    external fun start(threads: Int, mode: String, socketPath: String, performanceAffinity: Boolean): String
     /** Request socket shutdown and join after backend cleanup; false on timeout. */
     external fun stopAndJoin(timeoutMs: Int): Boolean
     /** Reports whether the native GGML RPC server thread is still running. */

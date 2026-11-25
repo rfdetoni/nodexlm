@@ -1,7 +1,7 @@
 name: Portable RPC bundles
+# Build immutable candidate once, promote reviewed hashes rather than rebuild.
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
 concurrency:
@@ -106,16 +106,27 @@ jobs:
               (p.parent/(p.name+'.sha256')).write_text(digest+'  '+p.name+'\n')
           PY
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        if: matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu'
         with: {go-version-file: go.mod, cache: true}
-      - name: Native Unix RPC end-to-end
-        if: matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu'
+      - name: Software Vulkan driver for CI
+        if: matrix.backend == 'vulkan' && matrix.os == 'linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers
+      - name: Native RPC end-to-end against the candidate bundle
+        shell: bash
+        env:
+          GGML_METAL_DEVICES: 0
+          NODEXLM_TEST_RPC_DEVICE: ${{ (matrix.os == 'darwin' || (matrix.os == 'windows' && matrix.backend == 'vulkan')) && 'CPU' || '' }}
+          NODEXLM_TEST_GPU_LAYERS: ${{ (matrix.os == 'darwin' || (matrix.os == 'windows' && matrix.backend == 'vulkan')) && '0' || 'auto' }}
+          NODEXLM_TEST_GUEST_COUNT: ${{ matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu' && '2' || '1' }}
+          NODEXLM_TEST_DEVICE_MICROBENCH: ${{ matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu' && '1' || '0' }}
+          NODEXLM_RPC_DIRECTIONAL_BENCH: '1'
+          NODEXLM_PARALLEL_RPC_UPLOAD: '1'
+          NODEXLM_RPC_DIR: ${{ github.workspace }}/stage
+          NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
         run: |
           curl -fsSL --retry 3 https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -o tiny.gguf
-          echo '270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d  tiny.gguf' | sha256sum -c -
-          go build -o nodexlm ./cmd/nodexlm
-          NODEXLM_TEST_GUEST_COUNT=2 NODEXLM_PARALLEL_RPC_UPLOAD=1 \
-            NODEXLM_RPC_DIR="$PWD/stage" NODEXLM_TEST_MODEL="$PWD/tiny.gguf" python3 scripts/e2e-rpc.py
+          python3 -c 'import hashlib,pathlib; assert hashlib.sha256(pathlib.Path("tiny.gguf").read_bytes()).hexdigest()=="270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d"'
+          go build -o nodexlm${{ matrix.os == 'windows' && '.exe' || '' }} ./cmd/nodexlm
+          python3 scripts/e2e-rpc.py
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with: {subject-path: 'dist/*.tar.gz'}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

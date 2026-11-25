@@ -39,3 +39,7 @@ Loaded topology is a snapshot of successful native launch arguments, with estima
 ### Primary weight node
 
 Optional `primary_node` selects the Host or a ready Guest and prioritizes its estimated weight share rather than decode speed. Empty/auto preserves the previous planner; capacity retains all usable Guests. Admission uses per-device budgets and context estimates; legacy topology falls back to proportional allocation with an explanation. An offline explicit primary is rejected. The server and coordinator remain on the Host; hardware A/B is required to establish speed gains.
+
+### r4 migration
+
+The stable llama.cpp v1.0.0 uses RPC 10.0; upgrade all Hosts and Guests together. The v1.0.0 release contains a nightly marker rather than binary assets, so matching NodexLM bundles are built from its exact pinned commit. The matching six bundles are published and pinned. Roll back the whole cluster to r3 together if necessary.

@@ -9,9 +9,11 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 )
 
-// A deterministic GGML RPC v9 fixture. The real native server runs on device;
+// A deterministic GGML RPC fixture. The real native server runs on device;
 // this verifies the exact wire format and rejects a silently corrupted tensor.
 func serveProbeRPC(conn net.Conn, corrupt bool) error {
 	return serveSizedProbeRPC(conn, corrupt, false)
@@ -54,7 +56,7 @@ func serveSizedProbeRPC(conn net.Conn, corrupt, large bool) error {
 				return fmt.Errorf("HELLO size %d", len(data))
 			}
 			resp := make([]byte, 28)
-			resp[0] = 9 // protocol v9, not HTTP or v8
+			resp[0], resp[1] = llamaruntime.RPCProtocolVersion()
 			if err := response(resp); err != nil {
 				return err
 			}

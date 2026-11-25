@@ -3,6 +3,7 @@ package rpcmesh
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -46,5 +47,16 @@ func TestDirectionalCapabilityPreservesLegacyEcho(t *testing.T) {
 		if sample.MiBPerSecond <= 0 || (sample.DirectionalSamples == 1) != supported || supported && (sample.UploadMiBPerSecond <= 0 || sample.DownloadMiBPerSecond <= 0) {
 			t.Fatalf("invalid negotiated measurement: %+v", sample)
 		}
+	}
+}
+
+func TestBenchmarkRejectsInvalidClockWithoutNonFiniteRates(t *testing.T) {
+	for _, elapsed := range []time.Duration{0, -time.Millisecond} {
+		if rate, err := measuredRate(2<<20, elapsed); rate != 0 || !errors.Is(err, errBenchmarkClock) {
+			t.Fatalf("invalid clock: rate=%v err=%v", rate, err)
+		}
+	}
+	if rate, err := measuredRate(2<<20, 500*time.Millisecond); err != nil || rate != 4 {
+		t.Fatalf("valid rate: %v %v", rate, err)
 	}
 }

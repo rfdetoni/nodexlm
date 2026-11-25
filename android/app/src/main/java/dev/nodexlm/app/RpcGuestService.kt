@@ -58,6 +58,8 @@ class RpcGuestService : Service() {
         const val EXTRA_MODE = "mode"
         const val EXTRA_RUST_TRANSPORT = "rust_transport"
         const val EXTRA_EFFICIENT_CORES = "efficient_cores"
+        const val EXTRA_COMPRESSION = "rpc_compression"
+        const val EXTRA_CPU_AFFINITY = "rpc_cpu_affinity"
         private const val CHANNEL = "nodexlm_rpc_guest"
         private const val LOG = "NodexLM-RpcGuest"
 
@@ -152,7 +154,8 @@ class RpcGuestService : Service() {
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
                 rpcSocket=socketFile.absolutePath
                 NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
-                val message = NativeRpc.start(threads, mode, rpcSocket)
+                val message = NativeRpc.start(threads, mode, rpcSocket,
+                    intent.getBooleanExtra(EXTRA_CPU_AFFINITY, false))
                 check(message.isEmpty()) { message }
                 nativeStarted = true
                 awaitNativeRPC()
@@ -211,7 +214,8 @@ class RpcGuestService : Service() {
                             var retryCeiling = 10_000L
                             var failed = false
                             try {
-                                connectAndRelay(slot, host, port, node, token, sslContext)
+                                connectAndRelay(slot, host, port, node, token, sslContext,
+                                    intent.getBooleanExtra(EXTRA_COMPRESSION, false))
                                 backoff = 1000L
                             } catch (e: SecurityException) {
                                 Log.e(LOG, "RPC Host rejected credentials; stopping Guest", e)
@@ -557,7 +561,7 @@ class RpcGuestService : Service() {
     }
 
     private fun connectAndRelay(slot: Int, host: String, port: Int, node: String,
-                                token: String, ssl: SSLContext) {
+                                token: String, ssl: SSLContext, compression: Boolean) {
         // Keep the concrete SSLSocket type: the generic socket tracker returns
         // Socket and would erase SSL parameters/handshake APIs at compile time.
         val remote = ssl.socketFactory.createSocket() as SSLSocket
@@ -595,7 +599,9 @@ class RpcGuestService : Service() {
             val request = "CONNECT /v1/nodes/rpc/tunnel HTTP/1.1\r\n" +
                 "Host: $host:$port\r\n" +
                 "Authorization: Bearer $token\r\n" +
-                "X-Nodex-Node: $node\r\n\r\n"
+                "X-Nodex-Node: $node\r\n" +
+                "X-Nodex-RPC-Capabilities: directional-v1" +
+                (if (compression) ",deflate-v1" else "") + "\r\n\r\n"
             remote.outputStream.write(request.toByteArray(Charsets.US_ASCII))
             remote.outputStream.flush()
             val status = readStatus(remote.inputStream)
@@ -607,7 +613,7 @@ class RpcGuestService : Service() {
             }
             remote.soTimeout = 0
             val marker = remote.inputStream.read()
-            if (marker == 2) {
+            if (marker == 2 || marker == 3) {
                 remote.soTimeout = 15_000
                 val input = java.io.DataInputStream(remote.inputStream)
                 repeat(2) {
@@ -623,9 +629,10 @@ class RpcGuestService : Service() {
                     }
                     remote.outputStream.flush()
                 }
+                if (marker == 3) RpcFrameCodec.directional(input, remote.outputStream)
                 return
             }
-            check(marker == 1) { "Missing Host RPC relay marker" }
+            check(marker == 1 || (marker == 4 && compression)) { "Missing Host RPC relay marker" }
             claimedNativeRelays.incrementAndGet()
             try {
             if (running.get() && !draining.get()) expandTunnels?.invoke()
@@ -663,16 +670,19 @@ class RpcGuestService : Service() {
                             val input = local.getInputStream()
                             val output = remote.outputStream
                             val buffer = ByteArray(128 * 1024)
+                            val framed = if (marker == 4) RpcFrameCodec.Writer(output) else null
+                            try {
                             while (running.get()) {
                                 val n = input.read(buffer)
                                 if (n < 0) break
                                 if (n == 0) continue
-                                output.write(buffer, 0, n)
+                                if (framed != null) framed.write(buffer, n) else output.write(buffer, 0, n)
                                 if (fromNative.getAndAdd(n.toLong()) == 0L) {
                                     RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.HOST_FIRST_RESPONSE, slot.toLong())
                                     Log.i(LOG, "RPC tunnel $slot received first native response ($n bytes)")
                                 }
                             }
+                            } finally { framed?.close() }
                         } catch (e: Exception) {
                             if (running.get()) Log.w(LOG, "RPC tunnel $slot native->Host relay failed", e)
                         } finally {
@@ -683,8 +693,10 @@ class RpcGuestService : Service() {
                         val input = remote.inputStream
                         val output = local.getOutputStream()
                         val buffer = ByteArray(128 * 1024)
+                        val framed = if (marker == 4) RpcFrameCodec.Reader(input) else null
+                        try {
                         while (running.get()) {
-                            val n = input.read(buffer)
+                            val n = framed?.read(buffer) ?: input.read(buffer)
                             if (n < 0) break
                             if (n == 0) continue
                             output.write(buffer, 0, n)
@@ -693,6 +705,7 @@ class RpcGuestService : Service() {
                                 Log.i(LOG, "RPC tunnel $slot delivered first Host request to native server ($n bytes)")
                             }
                         }
+                        } finally { framed?.close() }
                     } catch (e: Exception) {
                         if (running.get()) Log.w(LOG, "RPC tunnel $slot Host->native relay failed", e)
                     } finally {

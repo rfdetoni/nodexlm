@@ -7,6 +7,11 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 - Reutiliza cache Go e cache nativo Android limitado; APK integral em PR somente para mudanças nativas/build, Kotlin e recursos usam checks leves. APK assinado continua automático na main.
 - Matrizes nativas de seis plataformas, smoke multiplataforma, SDK oficial completo e cross-build Windows E2E ficam sob dispatch explícito. Publicação usa artefatos revisados, não recompilação no merge. Segurança mantém govulncheck nos arquivos relevantes e agenda semanal. Builds edge obsoletos são cancelados; tags e assinatura preservados.
 
+## Runtime v1.0.0 (r4)
+
+- Ativa RPC 10.0 com seis bundles publicados e verificados. Atualize Host e Guests juntos; não há compatibilidade RPC 9.
+- Android Java: compressão RPC negociada e afinidade opt-in do servidor CPU-only. Rust permanece sem compressão.
+
 ## Runtime experimental
 
 - Compressão lossless opt-in de transporte RPC (Go), negociada por túnel, frames limitados e fallback incompressível/legado. Métricas distinguem payload nativo e bytes de framing; validação Android e A/B físicos ainda pendentes.
