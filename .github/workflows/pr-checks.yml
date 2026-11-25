@@ -4,6 +4,7 @@ name: PR Go checks
 # Avoid running all-platform builds or publishing releases on pull requests.
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
     paths:
       - '**/*.go'
       - 'go.mod'
@@ -26,6 +27,7 @@ concurrency:
 
 jobs:
   go:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Go tests, race and vet
     runs-on: ubuntu-latest
     timeout-minutes: 20
