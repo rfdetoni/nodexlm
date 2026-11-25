@@ -49,6 +49,7 @@ type Settings struct {
 	MoECacheCPUShare  float64 `json:"moe_cache_cpu_share,omitempty"`
 	Distributed       bool    `json:"distributed"`
 	PlacementStrategy string  `json:"placement_strategy,omitempty"`
+	PrimaryNode       string  `json:"primary_node,omitempty"`
 	FlashAttention    string  `json:"flash_attention,omitempty"`
 	KVCacheType       string  `json:"kv_cache_type,omitempty"`
 	BatchSize         int     `json:"batch_size,omitempty"`
@@ -237,6 +238,9 @@ func (m *Manager) DownloadState() *Download {
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
+	if explicitPrimary(s.PrimaryNode) && s.PrimaryNode != "host" && !s.Distributed {
+		return errors.New("Guest principal exige distribuição RPC habilitada")
+	}
 	backend := local.EffectiveBackend(s.Backend)
 	if backend != local.BackendLlama && backend != local.BackendMistralRS {
 		return errors.New("unsupported backend; select llama.cpp or mistralrs")
@@ -319,7 +323,7 @@ func (m *Manager) Update(s Settings) error {
 	// Benchmarks are only comparable when the native inference configuration
 	// is unchanged. Do not allow stale tokens/s to drive placement decisions.
 	old := m.settings
-	if old.Backend != s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
+	if old.PrimaryNode != s.PrimaryNode || old.Backend != s.Backend || old.Threads != s.Threads || old.ContextTokens != s.ContextTokens ||
 		old.ThreadsBatch != s.ThreadsBatch || old.ParallelSlots != s.ParallelSlots || old.PromptCacheMiB != s.PromptCacheMiB || old.LoadMode != s.LoadMode || old.LazyMode != s.LazyMode || old.NUMA != s.NUMA ||
 		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
 		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB || old.MoECacheCPUShare != s.MoECacheCPUShare ||

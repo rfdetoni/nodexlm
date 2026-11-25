@@ -4,6 +4,8 @@ O projeto está em fase alpha. Este registro descreve alterações do código, n
 
 ## Correções da auditoria
 
+- FEAT3: preferência explícita de nó principal, com admissão conservadora por dispositivo e preview compartilhando a decisão de load; automático permanece padrão.
+
 - FEAT1: topologia do runtime carregado, atividade por tráfego RPC sob demanda e bytes por Guest na resposta do Chat; faixas e atividade explicitamente estimadas.
 
 - FEAT2: cancelamento administrativo do carregamento primário com estado cancelando/cancelado e encerramento do runtime, sem afetar outros trabalhos do pool.

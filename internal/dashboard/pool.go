@@ -29,6 +29,7 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 	// Pinned GGML RPC serves one client per Guest. Additional resident models
 	// run on the Host rather than blocking on an already-owned native backend.
 	settings.Distributed = false
+	settings.PrimaryNode = ""
 	if m.closed {
 		m.mu.Unlock()
 		return errors.New("manager closed")

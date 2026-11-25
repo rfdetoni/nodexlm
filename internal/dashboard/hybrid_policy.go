@@ -113,7 +113,7 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		detailed := len(selection.GuestLayers) == len(selection.Guests)
 		if detailed {
 			layers = selection.GuestLayers[i]
-			if layers <= 0 || layers > remainingLayers || len(meta.BlockBytes) != int(meta.BlockCount) {
+			if layers <= 0 || layers > remainingLayers {
 				return RPCDevicePlacement{}
 			}
 		}
@@ -129,7 +129,7 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		if detailed {
 			// Use real per-layer weights plus context, with the same 115% margin.
 			fits := func(offset, count int, budget uint64) bool {
-				w := blockWeight(meta, offset, count)
+				w := estimatedBlockWeight(meta, modelBytes, offset, count)
 				if w > ^uint64(0)/115 {
 					return false
 				}
@@ -330,4 +330,17 @@ func blockWeight(meta local.GGUFInfo, start, count int) uint64 {
 		total += weight
 	}
 	return total
+}
+
+// Use conservative rounded-up uniform weights only when tensor metadata is absent.
+func estimatedBlockWeight(meta local.GGUFInfo, size uint64, start, count int) uint64 {
+	if len(meta.BlockBytes) == int(meta.BlockCount) {
+		return blockWeight(meta, start, count)
+	}
+	blocks := uint64(meta.BlockCount)
+	if blocks == 0 {
+		return 0
+	}
+	per := size/blocks + min(uint64(1), size%blocks)
+	return per * uint64(count)
 }

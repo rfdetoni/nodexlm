@@ -167,7 +167,7 @@ function setDraftModels(items, chosen){
 function settingsFromForm(model) {
  return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, threads_batch:+$('threadsBatch').value, parallel_slots:+$('parallelSlots').value, prompt_cache_mib:+$('promptCacheMiB').value, load_mode:$('loadMode').value, lazy_mode:$('lazyMode').value, numa:$('numaPolicy').value, context_tokens:+$('contextTokens').value,
   gpu_layers:$('gpuLayers').value, host_gpu:$('hostGpu').value, moe_cpu:$('moeCPU').checked,
-  distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, moe_cpu_layers:+$('moeCPULayers').value,
+  distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, primary_node:$('primaryNode').value, moe_cpu_layers:+$('moeCPULayers').value,
   moe_cache_mib:+$('moeCache').value, moe_cache_cpu_share:+$('moeCacheCPUShare').value, flash_attention:$('flashAttention').value,
    kv_cache_type:$('kvCacheType').value, batch_size:+$('batchSize').value,
    ubatch_size:+$('ubatchSize').value, cache_reuse_tokens:+$('cacheReuseTokens').value,
@@ -451,6 +451,7 @@ async function refresh(){
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
+  $('primaryNode').dataset.initialized='no';
   for(const [id,v] of Object.entries({threads:s.threads,threadsBatch:s.threads_batch||0,parallelSlots:s.parallel_slots||1,promptCacheMiB:s.prompt_cache_mib||0,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
   $('runtimeBackend').value=s.backend||'llama.cpp';
   $('hostGpu').value=s.host_gpu||'auto';
@@ -458,6 +459,12 @@ async function refresh(){
   configureBackendUI();
  }
  renderLocalModels(models,status);renderCatalog();
+ const primary=$('primaryNode'), selectedPrimary=settingsInitialized&&primary.dataset.initialized==='yes'?primary.value:(s.primary_node==='auto'?'':s.primary_node||'');
+ primary.replaceChildren();
+ for(const [value,label] of [['','Automático'],['host','Host']]){const option=el('option','',label);option.value=value;primary.append(option);}
+ for(const node of nodes){if(node.status!=='online'||!node.runtime?.rpc_ready||!cluster.rpc_guests?.[node.id])continue;const option=el('option','',node.name||node.id);option.value=node.id;primary.append(option);}
+ if(selectedPrimary&&![...primary.options].some(o=>o.value===selectedPrimary)){const option=el('option','','Guest indisponível: '+selectedPrimary);option.value=selectedPrimary;primary.append(option);}
+ primary.value=selectedPrimary;primary.dataset.initialized='yes';
  const benchTarget=$('inferenceBenchTarget'), selectedTarget=benchTarget.value;
  benchTarget.replaceChildren();
  const hostOption=el('option','', 'Host local (sem RPC)');hostOption.value='';benchTarget.append(hostOption);

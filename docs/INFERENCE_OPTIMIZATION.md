@@ -147,3 +147,7 @@ A revisão final rejeita bases de taxa mistas na ausência de benchmark do Host,
 No autotune de cluster, o placement nativo do baseline fica fixado (Guests, camadas locais, devices e tensor-split). O relatório informa `placement_fixed`; candidatos revalidam os budgets atuais e a estimativa de memória de cada dispositivo, sem recalcular o split por fingerprint. Topologia desconhecida/legacy continua funcionando na inferência normal, mas não produz recomendação de autotune de cluster sem um baseline explícito.
 
 A sugestão de KV q8_0 usa o mesmo snapshot de benchmarks/fingerprint da seleção original exclusivamente na comparação de memória; não assume que os tokens/s se repetem após quantizar o KV e não aplica a configuração.
+
+## Nó principal (opt-in)
+
+A preferência `primary_node` (vazio/auto, host ou ID do Guest conectado) maximiza a fatia de pesos estimada, não tokens/s. Tem precedência sobre ponderação por velocidade/RTT. Em capacidade, mantém todos os Guests com memória disponível; em velocidade pode omitir Guests secundários. Pesos não-blk permanecem no Host. Usa pesos GGUF por bloco quando disponíveis, estimativa uniforme conservadora caso contrário, margem de 15% e reserva de contexto por dispositivo. Legacy sem topologia usa fallback proporcional identificado; principal offline causa erro. O cálculo maximiza dentro da ordem determinística dos Guests (principal primeiro); não busca permutações. O processo llama-server e coordenador não migram. Compare A/B antes de concluir ganho.

@@ -53,6 +53,9 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 }
 
 func (m *Manager) chooseRPCWithMeasurements(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest, measurements placementMeasurements) (result clusterplan.Selection, resultErr error) {
+	if explicitPrimary(s.PrimaryNode) {
+		return choosePrimary(s, meta, size, hostBudget, guests)
+	}
 	allSamples, fingerprint := measurements.samples, measurements.fingerprint
 	samples := placementBenchmarks(allSamples, fingerprint, measurements.now)
 	// A suspect aggregate cluster rate is not a per-node placement rate.
