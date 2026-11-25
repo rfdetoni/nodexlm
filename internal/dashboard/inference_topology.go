@@ -178,13 +178,14 @@ type activityNode struct {
 }
 
 type inferenceActivity struct {
-	InFlight     int            `json:"in_flight"`
-	Phase        string         `json:"phase"`
-	SamplingMS   int64          `json:"sampling_ms"`
-	WindowMS     int64          `json:"window_ms"`
-	HostInferred bool           `json:"host_inferred"`
-	Nodes        []activityNode `json:"nodes"`
-	Notice       string         `json:"notice"`
+	InFlight     int                         `json:"in_flight"`
+	Phase        string                      `json:"phase"`
+	SamplingMS   int64                       `json:"sampling_ms"`
+	WindowMS     int64                       `json:"window_ms"`
+	HostInferred bool                        `json:"host_inferred"`
+	Nodes        []activityNode              `json:"nodes"`
+	Notice       string                      `json:"notice"`
+	NativeTokens []local.NativeTokenActivity `json:"native_tokens,omitempty"`
 }
 
 func activityDelta(a, b rpcmesh.TunnelStats) (bytes, writes uint64, ok bool) {
@@ -236,6 +237,9 @@ func (m *Manager) InferenceActivity() inferenceActivity {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := inferenceActivity{InFlight: len(m.generations), Phase: "idle", SamplingMS: activitySampling.Milliseconds(), Nodes: []activityNode{}, Notice: "Estimativa por amostragem de tráfego RPC; segmentos por token podem ser mais curtos que a amostragem. Host inferido quando não há delta remoto válido."}
+	if m.engine != nil {
+		out.NativeTokens = m.engine.NativeActivity()
+	}
 	if out.InFlight == 0 || m.loadedTopology == nil {
 		m.activityWindow = nil
 		return out
