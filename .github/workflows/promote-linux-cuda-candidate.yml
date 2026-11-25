@@ -1,0 +1,43 @@
+name: Publish verified experimental Linux CUDA RPC
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/promote-linux-cuda-candidate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Publish the exact attested candidate, not an active runtime
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = rfdetoni/nodexlm
+          run=45677071023
+          source=8785a62a2a1cdfa61c888f6848a3bb0ff7611bf7
+          tag=nodexlm-rpc-v1.0.0-linux-cuda-r4-experimental
+          archive=nodexlm-rpc_v1.0.0_linux_amd64_cuda.tar.gz
+          digest=73d7c5242c6072cb2bcf8973f63f5dd9e7e680350844ba6ed2ddba7b0ef5beef
+          test "$(gh api "repos/$GH_REPO/actions/runs/$run" --jq '.head_sha')" = "$source"
+          test "$(gh api "repos/$GH_REPO/actions/runs/$run" --jq '.conclusion')" = success
+          mkdir dist
+          gh run download "$run" --name rpc-linux-amd64-cuda-candidate --dir dist
+          test -f "dist/$archive"
+          printf '%s  %s\n' "$digest" "$archive" > dist/SHA256SUMS.txt
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          gh attestation verify "dist/$archive" --repo "$GH_REPO" --signer-workflow "$GH_REPO/.github/workflows/rpc-cuda-candidate.yml"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            test "$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq ".assets[] | select(.name == \"$archive\") | .digest")" = "sha256:$digest"
+          else
+            gh release create "$tag" "dist/$archive" dist/SHA256SUMS.txt --target "$source" --title 'Experimental Linux CUDA RPC r4 (v1.0.0)' --notes 'CUDA 12.0 toolkit, Turing/Ampere, external compatible driver/runtime required. Native CPU RPC acceptance passed; physical CUDA inference has not been validated. Manual opt-in only; no active manifest change.' --prerelease --latest=false
+          fi
