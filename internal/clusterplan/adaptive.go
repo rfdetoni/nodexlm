@@ -27,6 +27,7 @@ type Selection struct {
 	Guests      []Candidate
 	Excluded    []string
 	LocalLayers int
+	GuestLayers []int
 	Reason      string
 }
 

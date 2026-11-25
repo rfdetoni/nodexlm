@@ -164,6 +164,9 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 		return selection, err
 	}
 	if err = validatePlacementMemory(meta, s, size, hostBudget, selection.Guests); err == nil {
+		if err = applyLayerBytes(meta, hostBudget, &selection); err != nil {
+			return clusterplan.Selection{}, err
+		}
 		selection.Excluded = append(selection.Excluded, unavailable...)
 		if len(unavailable) > 0 {
 			selection.Reason += "; excluded Guests with no allocatable RAM"
@@ -182,7 +185,28 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 	if contextErr := validatePlacementMemory(meta, s, size, hostBudget, full.Guests); contextErr != nil {
 		return clusterplan.Selection{}, contextErr
 	}
+	if err := applyLayerBytes(meta, hostBudget, &full); err != nil {
+		return clusterplan.Selection{}, err
+	}
 	full.Reason = "Context/batch memory requires additional RPC Guests; speed subset rejected"
 	full.Excluded = append(full.Excluded, unavailable...)
 	return full, nil
+}
+
+func applyLayerBytes(meta local.GGUFInfo, host uint64, selection *clusterplan.Selection) error {
+	if os.Getenv("NODEXLM_GGUF_LAYER_BYTES") != "1" || len(meta.BlockBytes) != int(meta.BlockCount) || len(selection.Guests) == 0 {
+		return nil
+	}
+	budgets := make([]uint64, len(selection.Guests))
+	for i, guest := range selection.Guests {
+		budgets[i] = guest.CapacityBytes
+	}
+	allocation, ok := clusterplan.LayerAllocation(meta.BlockBytes, meta.NonBlockBytes, host, budgets, selection.LocalLayers)
+	if !ok {
+		return errors.New("estimated contiguous GGUF layers do not fit selected node budgets")
+	}
+	selection.LocalLayers = allocation[0]
+	selection.GuestLayers = allocation[1:]
+	selection.Reason += "; estimated actual GGUF tensor bytes"
+	return nil
 }

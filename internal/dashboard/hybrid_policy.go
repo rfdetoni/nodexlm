@@ -106,6 +106,10 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		if i != len(selection.Guests)-1 {
 			layers = int(uint64(remainingLayers) * chosen.CapacityBytes / remainingBudget)
 		}
+		if len(selection.GuestLayers) == len(selection.Guests) {
+			layers = selection.GuestLayers[i]
+		}
+		start := int(meta.BlockCount) - remainingLayers
 		remainingLayers -= layers
 		remainingBudget -= chosen.CapacityBytes
 
@@ -114,6 +118,9 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 			return RPCDevicePlacement{}
 		}
 		weight := modelBytes * uint64(layers) / uint64(meta.BlockCount)
+		if len(selection.GuestLayers) == len(selection.Guests) {
+			weight = blockWeight(meta, start, layers)
+		}
 		if weight > ^uint64(0)/105 {
 			return RPCDevicePlacement{}
 		}
@@ -162,6 +169,22 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 			result.Split = append(result.Split, gpuMiB, remainingMiB)
 			result.Modes[guest.ID] = "gpu+ram"
 		}
+		if len(selection.GuestLayers) == len(selection.Guests) {
+			// Tensor split expresses layer proportions, not physical bytes.
+			n := len(result.Split)
+			if result.Modes[guest.ID] == "gpu+ram" {
+				gpuLayers := 0
+				for gpuLayers < layers-1 && blockWeight(meta, start, gpuLayers+1)*115/100 <= guest.GPUBudgetBytes {
+					gpuLayers++
+				}
+				if gpuLayers == 0 || blockWeight(meta, start+gpuLayers, layers-gpuLayers)*115/100 > guest.RAMBudgetBytes {
+					return RPCDevicePlacement{}
+				}
+				result.Split[n-2], result.Split[n-1] = uint64(gpuLayers), uint64(layers-gpuLayers)
+			} else {
+				result.Split[n-1] = uint64(layers)
+			}
+		}
 		rpcIndex += len(guest.RPCDeviceKinds)
 	}
 	return result
@@ -200,4 +223,12 @@ func withHostVulkan(plan RPCDevicePlacement, localLayers int, blocks uint32, hos
 	}
 	plan.Modes["host"] = "vulkan"
 	return plan, 0
+}
+
+func blockWeight(meta local.GGUFInfo, start, count int) uint64 {
+	var total uint64
+	for _, weight := range meta.BlockBytes[start : start+count] {
+		total += weight
+	}
+	return total
 }

@@ -105,6 +105,13 @@ func (m *Manager) Plan() (map[string]any, error) {
 			if i < len(selection.Guests)-1 {
 				layers = int(uint64(remaining) * guest.CapacityBytes / total)
 			}
+			if len(selection.GuestLayers) == len(selection.Guests) {
+				layers = selection.GuestLayers[i]
+			}
+			weight := uint64(size) * uint64(layers) / uint64(meta.BlockCount)
+			if len(selection.GuestLayers) == len(selection.Guests) {
+				weight = blockWeight(meta, int(meta.BlockCount)-remaining, layers)
+			}
 			name, endpoint := guest.ID, ""
 			var ramBudget, vramBudget uint64
 			for _, original := range guests {
@@ -115,7 +122,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 				}
 			}
 			nodes = append(nodes, placement{NodeID: guest.ID, Name: name, Network: m.networkSample(guest.ID),
-				Endpoint: endpoint, Layers: layers, WeightBytes: uint64(size) * uint64(layers) / uint64(meta.BlockCount),
+				Endpoint: endpoint, Layers: layers, WeightBytes: weight,
 				Budget: guest.CapacityBytes, RPCMode: devices.Modes[guest.ID],
 				RAMBudget: ramBudget, VRAMBudget: vramBudget})
 			remaining -= layers

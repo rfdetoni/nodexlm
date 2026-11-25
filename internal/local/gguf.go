@@ -8,21 +8,24 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 )
 
 // GGUFInfo describes model architecture without mapping or reading its weights.
 // Metadata is read sequentially, with bounded allocations even for tokenizer arrays.
 type GGUFInfo struct {
-	PoolingType     uint32 `json:"pooling_type,omitempty"`
-	Architecture    string `json:"architecture,omitempty"`
-	EmbeddingLength uint32 `json:"embedding_length,omitempty"`
-	HeadCount       uint32 `json:"head_count,omitempty"`
-	KVHeadCount     uint32 `json:"kv_head_count,omitempty"`
-	BlockCount      uint32 `json:"block_count,omitempty"`
-	ExpertCount     uint32 `json:"expert_count,omitempty"`
-	ActiveExperts   uint32 `json:"active_experts,omitempty"`
-	IsMoE           bool   `json:"moe"`
+	PoolingType     uint32   `json:"pooling_type,omitempty"`
+	Architecture    string   `json:"architecture,omitempty"`
+	EmbeddingLength uint32   `json:"embedding_length,omitempty"`
+	HeadCount       uint32   `json:"head_count,omitempty"`
+	KVHeadCount     uint32   `json:"kv_head_count,omitempty"`
+	BlockCount      uint32   `json:"block_count,omitempty"`
+	ExpertCount     uint32   `json:"expert_count,omitempty"`
+	ActiveExperts   uint32   `json:"active_experts,omitempty"`
+	IsMoE           bool     `json:"moe"`
+	BlockBytes      []uint64 `json:"-"`
+	NonBlockBytes   uint64   `json:"-"`
 }
 
 const (
@@ -186,9 +189,10 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 	if version != 2 && version != 3 {
 		return GGUFInfo{}, fmt.Errorf("GGUF version %d unsupported", version)
 	}
-	if _, err = g.uint64(); err != nil {
+	tensorCount, err := g.uint64()
+	if err != nil {
 		return GGUFInfo{}, err
-	} // tensor count
+	}
 	count, err := g.uint64() // metadata count
 	if err != nil {
 		return GGUFInfo{}, err
@@ -242,5 +246,134 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 	result.EmbeddingLength = values[result.Architecture+".embedding_length"]
 	result.HeadCount = values[result.Architecture+".attention.head_count"]
 	result.KVHeadCount = values[result.Architecture+".attention.head_count_kv"]
+	// Sharded/unknown tensor layouts retain the uniform estimate rather
+	// than treating a partial tensor table as the entire model.
+	if result.BlockCount > 0 && result.BlockCount <= 4096 && tensorCount > 0 && tensorCount <= 1_000_000 && !strings.Contains(path, "-of-") {
+		result.BlockBytes, result.NonBlockBytes = g.tensorBytes(tensorCount, result.BlockCount)
+	}
 	return result, nil
 }
+
+// Known GGML types from the pinned runtime. Unknown types deliberately
+// disable the detailed estimate; never infer a quantization block size.
+func tensorTypeSize(kind uint32) (uint64, uint64) {
+	switch kind {
+	case 0:
+		return 1, 4 // F32
+	case 1, 30:
+		return 1, 2 // F16, BF16
+	case 2:
+		return 32, 18 // Q4_0
+	case 3:
+		return 32, 20 // Q4_1
+	case 6:
+		return 32, 22 // Q5_0
+	case 7:
+		return 32, 24 // Q5_1
+	case 8:
+		return 32, 34 // Q8_0
+	case 10:
+		return 256, 84 // Q2_K
+	case 11:
+		return 256, 110 // Q3_K
+	case 12:
+		return 256, 144 // Q4_K
+	case 13:
+		return 256, 176 // Q5_K
+	case 14:
+		return 256, 210 // Q6_K
+	case 15:
+		return 256, 292 // Q8_K
+	case 16:
+		return 256, 66 // IQ2_XXS
+	case 17:
+		return 256, 74 // IQ2_XS
+	case 18:
+		return 256, 98 // IQ3_XXS
+	case 19:
+		return 256, 50 // IQ1_S
+	case 20:
+		return 32, 18 // IQ4_NL
+	case 21:
+		return 256, 110 // IQ3_S
+	case 22:
+		return 256, 82 // IQ2_S
+	case 23:
+		return 256, 136 // IQ4_XS
+	case 24:
+		return 1, 1 // I8
+	case 25:
+		return 1, 2 // I16
+	case 26:
+		return 1, 4 // I32
+	case 27, 28:
+		return 1, 8 // I64, F64
+	case 29:
+		return 256, 56 // IQ1_M
+	default:
+		return 0, 0
+	}
+}
+
+func (g *ggufReader) tensorBytes(count uint64, blocks uint32) ([]uint64, uint64) {
+	layers := make([]uint64, blocks)
+	var other, total, maxEnd uint64
+	for i := uint64(0); i < count; i++ {
+		name, err := g.str(4096)
+		if err != nil {
+			return nil, 0
+		}
+		dims, err := g.uint32()
+		if err != nil || dims < 1 || dims > 4 {
+			return nil, 0
+		}
+		var first uint64
+		elements := uint64(1)
+		for d := uint32(0); d < dims; d++ {
+			n, err := g.uint64()
+			if err != nil || n == 0 || elements > ^uint64(0)/n {
+				return nil, 0
+			}
+			if d == 0 {
+				first = n
+			}
+			elements *= n
+		}
+		kind, err := g.uint32()
+		if err != nil {
+			return nil, 0
+		}
+		offset, err := g.uint64()
+		block, size := tensorTypeSize(kind)
+		if err != nil || block == 0 || first%block != 0 || elements/block > ^uint64(0)/size {
+			return nil, 0
+		}
+		weight := elements / block * size
+		if weight > uint64(g.size) || offset > uint64(g.size)-weight || total > uint64(g.size)-weight {
+			return nil, 0
+		}
+		total += weight
+		maxEnd = max(maxEnd, offset+weight)
+		if rest, ok := strings.CutPrefix(name, "blk."); ok {
+			index, _, found := strings.Cut(rest, ".")
+			n, err := strconv.ParseUint(index, 10, 32)
+			if !found || err != nil || n >= uint64(blocks) {
+				return nil, 0
+			}
+			layers[n] += weight
+		} else {
+			other += weight
+		}
+	}
+	pos, err := g.r.Seek(0, io.SeekCurrent)
+	if err != nil || maxEnd > uint64(g.size-pos) || total > uint64(g.size-pos) {
+		return nil, 0
+	}
+	for _, size := range layers {
+		if size == 0 {
+			return nil, 0
+		}
+	}
+	return layers, other
+}
+

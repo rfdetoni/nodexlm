@@ -2,6 +2,10 @@
 
 O projeto está em fase alpha. Este registro descreve alterações do código, não uma certificação de execução em dispositivos físicos. As releases `nodexlm-edge` e `android-debug` são experimentais.
 
+## Bytes por camada — WP5
+
+- Parser GGUF contabiliza tensores conhecidos sem ler pesos e planner opt-in estima alocação contígua não uniforme; fallback uniforme preservado para metadados incompletos.
+
 ## Prefill e carregamento — WP4
 
 - Autotune por link, recomendação de prefill com guard de decode, gate de upload por dispositivo RPC confirmado no patch e sugestão opt-in de KV q8_0.

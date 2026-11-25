@@ -123,3 +123,7 @@ O r2 é o bundle publicado fixado, com os cinco SHA-256 obtidos dos ativos da re
 ## Prefill e carregamento (WP4)
 
 Autotune usa RTT >15 ms ou eco <25 MiB/s para testar microbatch 128/256, links rápidos medidos testam 2048; sem amostra mantém 512/1024. Sugestão de prefill exige ganho medido e decode sem regressão acima de 10%; ganho de decode tem prioridade. O patch `parallel-rpc-loader.patch` usa `unordered_map<ggml_backend_dev_t,...>`: conta dispositivos RPC selecionados (não GPU local). Um Guest híbrido pode ativar upload paralelo quando o bundle verificado permite; `NODEXLM_PARALLEL_RPC_UPLOAD=0` desativa. Prévia reavalia q8_0 usando estimativa real de KV (inclui overhead de blocos quantizados); sugere apenas se reduz Guests ou permite GPU-only. Qualidade/Flash Attention devem ser verificadas, nada é aplicado automaticamente.
+
+## Estimativa de bytes por camada (WP5)
+
+`NODEXLM_GGUF_LAYER_BYTES=1` ativa o cálculo experimental por descritores de tensores GGUF, sem carregar pesos. Tipos quantizados conhecidos são contabilizados por tamanho de bloco; embeddings/output e outros tensores não-blk são reservados no Host. Metadados incompletos, tipos desconhecidos e shards mantêm fallback uniforme. A alocação contígua com margem de 15% é estimativa; validação física do tensor split nativo é necessária antes de usar em produção.
