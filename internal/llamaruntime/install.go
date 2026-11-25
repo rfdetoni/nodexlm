@@ -395,6 +395,9 @@ func SupportsRPC(ctx context.Context, server string) bool {
 // libraries and must not be reused after upgrading the CLI.
 func distributedDir(home, backend string) string {
 	dir := installDir(home, backend) + "-rpc"
+	if nativeTraceBuild() {
+		return dir + "-" + revision.RPCRelease + "-native-trace-v1"
+	}
 	if publishedRPCSupported(backend) {
 		return dir + "-" + revision.RPCRelease
 	}
@@ -425,7 +428,9 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	// Prefer a ready-to-run, pinned RPC pair: ordinary Linux Guests should not
 	// need CMake, a compiler or root access just to join a trusted cluster.
 	var publishedErr error
-	if publishedRPCSupported(backend) {
+	if nativeTraceBuild() {
+		slog.Info("Opt-in native trace requires a separate instrumented source build")
+	} else if publishedRPCSupported(backend) {
 		slog.Info("Checking verified RPC runtime download", "platform", runtime.GOOS+"/"+runtime.GOARCH, "backend", backend, "release", revision.RPCRelease)
 		var s, p string
 		s, p, publishedErr = fetchPublishedRPC(ctx, home, backend, publishedRPCBaseURL)
