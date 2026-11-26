@@ -26,7 +26,8 @@ cmake -S "$work/src" -B "$work/build" -G Ninja \
   -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_RPC=ON \
   -DGGML_RPC_RDMA=OFF -DGGML_VULKAN=OFF -DGGML_CPU_KLEIDIAI=OFF \
   -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON \
-  -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF
+  -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF \
+  -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
 cmake --build "$work/build" --target llama-server --parallel "${NODEXLM_BUILD_JOBS:-2}"
 install -m 755 "$work/build/bin/llama-server" "$out/libnodexlm_llama_server.so"
 "$toolchain/bin/llvm-strip" --strip-unneeded "$out/libnodexlm_llama_server.so"
