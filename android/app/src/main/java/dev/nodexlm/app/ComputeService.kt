@@ -94,7 +94,7 @@ class ComputeService : Service() {
         running.set(false)
         RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_STOP)
         releaseWorkerWakeLock()
-        cancelInference()
+        Thread { cancelInference() }.start()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

@@ -50,6 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.native.outputs.changed }}
+      optional: ${{ steps.native.outputs.optional }}
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false, fetch-depth: 2}
@@ -60,6 +61,9 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             native="$(python3 scripts/native-revision-changed.py --android-pr)"
             echo "changed=$native" >> "$GITHUB_OUTPUT"
+            if git diff --name-only HEAD^1 HEAD | grep -E '^(android/app/src/litert/|android/app/src/main/java/dev/nodexlm/app/(HostService|MobileDocuments|MobileRuntimeLease|ComputeService|LocalChatActivity)\.kt$|scripts/build-android-host\.sh$|android/app/build\.gradle\.kts$|android/settings\.gradle\.kts$|cmd/nodexlm/android_parent\.go$|internal/hardware/android_memory\.go$)' >/dev/null; then
+              echo "optional=true" >> "$GITHUB_OUTPUT"
+            fi
           elif [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" == refs/tags/* ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -331,6 +335,35 @@ jobs:
             dist/SHA256SUMS-debug.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Go toolchain for optional Android Host
+        if: github.event_name == 'pull_request' && needs.detect.outputs.optional == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify optional ARM64 Host and LiteRT build
+        if: github.event_name == 'pull_request' && needs.detect.outputs.optional == 'true'
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          gradle --no-daemon --max-workers=2 -PnodexHost=true -PnodexLiteRT=true -PnodexRustRpc=false :app:assembleDebug
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          unzip -Z1 "$apk" > "$RUNNER_TEMP/optional-apk-entries"
+          for lib in libnodexlm_host.so libnodexlm_llama_server.so; do
+            grep -Fxq "lib/arm64-v8a/$lib" "$RUNNER_TEMP/optional-apk-entries"
+          done
+          cp "$apk" ../dist/NodexLM-optional-arm64-debug.apk
+      - name: Upload experimental ARM64 APK
+        if: github.event_name == 'pull_request' && needs.detect.outputs.optional == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodexlm-optional-arm64-test
+          path: dist/NodexLM-optional-arm64-debug.apk
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Build signed release APK
         if: github.event_name != 'pull_request' && steps.signing.outputs.configured == 'true'

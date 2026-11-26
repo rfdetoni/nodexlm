@@ -113,6 +113,10 @@ func NodexIOSStart(raw, socket, name *C.char) *C.char {
 	if err := json.Unmarshal([]byte(C.GoString(raw)), &cred); err != nil {
 		return errorResponse(errors.New("invalid enrollment"))
 	}
+	u, err := url.Parse(cred.Endpoint)
+	if err != nil || u.Scheme != "https" || !pairing.SameLAN(net.ParseIP(u.Hostname())) || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || cred.Token == "" || cred.Node == "" {
+		return errorResponse(errors.New("invalid saved Host credentials"))
+	}
 	client, err := netclient.New(cred.Endpoint, cred.Token, cred.Node)
 	if err != nil {
 		return errorResponse(err)

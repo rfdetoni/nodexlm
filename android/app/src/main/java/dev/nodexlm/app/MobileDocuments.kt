@@ -78,7 +78,7 @@ internal object MobileDocuments {
                 require(++count<=4096) { "Too many DOCX entries" }
                 val entry=entries.nextElement()
                 if(entry.name=="word/document.xml") {
-                    require(part==null && entry.size in 1..MAX_XML.toLong()) { "Invalid DOCX document part" }
+                    require(part==null && entry.size in 1L..MAX_XML.toLong()) { "Invalid DOCX document part" }
                     part=entry
                 }
             }
@@ -99,7 +99,7 @@ internal object MobileDocuments {
                             "br","cr" -> out.append('\n')
                         }
                     }
-                    XmlPullParser.TEXT -> if(textDepth>=0)out.append(parser.text)
+                    XmlPullParser.TEXT, XmlPullParser.CDSECT, XmlPullParser.ENTITY_REF -> if(textDepth>=0)out.append(requireNotNull(parser.text))
                     XmlPullParser.END_TAG -> {
                         if(parser.depth==textDepth)textDepth=-1
                         if(parser.namespace==WORD&&parser.name=="p")out.append('\n')

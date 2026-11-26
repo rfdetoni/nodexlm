@@ -21,6 +21,7 @@ extern "C" int NodexMetalStart(const char *path) {
     std::lock_guard<std::mutex> lock(lifecycle);
     if (!path || path[0] != '/' || std::string(path).size() > 100 || running.load()) return 0;
     if (worker.joinable()) worker.join();
+    try {
     ggml_backend_load_all();
     auto reg = ggml_backend_metal_reg();
     if (!reg || ggml_backend_reg_dev_count(reg) == 0) return 0;
@@ -31,10 +32,9 @@ extern "C" int NodexMetalStart(const char *path) {
     unlink(path);
     ggml_backend_rpc_android_reset_stop();
     running.store(true);
-    try {
         worker = std::thread([device, endpoint = std::string("unix:") + path] {
             auto selected = device;
-            ggml_backend_rpc_start_server(endpoint.c_str(), nullptr, 2, 1, &selected);
+            try { ggml_backend_rpc_start_server(endpoint.c_str(), nullptr, 2, 1, &selected); } catch (...) {}
             running.store(false);
         });
     } catch (...) {

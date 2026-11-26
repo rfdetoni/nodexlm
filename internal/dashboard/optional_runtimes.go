@@ -19,10 +19,6 @@ func fallbackConfigured() bool {
 	return os.Getenv("NODEXLM_FALLBACK_URL") != "" && os.Getenv("NODEXLM_FALLBACK_MODEL") != "" && os.Getenv("NODEXLM_FALLBACK_API_KEY") != ""
 }
 
-func (d *Dashboard) optionalCapabilities(w http.ResponseWriter, r *http.Request) {
-	reply(w, 200, map[string]bool{"fallback": fallbackConfigured(), "image_generation": os.Getenv("NODEXLM_SD_MODEL") != ""})
-}
-
 // Explicit per-request consent. No implicit redirection after streamed output,
 // auth failures, cancellation or a runtime error.
 func (d *Dashboard) fallback(w http.ResponseWriter, r *http.Request) {

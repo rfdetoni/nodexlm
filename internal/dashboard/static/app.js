@@ -551,7 +551,7 @@ async function sendChat(){
  if(chatController)return;
  const prompt=$('prompt').value.trim();if(!prompt)return;
  const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];
- const allowFallback=$('allowExternalFallback').checked;
+ const allowFallback=$('allowExternalFallback').checked;$('allowExternalFallback').checked=false;
  const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
  const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let rpcTraffic=null;let done=false;let reader;
@@ -566,6 +566,7 @@ async function sendChat(){
   const documentText=await readChatDocument(documentFile,controller.signal);
   const imageURL=await readChatImage(imageFile);
   if(controller.signal.aborted)return;
+  if(new TextEncoder().encode(prompt+documentText).length>65536)throw Error('Mensagem com documento excede 64 KiB.');
   const content=imageURL?[{type:'text',text:prompt+documentText},{type:'image_url',image_url:{url:imageURL}}]:prompt+documentText;
   const payload={model,messages:[...chatHistory.slice(-62),{role:'user',content}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
   if(effort!=='auto')payload.reasoning_effort=effort;
@@ -648,7 +649,7 @@ $('decisionForm').addEventListener('submit',event=>{
   }finally{button.disabled=false}
  });
 });
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').removeAttribute('src');$('chatOutput').replaceChildren();setupAuth()});
+$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 $('importDirectoryForm').addEventListener('submit',event=>{event.preventDefault();guard(async()=>{
  const button=$('importDirectoryButton');button.disabled=true;
@@ -792,8 +793,8 @@ $('previewPlan').addEventListener('click',()=>guard(async()=>{
 }));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
 $('imageForm').addEventListener('submit',event=>{event.preventDefault();guard(async()=>{
- const button=$('generateImage');button.disabled=true;$('imageOutput').hidden=true;
- try{const result=await api('/api/images/generations','POST',{prompt:$('imagePrompt').value.trim(),size:$('imageSize').value,steps:+$('imageSteps').value});const image=result.data?.[0]?.b64_json;if(typeof image!=='string'||image.length>45000000)throw Error('Imagem inválida.');$('imageOutput').src='data:image/png;base64,'+image;$('imageOutput').hidden=false;}finally{button.disabled=false}
+ const button=$('generateImage');const session=token;button.disabled=true;$('imageOutput').hidden=true;
+ try{const result=await api('/api/images/generations','POST',{prompt:$('imagePrompt').value.trim(),size:$('imageSize').value,steps:+$('imageSteps').value});if(!token||token!==session)return;const image=result.data?.[0]?.b64_json;if(typeof image!=='string'||image.length>45000000)throw Error('Imagem inválida.');$('imageOutput').src='data:image/png;base64,'+image;$('imageOutput').hidden=false;}finally{button.disabled=false}
 })});
 $('chatEffort').addEventListener('change',()=>{
  const disabled=$('chatEffort').value==='none';

@@ -297,7 +297,6 @@ func (d *Dashboard) Handler() http.Handler {
 
 	mux.HandleFunc("POST /api/chat", d.api(d.chat))
 	mux.HandleFunc("POST /api/documents/text", d.api(d.documentText))
-	mux.HandleFunc("GET /api/optional-capabilities", d.api(d.optionalCapabilities))
 	mux.HandleFunc("POST /api/chat/fallback", d.api(d.fallback))
 	mux.HandleFunc("POST /api/images/generations", d.api(d.generateImage))
 	mux.HandleFunc("POST /v1/images/generations", d.inference(d.generateImage))

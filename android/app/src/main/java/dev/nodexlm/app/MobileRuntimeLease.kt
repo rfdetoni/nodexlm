@@ -14,7 +14,7 @@ internal class MobileRuntimeLease private constructor(private val file: RandomAc
 
     companion object {
         fun acquire(context: Context): MobileRuntimeLease? {
-            val file = RandomAccessFile(File(context.filesDir, "mobile-runtime.lock"), "rw")
+            val file = runCatching { RandomAccessFile(File(context.filesDir, "mobile-runtime.lock"), "rw") }.getOrNull() ?: return null
             try {
                 val deadline = android.os.SystemClock.elapsedRealtime() + 3000
                 do {
