@@ -12,8 +12,8 @@ import (
 func TestFixedBenchmarkWaitsForIdleGuestWithoutReplanning(t *testing.T) {
 	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"CPU"}}
 	placement := benchmarkPlacement{
-		ready: true,
-		guests: []RPCGuest{guest},
+		ready:     true,
+		guests:    []RPCGuest{guest},
 		selection: clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID}}},
 	}
 	calls := 0
@@ -38,8 +38,8 @@ func TestFixedBenchmarkWaitsForIdleGuestWithoutReplanning(t *testing.T) {
 func TestFixedBenchmarkRejectsChangedGuestTopology(t *testing.T) {
 	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"CPU"}}
 	placement := benchmarkPlacement{
-		ready: true,
-		guests: []RPCGuest{guest},
+		ready:     true,
+		guests:    []RPCGuest{guest},
 		selection: clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID}}},
 	}
 	changed := guest
@@ -53,8 +53,8 @@ func TestFixedBenchmarkRejectsChangedGuestTopology(t *testing.T) {
 func TestFixedBenchmarkWaitRespectsCancellation(t *testing.T) {
 	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"CPU"}}
 	placement := benchmarkPlacement{
-		ready: true,
-		guests: []RPCGuest{guest},
+		ready:     true,
+		guests:    []RPCGuest{guest},
 		selection: clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID}}},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
