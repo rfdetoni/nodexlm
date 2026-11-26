@@ -11,7 +11,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod ranges;
+
 const CHUNK: usize = 256 * 1024;
+const CONNECTION_LIMIT: usize = 4;
+static CONNECTION_BYTES: [AtomicU64; CONNECTION_LIMIT] = [const { AtomicU64::new(0) }; CONNECTION_LIMIT];
+static CONNECTION_ERRORS: [AtomicU64; CONNECTION_LIMIT] = [const { AtomicU64::new(0) }; CONNECTION_LIMIT];
+static CONNECTION_SPEED: [AtomicU64; CONNECTION_LIMIT] = [const { AtomicU64::new(0) }; CONNECTION_LIMIT];
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static CANCEL: AtomicBool = AtomicBool::new(false);
 static BYTES: AtomicU64 = AtomicU64::new(0);
@@ -62,6 +68,18 @@ fn download(env: &mut JNIEnv<'_>, source: &str, destination: &str, checksum: &st
     CANCEL.store(false, Ordering::Release);
     BYTES.store(0, Ordering::Release);
     BPS.store(0, Ordering::Release);
+    for index in 0..CONNECTION_LIMIT {
+        CONNECTION_BYTES[index].store(0, Ordering::Release);
+        CONNECTION_ERRORS[index].store(0, Ordering::Release);
+        CONNECTION_SPEED[index].store(0, Ordering::Release);
+    }
+    // Ranged transfers use multiple platform-verified HttpsURLConnection
+    // streams and checkpoint completed chunks before considering them done.
+    // Servers that do not honor Range use the existing verified single stream.
+    match ranges::try_download(env, source, destination, checksum, size as u64)? {
+        true => return Ok(()),
+        false => {}
+    }
     let url_string = env.new_string(source).map_err(|e| e.to_string())?;
     let url_object = env.new_object(
         "java/net/URL",
@@ -182,6 +200,25 @@ pub extern "system" fn Java_dev_nodexlm_app_NativeRustDownload_transferred(_: JN
 #[no_mangle]
 pub extern "system" fn Java_dev_nodexlm_app_NativeRustDownload_bytesPerSecond(_: JNIEnv<'_>, _: JObject<'_>) -> jlong {
     BPS.load(Ordering::Acquire) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_nodexlm_app_NativeRustDownload_connectionStats(
+    mut env: JNIEnv<'_>, _: JObject<'_>
+) -> jstring {
+    let mut entries = String::from("[");
+    for i in 0..CONNECTION_LIMIT {
+        if i > 0 { entries.push(','); }
+        entries.push_str(&format!(
+            "{{\"id\":{},\"bytes\":{},\"bytesPerSecond\":{},\"errors\":{}}}",
+            i + 1,
+            CONNECTION_BYTES[i].load(Ordering::Acquire),
+            CONNECTION_SPEED[i].load(Ordering::Acquire),
+            CONNECTION_ERRORS[i].load(Ordering::Acquire)
+        ));
+    }
+    entries.push(']');
+    super::response(&mut env, &entries)
 }
 
 #[cfg(test)]

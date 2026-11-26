@@ -201,7 +201,7 @@ internal class ModelLibraryView(
     }
 
     private fun confirmDownload(model: HuggingFaceHub.Model) {
-        if(preparing || prefs.getLong("id",0L)>0L) {status.text=activity.getString(R.string.ui_c1234618156b);return}
+        if(preparing || prefs.getLong("id",0L)!=0L) {status.text=activity.getString(R.string.ui_c1234618156b);return}
         if(!model.url.startsWith("https://huggingface.co/") || !model.url.contains("/resolve/main/")) {
             status.text=activity.getString(R.string.ui_e226da7e5057);return
         }
@@ -214,7 +214,7 @@ internal class ModelLibraryView(
     }
 
     private fun download(model: HuggingFaceHub.Model) {
-        if (preparing || prefs.getLong("id", 0L) > 0L) return
+        if (preparing || prefs.getLong("id", 0L) != 0L) return
         preparing = true
         status.text = activity.getString(R.string.model_downloading)
         thread(name = "nodexlm-verify-hf-metadata") {
@@ -337,7 +337,8 @@ internal class ModelLibraryView(
         check(prefs.edit().putLong("id", -2L).putString("staging", staging.absolutePath)
             .putString("target", target.absolutePath).putString("current_source", source).commit())
         status.text = activity.getString(R.string.download_started, fileName)
-        val scratch = File(root, ".$fileName.native-$epoch")
+        // Stable private stage lets Rust resume only fsync-committed ranges after process death.
+        val scratch = File(root, ".$fileName.native.partial")
         thread(name = "nodexlm-rust-model-download") {
             val error = runCatching {
                 NativeRustDownload.fetch(source, scratch.absolutePath, checksum, expected)
@@ -395,7 +396,19 @@ internal class ModelLibraryView(
             if(cacheExpected>0)bar.progress=(received*1000/cacheExpected).toInt().coerceIn(0,1000)
             val nativeSpeed=if(id == -2L)runCatching { NativeRustDownload.bytesPerSecond() }.getOrDefault(0L) else 0L
             val rate=if(nativeSpeed>0) " · %.2f MiB/s".format(java.util.Locale.US,nativeSpeed.toDouble()/(1024*1024)) else ""
-            downloadProgress.text="${if(id == -2L) "Rust HTTPS" else "Host cache"} · ${gib(received)} / ${gib(cacheExpected)}$rate"
+            val details = if (id == -2L) runCatching {
+                val rows = org.json.JSONArray(NativeRustDownload.connectionStats())
+                (0 until rows.length()).mapNotNull { index ->
+                    val c = rows.optJSONObject(index) ?: return@mapNotNull null
+                    val bytes = c.optLong("bytes", 0L)
+                    if (bytes <= 0L) return@mapNotNull null
+                    val speed = c.optLong("bytesPerSecond", 0L)
+                    "C${c.optInt("id", index+1)}: %.1f MiB/s".format(
+                        java.util.Locale.US, speed.toDouble() / (1024 * 1024))
+                }.joinToString(" · ")
+            }.getOrDefault("") else ""
+            downloadProgress.text="${if(id == -2L) "Rust HTTPS" else "Host cache"} · ${gib(received)} / ${gib(cacheExpected)}$rate" +
+                if (details.isNotEmpty()) "\n$details" else ""
             return
         }
         if (id<=0L) {bar.visibility=GONE;cancel.visibility=GONE;return}
