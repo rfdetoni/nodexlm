@@ -50,7 +50,7 @@ func (h Hub) downloadPinnedShards(ctx context.Context, repository, dir, director
 	var created []string
 	for i := len(parts) - 1; i >= 0; i-- {
 		target := filepath.Join(directory, parts[i])
-		if err := PublishFile(batch[i].Target, target); err != nil {
+		if err := PublishDownloaded(ctx, batch[i].Target, target); err != nil {
 			for _, p := range created {
 				_ = os.Remove(p)
 			}

@@ -726,7 +726,7 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
-	m.loadedTopology = m.loadUploadPlan
+	m.loadedTopology = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
 	m.loadUploadPlan = nil
 	m.activityWindow = nil
 	m.loadFingerprint = loadFingerprint
@@ -854,6 +854,7 @@ func (m *Manager) StartDownload(urlText, name string) error {
 	m.download = &Download{Name: name, Status: "downloading", ShardCount: len(parts)}
 	m.downloadMeter = safedownload.NewTransferMeter()
 	ctx = safedownload.WithTransferMeter(ctx, m.downloadMeter)
+	ctx = safedownload.WithContentCache(ctx, m.modelDir)
 	go m.downloadModel(ctx, u.String(), path, name)
 	return nil
 }
@@ -958,7 +959,7 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 		if len(shards) == 1 {
 			target = destination
 		}
-		if err = publishModelPart(filepath.Join(stage, shard), target); err != nil {
+		if err = catalog.PublishDownloaded(ctx, filepath.Join(stage, shard), target); err != nil {
 			errorText = fmt.Sprintf("publish GGUF shard %s: %v", shard, err)
 			return
 		}

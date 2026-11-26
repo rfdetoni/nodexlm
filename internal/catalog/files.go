@@ -71,6 +71,7 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 		return "", err
 	}
 	defer release()
+	ctx = safedownload.WithContentCache(ctx, directory)
 	parts, err := ShardNames(path.Base(filename))
 	if err != nil {
 		return "", err
@@ -148,7 +149,7 @@ func (h Hub) downloadSingle(ctx context.Context, repository, filename, directory
 	if _, err := safedownload.Fetch(ctx, h.Client, remote, stage, limit, progress); err != nil {
 		return "", err
 	}
-	if err := PublishFile(stage, destination); err != nil {
+	if err := PublishDownloaded(ctx, stage, destination); err != nil {
 		return "", err
 	}
 	_ = os.Remove(stage)
@@ -249,6 +250,22 @@ func importSingle(ctx context.Context, source, directory, name string) (string, 
 
 // PublishFile prefers atomic hardlink publication; filesystems without links
 // use a no-clobber O_EXCL copy and remove an incomplete destination on error.
+// PublishDownloaded optionally reuses an identical verified inode from the
+// same immutable library; ordinary imports retain the original semantics.
+func PublishDownloaded(ctx context.Context, source, destination string) error {
+	reused, err := safedownload.PublishVerifiedLink(ctx, source, destination)
+	if err != nil {
+		return err
+	}
+	if !reused {
+		if err := PublishFile(source, destination); err != nil {
+			return err
+		}
+	}
+	safedownload.RememberPublished(ctx, source, destination)
+	return nil
+}
+
 func PublishFile(source, destination string) error {
 	if err := os.Link(source, destination); err == nil {
 		return nil

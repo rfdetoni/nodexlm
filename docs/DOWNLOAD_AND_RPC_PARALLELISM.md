@@ -9,3 +9,5 @@ CLI and Web sharded Hugging Face downloads share one metadata planner and resolv
 Not yet implemented: Android native DownloadManager replacement, Xet, authenticated P2P cache, per-connection native APK telemetry. Real throughput and mixed-device loading overlap must be measured before claiming improvement.
 
 Dashboard: one card per registered device, with native disclosure for management tools; loading status joins the admitted placement and actual RPC counters by authenticated node ID, renders names and approximate progress, and hides redundant topology until ready. The chat has a bounded history and compact composer; the overview displays the resident model name.
+
+Opt-in local SHA-256 deduplication: NODEXLM_MODEL_DEDUP=1 indexes verified published files in the managed library and rehashes an existing candidate before linking the new name. This saves disk space after download, not WAN traffic. Both aliases share an inode; use only immutable trusted model files. No index entry retains a second weight copy.
