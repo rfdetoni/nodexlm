@@ -28,11 +28,21 @@ func TestVisionContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := 0
-	if err := visionContent(content, &count); err != nil {
+	if _, err := visionContent(content, &count); err != nil {
 		t.Fatal(err)
 	}
-	if err := visionContent(content, &count); err == nil {
+	if _, err := visionContent(content, &count); err == nil {
 		t.Fatal("accepted multiple images")
+	}
+	malicious, err := json.Marshal([]any{map[string]any{
+		"type": "image_url", "image_url": map[string]string{"url": "http://127.0.0.1/private", "URL": raw},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count = 0
+	if _, err := visionContent(malicious, &count); err == nil {
+		t.Fatal("case-insensitive URL substitution bypassed validation")
 	}
 	if err := textContent(content); err == nil {
 		t.Fatal("text-only runtime accepted image")

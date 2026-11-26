@@ -11,13 +11,13 @@ import (
 )
 
 // Only a single bounded inline image is accepted. Never forward remote URLs.
-func visionContent(raw json.RawMessage, count *int) error {
+func visionContent(raw json.RawMessage, count *int) (json.RawMessage, error) {
 	if err := textContent(raw); err == nil {
-		return nil
+		return raw, nil
 	}
 	var parts []map[string]json.RawMessage
 	if json.Unmarshal(raw, &parts) != nil {
-		return invalid("content", "Invalid multimodal content")
+		return nil, invalid("content", "Invalid multimodal content")
 	}
 	for _, part := range parts {
 		kind, _ := stringField(part, "type")
@@ -27,19 +27,24 @@ func visionContent(raw json.RawMessage, count *int) error {
 		case "image_url":
 			*count = *count + 1
 			if *count > 1 {
-				return invalid("content", "Only one image per request is supported")
+				return nil, invalid("content", "Only one image per request is supported")
 			}
-			var data struct {
-				URL string `json:"url"`
+			var data map[string]json.RawMessage
+			if json.Unmarshal(part["image_url"], &data) != nil {
+				return nil, invalid("image_url", "Invalid image object")
 			}
-			if json.Unmarshal(part["image_url"], &data) != nil || !validInlineImage(data.URL) {
-				return invalid("image_url", "Use an inline PNG or JPEG data URL, at most 4 MiB and 16 megapixels")
+			url, err := stringField(data, "url")
+			if err != nil || !validInlineImage(url) {
+				return nil, invalid("image_url", "Use an inline PNG or JPEG data URL, at most 4 MiB and 16 megapixels")
 			}
+			// Rebuild the object: do not let duplicate or differently-cased
+			// JSON keys change the validated URL in the native parser.
+			part["image_url"], _ = json.Marshal(map[string]string{"url": url})
 		default:
-			return invalid("content", "Unsupported multimodal content part")
+			return nil, invalid("content", "Unsupported multimodal content part")
 		}
 	}
-	return nil
+	return json.Marshal(parts)
 }
 
 func validInlineImage(raw string) bool {

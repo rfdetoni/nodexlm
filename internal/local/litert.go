@@ -33,6 +33,12 @@ func NewLiteRT(ctx context.Context, endpoint, model string) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
+	keep := false
+	defer func() {
+		if !keep {
+			engine.HTTP.CloseIdleConnections()
+		}
+	}()
 	engine.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -44,7 +50,6 @@ func NewLiteRT(ctx context.Context, endpoint, model string) (*Engine, error) {
 	}
 	resp, err := engine.HTTP.Do(req)
 	if err != nil {
-		engine.HTTP.CloseIdleConnections()
 		return nil, fmt.Errorf("LiteRT-LM server unavailable: %w", err)
 	}
 	defer resp.Body.Close()
@@ -61,6 +66,7 @@ func NewLiteRT(ctx context.Context, endpoint, model string) (*Engine, error) {
 	}
 	for _, entry := range registry.Data {
 		if entry.ID == model {
+			keep = true
 			return engine, nil
 		}
 	}

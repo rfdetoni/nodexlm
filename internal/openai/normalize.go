@@ -87,8 +87,12 @@ func normalize(in map[string]json.RawMessage, path string, vision ...bool) error
 				return invalid("messages", "Invalid message role")
 			}
 			if len(vision) > 0 && vision[0] && role == "user" {
-				if e := visionContent(m["content"], &imageCount); e != nil {
+				content, e := visionContent(m["content"], &imageCount)
+				if e != nil {
 					return e
+				}
+				if content != nil {
+					m["content"] = content
 				}
 			} else if e := textContent(m["content"]); e != nil {
 				return e
@@ -99,6 +103,10 @@ func normalize(in map[string]json.RawMessage, path string, vision ...bool) error
 					return invalid("messages.tool_call_id", "Tool messages require tool_call_id")
 				}
 			}
+		}
+		if imageCount > 0 {
+			// Forward the same canonical message objects that were validated.
+			in["messages"], _ = json.Marshal(messages)
 		}
 		if err := normalizeLegacy(in, messages); err != nil {
 			return err

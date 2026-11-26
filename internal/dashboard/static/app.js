@@ -561,7 +561,7 @@ async function sendChat(){
   if(effort!=='auto')payload.reasoning_effort=effort;
   if(thinkingBudget>0)payload.reasoning_budget_tokens=thinkingBudget;
   const response=await fetch(imageURL?'/v1/chat/completions':'/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify(payload)});
-  if(!response.ok){const text=await response.text();let message=text;try{message=JSON.parse(text).error||text}catch{}throw Error(message)}
+  if(!response.ok){const text=await response.text();let message=text;try{const error=JSON.parse(text).error;message=error?.message||error||text}catch{}throw Error(message)}
   reader=response.body.getReader();const decoder=new TextDecoder();let pending='';
   while(!done){
    const part=await reader.read();pending+=decoder.decode(part.value||new Uint8Array(),{stream:!part.done}).replace(/\r\n/g,'\n');
