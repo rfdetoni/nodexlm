@@ -126,6 +126,7 @@ type Manager struct {
 	loadStartedAt         time.Time
 	phaseStartedAt        time.Time
 	loadRPCNodes          []string
+	loadUploadPlan        *inferenceTopology
 	loadRPCBaseline       map[string]rpcmesh.TunnelStats
 	rpcStatsProvider      func() map[string]rpcmesh.TunnelStats
 	loadCancel            context.CancelFunc
@@ -211,6 +212,9 @@ func (m *Manager) State() map[string]any {
 		state["started_at"] = m.loadStartedAt.UTC().Format(time.RFC3339)
 		state["elapsed_seconds"] = int(time.Since(m.loadStartedAt).Seconds())
 		state["progress_known"] = false // GGML does not report per-Guest tensor transfer progress.
+		if m.loadUploadPlan != nil {
+			state["upload_plan"] = m.loadUploadPlan
+		}
 		state["phase_elapsed_seconds"] = int(time.Since(m.phaseStartedAt).Seconds())
 		if m.rpcStatsProvider != nil && len(m.loadRPCNodes) > 0 {
 			current := m.rpcStatsProvider()
@@ -452,6 +456,7 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.loadStartedAt = time.Now()
 	m.phaseStartedAt = m.loadStartedAt
 	m.loadRPCNodes = nil
+	m.loadUploadPlan = nil
 	m.loadRPCBaseline = nil
 	m.loadFingerprint = ""
 	m.microbenchDrift = 0
@@ -701,6 +706,9 @@ func (m *Manager) load(ctx context.Context) error {
 			engine.GPULayers = "all"
 		}
 	}
+	m.mu.Lock()
+	m.loadUploadPlan = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
+	m.mu.Unlock()
 	loadFingerprint := m.benchmarkSignature(s, s.Model)
 	if err = engine.Load(ctx); err != nil {
 		engine.Close()
@@ -717,7 +725,8 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
-	m.loadedTopology = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
+	m.loadedTopology = m.loadUploadPlan
+	m.loadUploadPlan = nil
 	m.activityWindow = nil
 	m.loadFingerprint = loadFingerprint
 	m.nativeSystemInfo = systemInfo

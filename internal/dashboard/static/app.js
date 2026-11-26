@@ -13,6 +13,8 @@ let downloadPollBusy = false;
 let residentModelNames=[];
 let loadingPlan=null;
 let loadingPlanModel='';
+let deviceNames=new Map();
+const displayNodeName=(id,name)=>name&&name!==id?name:deviceNames.get(id)||(id==='host'?'Host':'Guest sem nome');
 let modelFolderPath='';
 const fmt = bytes => bytes > 0 ? (bytes / 1073741824).toFixed(2) + ' GiB' : '—';
 function notice(message) { $('toast').textContent=message; $('toast').style.display='block'; clearTimeout(notice.timer); notice.timer=setTimeout(() => $('toast').style.display='none', 4800); }
@@ -51,8 +53,8 @@ function renderTopology(activity=null){
   const live=activity?.nodes?.find(n=>n.node_id===node.node_id);
   const active=node.node_id==='host'?activity?.host_inferred:live?.active;
   const range=node.first_block>=0?'blk.'+node.first_block+'–'+node.last_block:'sem blocos';
-  const text=node.name+' · '+range+' · '+node.layers+' camadas · '+node.mode+(node.devices?.length?' ('+node.devices.join(', ')+')':'')+' · '+fmt(node.weight_bytes)+' de pesos ('+node.weight_method+')'+(node.estimated_kv_bytes!=null?' · KV ~'+fmt(node.estimated_kv_bytes):'')+' · RAM/VRAM: '+fmt(node.ram_budget_bytes)+' / '+fmt(node.vram_budget_bytes);
-  area.append(el('p',active?'topology-active':'muted',text+(active?(node.node_id==='host'?' · Host (inferido)':' · tráfego recente'):'')));
+  const text=displayNodeName(node.node_id,node.name)+' · '+range+' · '+node.layers+' camadas · '+node.mode+(node.devices?.length?' ('+node.devices.join(', ')+')':'')+' · '+fmt(node.weight_bytes)+' de pesos ('+node.weight_method+')'+(node.estimated_kv_bytes!=null?' · KV ~'+fmt(node.estimated_kv_bytes):'')+' · RAM/VRAM: '+fmt(node.ram_budget_bytes)+' / '+fmt(node.vram_budget_bytes);
+  area.append(el('p',active?'topology-active':'muted',text+(active?(node.node_id==='host'?' · Host (inferido)':' · tráfego recente'):'')+(live?.available?' · '+live.mib_per_second_window.toFixed(2)+' MiB/s':'')));
  }
  area.prepend(bar);
 }
@@ -64,16 +66,16 @@ function renderActivity(data){
  if(native.length){
   area.append(el('p','','Atividade nativa · últimos '+native.length+' tokens atribuíveis'));
   for(const item of native.slice(-5)){
-   const splits=(item.splits||[]).map(split=>{const node=topologySnapshot?.nodes?.find(n=>n.node_id===split.node_id);return (node?node.name+' / ':split.node_id?split.node_id+' / ':'')+split.backend+': '+split.count+' envio(s) de grafo';}).join(' · ');
+   const splits=(item.splits||[]).map(split=>{const node=topologySnapshot?.nodes?.find(n=>n.node_id===split.node_id);return (split.node_id?displayNodeName(split.node_id,node?.name)+' / ':'')+split.backend+': '+split.count+' envio(s) de grafo';}).join(' · ');
    area.append(el('p','muted','Token '+item.ordinal+' · lote '+item.batch+' · '+splits));
   }
   area.append(el('p','muted','Submissões nativas, não utilização, latência ou tempo de GPU. Nomes de backend reportados pelo runtime.'));
  }
  const active=[];
  for(const node of data.nodes||[]){
-  const name=topologySnapshot?.nodes?.find(n=>n.node_id===node.node_id)?.name||node.node_id;
+  const name=displayNodeName(node.node_id,topologySnapshot?.nodes?.find(n=>n.node_id===node.node_id)?.name);
   if(node.active)active.push(name);
-  area.append(el('p','muted',name+': '+(node.available?node.mib_per_second_window.toFixed(2)+' MiB/s · '+node.share_percent_window.toFixed(1)+'% dos bytes RPC na janela':'sem delta comparável')));
+
  }
  if(data.host_inferred)active.push('Host (inferido)');
  activityHistory.push(active.length?active.join(' + '):'sem amostra comparável');activityHistory=activityHistory.slice(-10);
@@ -114,6 +116,7 @@ function activateConsoleView(view){
  }
  $('workspaceTitle').textContent=chosen.name;
  $('workspaceDescription').textContent=chosen.description;
+ $('consoleMain').setAttribute('data-view',chosen.id);
  $('consoleMain').scrollTop=0;
  try{sessionStorage.setItem('nodexlm-console-view',chosen.id)}catch{}
  if(chosen.id==='inference' && token)guard(refresh);else stopActivity();
@@ -318,49 +321,42 @@ async function loadModelFolder() {
  } catch(e) {$('modelFolder').textContent='Indisponível';}
 }
 function renderLoadStatus(status){
- const box=$('loadingStatus'), runtime=status.runtime||{};
+ const box=$('loadingStatus'),runtime=status.runtime||{};
+ $('loadedTopology').hidden=!!runtime.loading;$('inferenceActivity').hidden=!!runtime.loading;
  if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled';if(!box.hidden)box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));return;}
- box.hidden=false;box.replaceChildren(el('strong','', 'Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
+ box.hidden=false;box.replaceChildren(el('strong','','Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
  box.append(action(runtime.phase==='cancelling'?'Cancelando…':'Cancelar carregamento','secondary',async()=>{const state=await api('/api/inference/cancel-load','POST',{});notice(state.phase==='ready'?'O modelo já terminou de carregar.':'Cancelamento solicitado; aguardando encerramento do runtime.');await refresh()},runtime.phase==='cancelling'));
- const activity=el('progress','download-bar');
- activity.setAttribute('aria-label','Carregamento em andamento: progresso real indisponível');
- box.append(activity,el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s · progresso real não informado pelo llama.cpp'));
- const transfer=runtime.rpc_transfer||{};
- const channels=Object.entries(transfer);
+ box.append(el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s'));
+ const transfer=runtime.rpc_transfer||{},channels=Object.entries(transfer);
+ const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
  if(channels.length){
   const sent=channels.reduce((sum,[,node])=>sum+(Number(node.to_guest_bytes)||0),0);
   const last=Math.max(0,...channels.map(([,node])=>Number(node.last_activity_ms)||0));
   const idleFor=last>0?Math.max(0,Math.floor((Date.now()-last)/1000)):null;
-  const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
-  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados aos Guests selecionados durante este carregamento · média '+(sent/1048576/seconds).toFixed(2)+' MiB/s.'));
-  for(const [id,node] of channels){
-   const bytes=Number(node.to_guest_bytes)||0;
-    box.append(el('p','rpc-node-transfer',id.slice(0,12)+'… · '+fmt(bytes)+' enviados · '+(bytes/1048576/seconds).toFixed(2)+' MiB/s médios · '+(Number(node.connected)||0)+' túneis, '+(Number(node.idle)||0)+' livres'));
-  }
-  if(runtime.phase==='loading_model' && Number(runtime.phase_elapsed_seconds)>120 && (last===0 || idleFor>120)){
-   box.append(el('p','rpc-stall-warning','Sem transferência RPC recente há mais de 2 min. Verifique os túneis e logs nativos do Host/Guest; cancele se estiver travado.'));
-  } else if(runtime.phase==='loading_model' && last>0){
-   box.append(el('p','muted','Última atividade RPC há '+idleFor+' s. Bytes transmitidos não equivalem a camadas confirmadas.'));
-  } else {
-   box.append(el('p','muted','Aguardando o início da transferência real aos Guests.'));
-  }
+  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados · média '+(sent/1048576/seconds).toFixed(2)+' MiB/s.'));
+  if(runtime.phase==='loading_model' && seconds>120 && (last===0 || idleFor>120))box.append(el('p','rpc-stall-warning','Sem transferência RPC recente há mais de 2 min. Verifique os túneis e logs nativos.'));
  }
- if(!loadingPlan || loadingPlanModel!==status.settings.model){
-  box.append(el('p','muted','Calculando distribuição estimada das camadas…'));return;
- }
- box.append(el('p','muted','Distribuição planejada (não é porcentagem carregada):'));
- for(const node of loadingPlan.nodes){
-  const name=node.name||node.endpoint, line=el('div','layer-allocation');
-  line.append(el('strong','',name+' · ~'+node.layers+' de '+loadingPlan.blocks+' camadas'));
-  line.append(el('small','muted',fmt(node.estimated_weight_bytes)+' de pesos estimados / '+fmt(node.budget_bytes)+' disponíveis'));
+ const planned=runtime.upload_plan?.nodes||((loadingPlanModel===status.settings?.model)?loadingPlan?.nodes:[])||[];
+ const rows=new Map(planned.map(n=>[n.node_id||'host',n]));
+ for(const [id] of channels)if(!rows.has(id))rows.set(id,{node_id:id});
+ if(!rows.size){box.append(el('p','muted','Calculando distribuição das camadas…'));return}
+ for(const [id,node] of rows){
+  const wire=transfer[id],name=displayNodeName(id,node.name||wire?.name),line=el('div','layer-allocation');
+  const bytes=Number(wire?.to_guest_bytes)||0,total=Number(node.weight_bytes||node.estimated_weight_bytes)||0;
+  line.append(el('strong','',name+(Number.isInteger(node.layers)?' · '+node.layers+' camadas':'')));
+  if(id==='host'){line.append(el('small','muted',fmt(total)+' de pesos locais estimados'));box.append(line);continue}
   const bar=el('progress','download-bar');
-  bar.max=Math.max(1,loadingPlan.blocks);bar.value=node.layers;
-  bar.setAttribute('aria-label',name+': participação estimada de '+node.layers+' camadas em '+loadingPlan.blocks);
-  line.append(bar);box.append(line);
+  // The denominator is a placement estimate, not an acknowledged upload total.
+  // Cache hits, protocol overhead and retries prevent an exact percentage.
+  if(total>0){bar.max=total;bar.value=Math.min(bytes,total)}
+  bar.setAttribute('aria-label',name+': bytes RPC enviados sobre pesos estimados');
+  line.append(el('small','muted',fmt(bytes)+' enviados'+(total>0?' / ~'+fmt(total)+' estimados':' · total desconhecido')+' · '+(bytes/1048576/seconds).toFixed(2)+' MiB/s'),bar);
+  box.append(line);
  }
+ box.append(el('p','muted','Barras aproximadas: bytes RPC incluem protocolo e retries; cache pode evitar o envio de pesos. Conclusão confirmada somente pelo runtime.'));
 }
 async function updateLoadingPlan(status){
- if(!status.runtime?.loading || !status.settings?.model || loadingPlanModel===status.settings.model)return;
+ if(!status.runtime?.loading || status.runtime.upload_plan || !status.settings?.model || loadingPlanModel===status.settings.model)return;
  loadingPlanModel=status.settings.model;loadingPlan=null;
  try{loadingPlan=await api('/api/plan')}catch(e){console.warn('Placement estimate unavailable during load',e.message)}
  if(latestStatus?.runtime?.loading)renderLoadStatus(latestStatus);
@@ -463,24 +459,43 @@ function metricRow(name,value,suffix,used,total) {
   line.append(el('small','muted',fmt(used)+' utilizados de '+fmt(total)));
  return line;
 }
-function renderNodeResources(devices) {
- const area=$('nodeResourceCards');area.replaceChildren();
- const nodes=Array.isArray(devices)?devices:[];
- if(!nodes.length) {area.append(el('p','muted','Nenhum dispositivo disponível.'));return;}
- for(const n of nodes) {
-  const card=el('article','resource-node');
-  const head=el('div','resource-node-head');
-  const identity=el('div','');
-  identity.append(el('strong','',String(n.name||'Dispositivo sem nome')),el('small','muted',
-    (n.id?'Guest · ':'Host · ')+String(n.platform||'desconhecido')));
-  const live=n.status==='online';
-  const state=el('span','resource-state',live?'Online':'Offline');
-  head.append(identity,state);card.append(head);
+const deviceCards=new Map();
+function renderNodeResources(devices,registered=[]){
+ const area=$('nodeResourceCards'),nodes=new Map();
+ for(const n of registered)nodes.set(n.id,n);
+ for(const n of Array.isArray(devices)?devices:[])nodes.set(n.id||'host',{...nodes.get(n.id||'host'),...n});
+ for(const id of deviceCards.keys())if(!nodes.has(id)){deviceCards.get(id).card.remove?.();deviceCards.delete(id)}
+ if(!nodes.size){area.replaceChildren(el('p','muted','Nenhum dispositivo disponível.'));return}
+ if(!deviceCards.size)area.replaceChildren();
+ for(const [id,n] of nodes){
+  const live=n.status==='online',name=displayNodeName(id,n.name);
+  let view=deviceCards.get(id);
+  if(!view){
+   const card=el('article','resource-node'),head=el('div','resource-node-head'),identity=el('div',''),state=el('span','resource-state'),metrics=el('div','resource-body'),tools=el('details','device-tools');
+   const summary=el('summary','','⋯');summary.setAttribute('aria-label','Ferramentas do dispositivo');
+   const menu=el('div','device-menu');tools.append(summary,menu);head.append(identity,state,tools);card.append(head,metrics);
+   view={card,identity,state,metrics,tools,menu,signature:''};deviceCards.set(id,view);area.append(card);
+  }
+  const {card,identity,state,metrics,tools,menu}=view;
+  identity.replaceChildren(el('strong','',name),el('small','muted',(id==='host'?'Host · ':'Guest · ')+(n.platform||'desconhecido')+(n.architecture?' / '+n.architecture:'')));
+  state.textContent=(live?'Online':'Offline')+(n.busy?' · ocupado':'');
+  tools.hidden=id==='host';
+  const signature=JSON.stringify([name,live,!!n.runtime?.benchmark,!!n.runtime?.rpc_ready]);
+  if(id!=='host'&&view.signature!==signature){
+   view.signature=signature;menu.replaceChildren();
+   const add=(label,kind,fn)=>menu.append(action(label,kind,async()=>{tools.open=false;await fn()}));
+   if(live&&n.runtime?.benchmark)add('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(id),'POST',{});await refreshObservations();notice('Medição de rede concluída')});
+   if(live&&n.runtime?.rpc_ready)add('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))});
+   add('Revogar acesso','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(id),'DELETE');notice('Nó revogado');await refresh()});
+  }
+  metrics.replaceChildren();
+  if(id!=='host')metrics.append(el('p','muted',live?(n.runtime?.rpc_ready?'RPC conectado':'RPC desconectado'):'Dispositivo offline'));
+  if(n.models?.length)metrics.append(el('p','muted','Modelos: '+n.models.join(', ')));
   const seen=n.last_seen?Date.parse(n.last_seen):NaN;
   const age=Number.isFinite(seen)?Math.max(0,Math.round((Date.now()-seen)/1000)):null;
-  card.append(el('p','resource-seen',
+  metrics.append(el('p','resource-seen',
     !live?'Última medição indisponível (dispositivo offline)':age===null?'Horário da medição desconhecido':'Última comunicação há '+age+' s'));
-  if (!live) {card.append(el('p','muted','Sem amostras atuais de recursos.'));area.append(card);continue;}
+  if (!live) {card.append(el('p','muted','Sem amostras atuais de recursos.'));continue;}
   const cpu=percent(n.cpu_usage_percent);
   const ramTotal=measuredBytes(n.ram_bytes),ramUsed=measuredBytes(n.ram_used_bytes);
   const ram=ramTotal>0 && ramUsed!==null && ramUsed<=ramTotal?ramUsed/ramTotal*100:null;
@@ -497,7 +512,6 @@ function renderNodeResources(devices) {
    card.append(metricRow('GPU',gpuUsage,'%',null,null));
    card.append(metricRow('VRAM',vram,'%',vramUsed,vramTotal));
   }
-  area.append(card);
  }
 }
 let refreshEpoch=0;
@@ -508,15 +522,17 @@ async function refresh(){
  renderResidentModels(resident);
  $('residentCount').textContent=resident.length;
  latestStatus=status;localModels=models;
+ deviceNames=new Map([...nodes,...(cluster.devices||[])].filter(n=>n.name).map(n=>[n.id||'host',n.name]));
  if(activityVisible())await refreshTopology();else stopActivity();
  renderLoadStatus(status);
  await updateLoadingPlan(status);
  if(epoch!==refreshEpoch||session!==token)return;
- renderNodeResources(cluster.devices);
+ renderNodeResources(cluster.devices,nodes);
  $('resourceRefresh').textContent='Atualizado agora · heartbeats dos Guests a cada 15 s';
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
  $('overviewCapacity').textContent=fmt(c.aggregate_budget_bytes);
+ $('overviewActiveModel').textContent=(status.runtime.loaded&&status.runtime.model)||resident.join(' · ')||'Nenhum modelo carregado';
  $('modelState').textContent=status.runtime.loading
   ? 'Carregando · '+String(status.runtime.phase||'preparando').replace(/_/g,' ')
   : status.runtime.phase==='cancelled'?'Carregamento cancelado'
@@ -544,11 +560,6 @@ async function refresh(){
  if(guests.length)benchOptions.push(['cluster','Cluster (planejamento atual)']);
  benchOptions.push(...guests.map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)]));
  setOptions('inferenceBenchTarget',benchOptions,$('inferenceBenchTarget').value);
- const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
- const gpus=Array.isArray(n.gpus)?n.gpus:[];
- const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
- const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
- const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');td.append(action('Revogar','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh()}));if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));if(n.runtime?.rpc_ready && n.status==='online')td.append(action('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(n.id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))}));tr.append(td);tbody.append(tr)}
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -638,7 +649,9 @@ async function sendChat(){
  const reply=el('p','','Gerando resposta…'),details=el('details','reasoning-details'),summary=el('summary','','Raciocínio do modelo'),thoughts=el('p','reasoning-content');
  details.append(summary,thoughts);details.hidden=true;
  assistantMessage.append(el('strong','','NodexLM'),details,reply);
- output.append(userMessage,assistantMessage);followChat(true);
+ output.append(userMessage,assistantMessage);
+ $('prompt').value='';$('chatDocument').value='';$('chatImage').value='';$('chatMetrics').textContent='';
+ followChat(true);
  try{
   const effort=$('chatEffort').value;
   if(!effortLevels.has(effort))throw Error('Esforço de raciocínio inválido.');
@@ -689,7 +702,7 @@ async function sendChat(){
   }
   }
   if(controller.signal.aborted)return;
-  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();$('prompt').value='';$('chatDocument').value='';$('chatImage').value='';
+  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
   const tokens=Number(usage?.completion_tokens)||0;
@@ -707,6 +720,8 @@ async function sendChat(){
  }catch(error){
   const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;
   if(!answer)reply.textContent=message;if(!controller.signal.aborted)notice(message);
+  // A failed message can be retried without overwriting a new draft.
+  if(!$('prompt').value&&!answer&&!controller.signal.aborted)$('prompt').value=prompt;
  }finally{
   if(reader)await reader.cancel().catch(()=>{});
   if(chatController===controller)chatController=null;$('sendChat').disabled=false;$('stopChat').disabled=true;

@@ -98,6 +98,9 @@ function checkResponsiveLayout(html,css){
           check(stop.width>=55&&stop.height<=75&&clear.height<=75,'chat actions must remain readable');
           check(send.top>=fallback.closest('label').getBoundingClientRect().bottom-1,'fallback must not share the action row');
           check(send.right<=view.getBoundingClientRect().right+2,'send action outside workspace');
+          d.querySelector('.chat-settings').open=false;d.querySelector('.chat-attachments').open=false;
+          check(id('consoleMain').scrollHeight<=id('consoleMain').clientHeight+2,'chat workspace must not scroll');
+          check(id('chatOutput').clientHeight>0,'history must occupy remaining space');
           check(w.getComputedStyle(id('sendChat')).overflowWrap!=='anywhere','button words may not break letter by letter');
         }
         if(view.id==='view-models'){
@@ -160,6 +163,9 @@ async function main(){
   vm.runInContext('renderNodeResources('+JSON.stringify([offline])+')',sandbox);
   resourceCard=get('nodeResourceCards').children[0];
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
+  assert.equal(get('nodeResourceCards').children.length,1,'one card per device');
+  assert.ok(resourceCard.textContent.includes('Revogar acesso'),'tools belong to the device card');
+  assert.ok(!html.includes('id="nodes"'),'duplicate Guest table removed');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
   // Alternate runtimes must never silently enable incompatible GGML RPC.
   get('runtimeBackend').value='mistralrs';
@@ -180,7 +186,10 @@ async function main(){
   const transferring=JSON.parse(JSON.stringify(stalledLoad));
   transferring.runtime.rpc_transfer['guest-123'].to_guest_bytes=1048576;
   transferring.runtime.rpc_transfer['guest-123'].last_activity_ms=Date.now();
+  transferring.runtime.upload_plan={nodes:[{node_id:'guest-123',name:'Android Lab',layers:12,weight_bytes:2097152}]};
   vm.runInContext('renderLoadStatus('+JSON.stringify(transferring)+')',sandbox);
+  assert.ok(get('loadingStatus').textContent.includes('Android Lab'),'use device name');
+  assert.ok(!get('loadingStatus').textContent.includes('guest-123'),'never display raw guest ID');
   assert.ok(get('loadingStatus').textContent.includes('RPC real'),
     'measured bytes must appear independently of planned layer count');
   assert.ok(get('loadingStatus').textContent.includes('MiB/s'),
