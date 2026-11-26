@@ -219,24 +219,39 @@ function action(label,className,handler,disabled=false){
 function bindForm(formId,buttonId,handler){
  $(formId).addEventListener('submit',event=>{event.preventDefault();return guard(()=>withBusy($(buttonId),handler))});
 }
-function renderProgress(label,received,total){
- const bar=el('progress','download-bar');bar.max=total>0?total:1;
+function updateProgress(bar,received,total){
+ bar.max=total>0?total:1;
  if(total>0)bar.value=received;
- bar.setAttribute('aria-label',label);
+ else bar.removeAttribute?.('value');
+}
+function renderProgress(label,received,total){
+ const bar=el('progress','download-bar');
+ updateProgress(bar,received,total);bar.setAttribute('aria-label',label);
  return bar;
 }
 function transferLabel(received,total){
  return fmt(received)+(total>0?' / '+fmt(total)+' · '+Math.min(100,Math.floor(received*100/total))+'%':' · Tamanho desconhecido');
 }
+let downloadStructure='',downloadMeter=null,downloadText=null;
 function renderDownload(download){
- const area=$('downloadProgress');area.replaceChildren();if(!download)return;
- const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':download.status==='cancelled'?'Interrompido':'Falhou';
- area.append(el('div','download-label',label+' · '+download.name));
- if(download.status==='downloading'){
-  area.append(renderProgress('Progresso do download de '+download.name,download.received,download.total),
-   el('small','muted',transferLabel(download.received,download.total)),
-   action('Interromper download','secondary',()=>api('/api/download','DELETE')));
- }else if(download.error)area.append(el('small','muted',download.error));
+ const area=$('downloadProgress'),key=JSON.stringify(download?[download.name,download.status,download.error]:null);
+ if(key!==downloadStructure){
+  downloadStructure=key;downloadMeter=null;downloadText=null;area.replaceChildren();
+  if(download){
+   const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':download.status==='cancelled'?'Interrompido':'Falhou';
+   area.append(el('div','download-label',label+' · '+download.name));
+   if(download.status==='downloading'){
+    downloadMeter=renderProgress('Progresso do download de '+download.name,download.received,download.total);
+    downloadText=el('small','muted');
+    area.append(downloadMeter,downloadText,action('Interromper download','secondary',()=>api('/api/download','DELETE')));
+   }else if(download.error)area.append(el('small','muted',download.error));
+  }
+ }
+ if(downloadMeter&&download){
+  updateProgress(downloadMeter,download.received,download.total);
+  const text=transferLabel(download.received,download.total);
+  if(downloadText.textContent!==text)downloadText.textContent=text;
+ }
 }
 async function applyModel(name) {
  if(actionBusy)return;
@@ -334,8 +349,11 @@ async function updateLoadingPlan(status){
  try{loadingPlan=await api('/api/plan')}catch(e){console.warn('Placement estimate unavailable during load',e.message)}
  if(latestStatus?.runtime?.loading)renderLoadStatus(latestStatus);
 }
+let localModelStructure='';
 function renderLocalModels(models,status) {
- const list=$('models');list.replaceChildren();
+ const list=$('models'),key=JSON.stringify([models,residentModelNames,status.runtime.loaded,status.runtime.model,status.runtime.loading,actionBusy]);
+ if(key===localModelStructure)return;
+ localModelStructure=key;list.replaceChildren();
  if(!models.length){list.append(el('div','empty-state','Nenhum GGUF salvo. Pesquise no catálogo abaixo para baixar.'));return;}
  for(const m of models) {
   const row=el('article','model-item');
@@ -362,18 +380,33 @@ function placement(model) {
   default:return {name:'Não estimado',kind:'neutral'};
  }
 }
-function renderCatalog() {
- const dest=$('catalogResults');dest.replaceChildren();
- const choice=$('catalogFilter').value;
+let catalogStructure='',catalogProgress=[],catalogFailure=false;
+function updateCatalogProgress(){
+ const transfer=latestStatus?.download;
+ if(transfer?.status!=='downloading')return;
+ for(const {bar,label} of catalogProgress){
+  updateProgress(bar,transfer.received,transfer.total);
+  const text=transferLabel(transfer.received,transfer.total);
+  if(label.textContent!==text)label.textContent=text;
+ }
+}
+function renderCatalog(){
+ if(catalogSearching||catalogFailure)return;
+ const dest=$('catalogResults'),choice=$('catalogFilter').value;
+ const installedNames=new Set(localModels.map(m=>m.name));
+ const transfer=latestStatus?.download;
+ const busy=transfer?.status==='downloading';
+ const key=JSON.stringify([catalogModels,choice,[...installedNames],catalogSearched,busy,busy?transfer.name:'',actionBusy]);
+ if(key===catalogStructure){updateCatalogProgress();return}
+ catalogStructure=key;catalogProgress=[];dest.replaceChildren();
  const filtered=catalogModels.filter(m=>{
-  const installed=localModels.some(x=>x.name===modelFile(m));
+  const installed=installedNames.has(modelFile(m));
   return choice==='decision'?m.decision_model===true:choice==='downloaded'?installed:choice==='available'?['single-node-candidate','distributed-candidate'].includes(m.placement):true;
  });
  $('catalogCount').textContent=catalogModels.length?filtered.length+' de '+catalogModels.length+' arquivos GGUF encontrados':(catalogSearched?'Nenhum arquivo GGUF encontrado':'Pesquise para encontrar modelos GGUF.');
  if(!filtered.length){dest.append(el('div','empty-state',!catalogSearched?'Use a busca acima para explorar modelos GGUF.':catalogModels.length?'Nenhum resultado para este filtro.':'Nenhum resultado. Experimente outra pesquisa.'));return;}
- const busy=latestStatus?.download?.status==='downloading';
  for(const m of filtered) {
-  const name=modelFile(m);const installed=localModels.some(x=>x.name===name);
+  const name=modelFile(m);const installed=installedNames.has(name);
   const row=el('article','catalog-item');
   const info=el('div','model-info');
   info.append(el('strong','model-title',m.filename));
@@ -384,9 +417,9 @@ function renderCatalog() {
   if(installed)tags.append(el('span','model-tag active','Baixado'));
   info.append(tags);
   if(m.reason)info.append(el('p','model-reason',m.reason));
-  const transfer=latestStatus?.download;
-  if(transfer?.status==='downloading' && transfer.name===name) {
-   info.append(renderProgress('Baixando '+name,transfer.received,transfer.total),el('div','model-meta',transferLabel(transfer.received,transfer.total)));
+  if(busy && transfer.name===name){
+   const bar=renderProgress('Baixando '+name,transfer.received,transfer.total),label=el('div','model-meta',transferLabel(transfer.received,transfer.total));
+   catalogProgress.push({bar,label});info.append(bar,label);
   }
   const actions=el('div','model-actions');
   if(installed)actions.append(action('Aplicar','',()=>applyModel(name),actionBusy));
@@ -683,7 +716,7 @@ $('decisionForm').addEventListener('submit',event=>{
   }finally{button.disabled=false}
  });
 });
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();setupAuth()});
+$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;$('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 bindForm('importDirectoryForm','importDirectoryButton',async()=>{
  try{const result=await api('/api/models/import-directory','POST',{source:$('importDirectoryPath').value.trim(),link:$('importDirectoryLink').checked});notice(result.imported+' modelos importados');}finally{await refresh()}
@@ -857,9 +890,10 @@ setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
  if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;
- downloadPollBusy=true;
+ downloadPollBusy=true;const session=token;
  try {
   const d=await api('/api/download');
+  if(session!==token||!latestStatus)return;
   latestStatus.download=d;renderDownload(d);renderCatalog();
   if(d?.status!=='downloading')await refresh();
  } catch(e) {console.warn('Download status unavailable',e);}
@@ -872,21 +906,22 @@ $('catalogFilter').addEventListener('change',()=>{
 });
 let catalogRequest=null;
 $('catalogClear').addEventListener('click',()=>{
- catalogRequest?.abort();catalogRequest=null;catalogSearching=false;$('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');
+ catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';$('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');
  $('catalogQuery').value='';$('catalogFilter').value='all';catalogModels=[];catalogSearched=false;renderCatalog();$('catalogQuery').focus();
 });
 $('catalogForm').addEventListener('submit',event=>{
  event.preventDefault();if(catalogSearching)return;
  return guard(async()=>{
-  const controller=new AbortController(),session=token;catalogRequest=controller;catalogSearching=true;
+  const controller=new AbortController(),session=token;catalogRequest=controller;catalogSearching=true;catalogFailure=false;catalogStructure='';
   const button=$('catalogSearch');button.disabled=true;button.setAttribute('aria-busy','true');
   $('catalogResults').replaceChildren(el('div','empty-state','Consultando catálogo Hugging Face…'));$('catalogCount').textContent='Buscando modelos…';
   try{
    const models=await api('/api/catalog?q='+encodeURIComponent($('catalogQuery').value),'GET',undefined,controller.signal);
    if(catalogRequest!==controller||session!==token)return;
-   catalogModels=models;catalogSearched=true;renderCatalog();
+   catalogModels=models;catalogSearched=true;catalogSearching=false;renderCatalog();
   }catch(error){
    if(controller.signal.aborted||session!==token)return;
+   catalogFailure=true;
    $('catalogResults').replaceChildren(el('div','empty-state','Falha ao consultar o catálogo. Tente novamente.'));$('catalogCount').textContent='Busca indisponível';throw error;
   }finally{if(catalogRequest===controller){catalogRequest=null;catalogSearching=false;button.disabled=false;button.setAttribute('aria-busy','false')}}
  });

@@ -278,6 +278,12 @@ async function main(){
   assert.equal(download.status,'downloading');
   assert.equal(download.name,'Qwen3-Q4_K_M.gguf');
   assert.equal(get('downloadProgress').children[1].tag,'progress');
+  const stableMeter=get('downloadProgress').children[1];
+  const stableCatalogRow=get('catalogResults').children[0];
+  vm.runInContext("latestStatus.download.received=1048576;renderDownload(latestStatus.download);renderCatalog()",sandbox);
+  assert.equal(get('downloadProgress').children[1],stableMeter,'global transfer meter must update in place');
+  assert.equal(get('catalogResults').children[0],stableCatalogRow,'progress must not replace catalog row');
+  assert.equal(stableMeter.value,1048576);
   assert.ok(!html.includes('id="catalogDownloadProgress"'),'only one global transfer status');
   assert.ok(get('catalogResults').children[0].children[0].children.some(n=>n.tag==='progress'));
   locals.push({name:download.name,size_bytes:model.size_bytes});

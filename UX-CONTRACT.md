@@ -69,3 +69,7 @@ Runtime context is configured before loading. The chat sends prior completed tur
 Scope: native Web console. Android UI is a separate owner. Backend API and
 security policy unchanged. Manual accessibility, zoom, device and physical
 inference verification remain necessary beyond automated layout checks.
+
+Transfer updates retain the progress control and catalog row DOM identity until the
+model, status, filter, or actions actually change. Unchanged local model lists
+also retain controls and focus. Tests assert identity during a progress tick.
