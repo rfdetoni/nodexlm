@@ -20,7 +20,7 @@ var digestName = regexp.MustCompile("^[0-9a-f]{64}$")
 // configured model library. Hard links share the inode; enable only for
 // trusted immutable model libraries. There is no retained second weight copy.
 func WithContentCache(ctx context.Context, directory string) context.Context {
-	if os.Getenv("NODEXLM_MODEL_DEDUP") != "1" {
+	if os.Getenv("NODEXLM_MODEL_DEDUP") != "1" && os.Getenv("NODEXLM_MODEL_P2P") != "1" {
 		return ctx
 	}
 	root, err := filepath.Abs(directory)

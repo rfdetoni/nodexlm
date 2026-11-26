@@ -249,6 +249,15 @@ func serve(args []string) error {
 	if err := s.SetStore(filepath.Join(*dir, "registry.json")); err != nil {
 		return err
 	}
+	// Model cache is opt-in and shared only through enrolled-node TLS.
+	if os.Getenv("NODEXLM_MODEL_P2P") == "1" {
+		if *modelDir == "" {
+			*modelDir = filepath.Join(*dir, "models")
+		}
+		if err := s.SetContentCacheDirectory(*modelDir); err != nil {
+			return err
+		}
+	}
 	certFile := filepath.Join(*dir, "server.crt")
 	keyFile := filepath.Join(*dir, "server.key")
 	if *enablePair {

@@ -43,6 +43,11 @@ internal class ModelLibraryView(
     private var finding = false
     private var verifying = false
     private var preparing = false
+    @Volatile private var cacheEpoch = 0L
+    @Volatile private var cacheCancelled = false
+    @Volatile private var cacheReceived = 0L
+    private var cacheExpected = 0L
+    private var cacheTransfer = false
     private var sampledDownload = 0L
     private var sampledAt = 0L
     private var sampledBytes = 0L
@@ -109,6 +114,8 @@ internal class ModelLibraryView(
         library.orientation = VERTICAL
         addView(library)
         refreshLibrary()
+        // An unowned Host-cache transfer cannot be resumed after Activity re-creation.
+        if (prefs.getLong("id", 0L) == -1L) clearDownload()
     }
 
     override fun onAttachedToWindow() { super.onAttachedToWindow(); main.removeCallbacks(tick);main.post(tick) }
@@ -255,30 +262,83 @@ internal class ModelLibraryView(
         }
     }
 
-    private fun enqueuePart(source: String,fileName: String,repository: String) {
-        val root=ModelFiles.directory(activity)
-        val target=File(root,fileName)
-        val staging=File(root,".${fileName}.download")
-            require(!staging.exists()) { activity.getString(R.string.model_downloading) }
-            val request=DownloadManager.Request(Uri.parse(source))
-                .setTitle("NodexLM: $fileName")
-                .setDescription(activity.getString(R.string.model_source,repository))
-                .setMimeType("application/octet-stream")
-                .setDestinationUri(Uri.fromFile(staging))
-                .setAllowedOverRoaming(false)
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            val id=downloads.enqueue(request)
-            if (!prefs.edit().putLong("id",id).putString("staging",staging.absolutePath)
-                .putString("target",target.absolutePath).putString("current_source",source).commit()) {
-                downloads.remove(id)
-                error("Cannot persist active download")
+
+    private fun enqueuePart(source: String, fileName: String, repository: String) {
+        val root = ModelFiles.directory(activity)
+        val target = File(root, fileName)
+        val staging = File(root, ".$fileName.download")
+        require(!staging.exists()) { activity.getString(R.string.model_downloading) }
+        val index = prefs.getInt("part_index", 0)
+        val checksum = org.json.JSONArray(prefs.getString("shas", "[]")).optString(index)
+        val expected = org.json.JSONArray(prefs.getString("sizes", "[]")).optLong(index, -1L)
+        if (!HostModelCache.available(activity) || expected <= 0L) {
+            enqueueNetworkPart(source, fileName, repository)
+            return
+        }
+        val epoch = ++cacheEpoch
+        cacheCancelled = false
+        cacheReceived = 0L
+        cacheExpected = expected
+        cacheTransfer = true
+        check(prefs.edit().putLong("id", -1L).putString("staging", staging.absolutePath)
+            .putString("target", target.absolutePath).putString("current_source", source).commit())
+        status.text = activity.getString(R.string.download_started, fileName)
+        val scratch = File(root, ".$fileName.p2p-$epoch")
+        thread(name = "nodexlm-host-content-cache") {
+            val available = HostModelCache.fetch(activity, checksum, expected, scratch,
+                { cacheCancelled || epoch != cacheEpoch }, { cacheReceived = it })
+            activity.runOnUiThread {
+                if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -1L) {
+                    scratch.delete()
+                    return@runOnUiThread
+                }
+                cacheTransfer = false
+                if (available && scratch.renameTo(staging)) {
+                    completeDownload()
+                } else {
+                    scratch.delete()
+                    prefs.edit().putLong("id", 0L).commit()
+                    try {
+                        enqueueNetworkPart(source, fileName, repository)
+                    } catch (e: Exception) {
+                        clearDownload()
+                        status.text = activity.getString(R.string.download_failed, e.message)
+                    }
+                }
             }
-            status.text=activity.getString(R.string.download_started,fileName)
-            refreshProgress()
+        }
     }
 
+    private fun enqueueNetworkPart(source: String, fileName: String, repository: String) {
+        val root = ModelFiles.directory(activity)
+        val target = File(root, fileName)
+        val staging = File(root, ".$fileName.download")
+        require(!staging.exists()) { activity.getString(R.string.model_downloading) }
+        val request = DownloadManager.Request(Uri.parse(source))
+            .setTitle("NodexLM: $fileName")
+            .setDescription(activity.getString(R.string.model_source, repository))
+            .setMimeType("application/octet-stream")
+            .setDestinationUri(Uri.fromFile(staging))
+            .setAllowedOverRoaming(false)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+        val id = downloads.enqueue(request)
+        if (!prefs.edit().putLong("id", id).putString("staging", staging.absolutePath)
+            .putString("target", target.absolutePath).putString("current_source", source).commit()) {
+            downloads.remove(id)
+            error("Cannot persist active download")
+        }
+        status.text = activity.getString(R.string.download_started, fileName)
+        refreshProgress()
+    }
     private fun refreshProgress() {
         val id=prefs.getLong("id",0L)
+        if (id == -1L && cacheTransfer) {
+            bar.visibility=VISIBLE;cancel.visibility=VISIBLE
+            bar.isIndeterminate=cacheExpected<=0
+            if(cacheExpected>0)bar.progress=(cacheReceived*1000/cacheExpected).toInt().coerceIn(0,1000)
+            downloadProgress.text="Host cache · ${gib(cacheReceived)} / ${gib(cacheExpected)}"
+            return
+        }
         if (id<=0L) {bar.visibility=GONE;cancel.visibility=GONE;return}
         bar.visibility=VISIBLE
         cancel.visibility=VISIBLE
@@ -393,12 +453,14 @@ internal class ModelLibraryView(
 
     private fun cancelDownload() {
         val id=prefs.getLong("id",0L)
+        if (id == -1L) { cacheCancelled = true; cacheEpoch++; cacheTransfer = false }
         if (id>0L) downloads.remove(id)
         File(prefs.getString("staging","") ?: "").takeIf { it.isFile }?.delete()
         status.text=activity.getString(R.string.ui_c48e80c1186c)
         clearDownload()
     }
     private fun clearDownload() {
+        cacheCancelled = true; cacheEpoch++; cacheTransfer = false
         val root=ModelFiles.directory(activity).canonicalFile
         val parts=runCatching {org.json.JSONArray(prefs.getString("parts","[]"))}.getOrDefault(org.json.JSONArray())
         for(i in 0 until parts.length()){for(suffix in listOf("ready","download")){val file=File(root,".${parts.optString(i)}.$suffix");if(file.canonicalFile.parentFile==root)file.delete()}}

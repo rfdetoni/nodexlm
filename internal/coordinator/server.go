@@ -58,6 +58,7 @@ type Server struct {
 	rpcHub          *rpcmesh.Hub
 	rpcMicrobench   func(string)
 	rpcDrain        func(string)
+	modelCacheDir   string
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
@@ -87,6 +88,7 @@ func (s *Server) handler(administrative bool) http.Handler {
 	mux.HandleFunc("POST /v1/pairing/enroll", s.pairingEnroll)
 	mux.HandleFunc("POST /v1/nodes/heartbeat", s.heartbeat)
 	mux.HandleFunc("GET /v1/nodes/catalog", s.modelCatalog)
+	mux.HandleFunc("GET /v1/nodes/cache/{sha256}", s.nodeModelCache)
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
 	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
 	mux.HandleFunc("POST /v1/nodes/result/{id}", s.result)
