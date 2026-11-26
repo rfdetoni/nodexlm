@@ -403,8 +403,10 @@ internal class ModelLibraryView(
                     val bytes = c.optLong("bytes", 0L)
                     if (bytes <= 0L) return@mapNotNull null
                     val speed = c.optLong("bytesPerSecond", 0L)
+                    val failures = c.optLong("errors", 0L)
                     "C${c.optInt("id", index+1)}: %.1f MiB/s".format(
-                        java.util.Locale.US, speed.toDouble() / (1024 * 1024))
+                        java.util.Locale.US, speed.toDouble() / (1024 * 1024)) +
+                        if (failures > 0L) " · $failures retries" else ""
                 }.joinToString(" · ")
             }.getOrDefault("") else ""
             downloadProgress.text="${if(id == -2L) "Rust HTTPS" else "Host cache"} · ${gib(received)} / ${gib(cacheExpected)}$rate" +
