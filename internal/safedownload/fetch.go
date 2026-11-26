@@ -179,12 +179,15 @@ func fetch(ctx context.Context, client *http.Client, source, target string, limi
 		progress(received, meta.Total)
 	}
 	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		measure, done := measureConnection(ctx, target, offset, meta.Total)
+		defer done()
 		buf := make([]byte, 256<<10)
 		for {
 			if err := ctx.Err(); err != nil {
 				return received, err
 			}
 			n, readErr := resp.Body.Read(buf)
+			measure(n)
 			if int64(n) > limit-received {
 				return received, errors.New("model exceeds download limit")
 			}

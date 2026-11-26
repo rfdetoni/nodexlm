@@ -83,12 +83,14 @@ func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string)
 }
 
 type Download struct {
-	ShardCount int    `json:"shard_count,omitempty"`
-	Name       string `json:"name"`
-	Received   int64  `json:"received"`
-	Total      int64  `json:"total"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
+	ShardCount  int                               `json:"shard_count,omitempty"`
+	Name        string                            `json:"name"`
+	Received    int64                             `json:"received"`
+	Total       int64                             `json:"total"`
+	Status      string                            `json:"status"`
+	Error       string                            `json:"error,omitempty"`
+	Connections []safedownload.ConnectionProgress `json:"connections,omitempty"`
+	SpeedBPS    int64                             `json:"speed_bps,omitempty"`
 }
 
 type Manager struct {
@@ -132,6 +134,7 @@ type Manager struct {
 	generations           map[uint64]context.CancelFunc
 	generationSequence    uint64
 	download              *Download
+	downloadMeter         *safedownload.TransferMeter
 	cancel                context.CancelFunc
 	downloadDone          chan struct{}
 	httpClient            *http.Client
@@ -241,6 +244,9 @@ func (m *Manager) DownloadState() *Download {
 		return nil
 	}
 	s := *m.download
+	if s.Status == "downloading" {
+		s.Connections, s.SpeedBPS = m.downloadMeter.Snapshot()
+	}
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
@@ -836,6 +842,8 @@ func (m *Manager) StartDownload(urlText, name string) error {
 	m.cancel = cancel
 	m.downloadDone = make(chan struct{})
 	m.download = &Download{Name: name, Status: "downloading", ShardCount: len(parts)}
+	m.downloadMeter = safedownload.NewTransferMeter()
+	ctx = safedownload.WithTransferMeter(ctx, m.downloadMeter)
 	go m.downloadModel(ctx, u.String(), path, name)
 	return nil
 }
@@ -852,6 +860,7 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 		}
 		m.download.Status = status
 		m.download.Error = errorText
+		m.downloadMeter = nil
 		m.cancel = nil
 		close(m.downloadDone)
 		m.downloadDone = nil

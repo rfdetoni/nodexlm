@@ -393,12 +393,15 @@ func writeRange(ctx context.Context, client *http.Client, source string, meta pa
 		return err
 	}
 	defer resp.Body.Close()
+	measure, done := measureConnection(ctx, file.Name(), start, end)
+	defer done()
 	pos := start
 	var writeTime time.Duration
 	started := time.Now()
 	defer func() { *slowDisk = writeTime >= 250*time.Millisecond && writeTime > time.Since(started)/2 }()
 	for pos < end {
 		n, err := io.ReadFull(resp.Body, buf[:min(int64(len(buf)), end-pos)])
+		measure(n)
 		if n > 0 {
 			if err := paceDownload(ctx, n); err != nil {
 				return err

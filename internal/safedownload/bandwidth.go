@@ -11,12 +11,12 @@ import (
 type bandwidthKey struct{}
 
 type bandwidthBudget struct {
-	mu       sync.Mutex
-	policy   func() int64
-	maximum  int64
-	rate     int64
-	sampled  time.Time
-	next     time.Time
+	mu      sync.Mutex
+	policy  func() int64
+	maximum int64
+	rate    int64
+	sampled time.Time
+	next    time.Time
 }
 
 // WithBandwidthPolicy sets an optional dynamic cap in bytes per second.

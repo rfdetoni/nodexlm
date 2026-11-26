@@ -232,25 +232,41 @@ function renderProgress(label,received,total){
 function transferLabel(received,total){
  return fmt(received)+(total>0?' / '+fmt(total)+' · '+Math.min(100,Math.floor(received*100/total))+'%':' · Tamanho desconhecido');
 }
-let downloadStructure='',downloadMeter=null,downloadText=null;
+let downloadStructure='',downloadMeter=null,downloadText=null,downloadDetails=null,downloadRows=new Map();
 function renderDownload(download){
  const area=$('downloadProgress'),key=JSON.stringify(download?[download.name,download.status,download.error]:null);
  if(key!==downloadStructure){
-  downloadStructure=key;downloadMeter=null;downloadText=null;area.replaceChildren();
+  downloadStructure=key;downloadMeter=null;downloadText=null;downloadDetails=null;downloadRows.clear();area.replaceChildren();
   if(download){
    const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':download.status==='cancelled'?'Interrompido':'Falhou';
    area.append(el('div','download-label',label+' · '+download.name));
    if(download.status==='downloading'){
     downloadMeter=renderProgress('Progresso do download de '+download.name,download.received,download.total);
     downloadText=el('small','muted');
-    area.append(downloadMeter,downloadText,action('Interromper download','secondary',()=>api('/api/download','DELETE')));
+    downloadDetails=el('details','disclosure');downloadDetails.append(el('summary','','Conexões de transferência'));
+    area.append(downloadMeter,downloadText,action('Interromper download','secondary',()=>api('/api/download','DELETE')),downloadDetails);
    }else if(download.error)area.append(el('small','muted',download.error));
   }
  }
  if(downloadMeter&&download){
   updateProgress(downloadMeter,download.received,download.total);
-  const text=transferLabel(download.received,download.total);
+  const speed=Number(download.speed_bps)||0,connections=download.connections||[];
+  let text=transferLabel(download.received,download.total);
+  if(speed>0)text+=' · '+fmt(speed)+'/s';
+  if(speed>0&&download.total>download.received)text+=' · ETA ~'+Math.ceil((download.total-download.received)/speed)+' s';
   if(downloadText.textContent!==text)downloadText.textContent=text;
+  if(downloadDetails){
+   downloadDetails.hidden=!connections.length;
+   downloadDetails.children[0].textContent='Conexões ativas: '+connections.length;
+   const ids=new Set(connections.map(c=>c.id));
+   for(const [id,row] of downloadRows){if(!ids.has(id)){row.remove();downloadRows.delete(id)}}
+   for(const c of connections){
+    let row=downloadRows.get(c.id);
+    if(!row){row=el('div','model-meta');row.append(el('small',''),renderProgress('Conexão '+c.id,0,Math.max(0,c.end-c.start)));downloadDetails.append(row);downloadRows.set(c.id,row)}
+    row.children[0].textContent='Conexão '+c.id+' · '+c.file+' · '+transferLabel(c.received,c.end>c.start?c.end-c.start:0);
+    updateProgress(row.children[1],c.received,c.end>c.start?c.end-c.start:0);
+   }
+  }
  }
 }
 async function applyModel(name) {
