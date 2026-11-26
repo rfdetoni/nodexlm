@@ -16,11 +16,12 @@ let loadingPlanModel='';
 let modelFolderPath='';
 const fmt = bytes => bytes > 0 ? (bytes / 1073741824).toFixed(2) + ' GiB' : '—';
 function notice(message) { $('toast').textContent=message; $('toast').style.display='block'; clearTimeout(notice.timer); notice.timer=setTimeout(() => $('toast').style.display='none', 4800); }
-async function api(path, method='GET', body) {
+async function api(path, method='GET', body, signal) {
+  const session=token;
   const headers={Authorization:'Bearer '+token}; if (body!==undefined) headers['Content-Type']='application/json';
-  const response=await fetch(path,{method,headers,body: body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
+  const response=await fetch(path,{method,headers,body: body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal});
   const text=await response.text(); let data;try{data=JSON.parse(text)}catch{data={error:text}}
-  if (!response.ok) {if(response.status===401) {sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();$('auth').hidden=false;$('app').hidden=true;}throw Error(data.error||'HTTP '+response.status)}
+  if (!response.ok) {if(response.status===401 && token===session) {sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();$('auth').hidden=false;$('app').hidden=true;}throw Error(data.error||'HTTP '+response.status)}
   return data;
 }
 const consoleViews=[
@@ -30,7 +31,8 @@ const consoleViews=[
  {id:'cluster',name:'Dispositivos',description:'Guests, recursos e pareamento seguro.'},
  {id:'observability',name:'Diagnóstico',description:'Medições reais de rede e inferência.'},
  {id:'decisions',name:'Decisões',description:'Perguntas tipadas e probabilidades via System One.'},
- {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'}
+ {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'},
+ {id:'images',name:'Imagens',description:'Geração local de imagens.'}
 ];
 
 // High-frequency sampling is request-driven: only while the inference
@@ -117,6 +119,7 @@ function activateConsoleView(view){
  if(chosen.id==='inference' && token)guard(refresh);else stopActivity();
  if(chosen.id==='observability' && token)guard(refreshObservations);
  if(chosen.id==='decisions' && token)guard(refreshDecisionWorkers);
+ if(chosen.id==='chat')followChat(true);
 }
 function setupConsoleNavigation(){
  for(let i=0;i<consoleViews.length;i++){
@@ -167,11 +170,21 @@ async function refreshDecisionWorkers() {
  }
 }
 function setupAuth(){$('auth').hidden=!!token;$('app').hidden=!token;}
-function setSelect(items,chosen){let list=$('modelSelect');list.replaceChildren();let empty=document.createElement('option');empty.value='';empty.textContent='Selecione um modelo';list.append(empty);for(const m of items){let el=document.createElement('option');el.value=m.name;el.textContent=m.name+' ('+fmt(m.size_bytes)+')'+(m.moe?' · MoE':'');list.append(el);}list.value=chosen||'';}
-function setDraftModels(items, chosen){
- const select=$('draftModelSelect');select.replaceChildren();const empty=document.createElement('option');empty.value='';empty.textContent='Sem draft';select.append(empty);
- for(const item of items){const opt=document.createElement('option');opt.value=item.name;opt.textContent=item.name;select.append(opt);}
- select.value=items.some(m=>m.name===chosen)?chosen:'';
+const selectSnapshots=new WeakMap();
+function setOptions(id,options,chosen,fallback=''){
+ const select=$(id),key=JSON.stringify(options);
+ if(selectSnapshots.get(select)!==key){
+  select.replaceChildren(...options.map(([value,label])=>{const option=el('option','',label);option.value=value;return option}));
+  selectSnapshots.set(select,key);
+ }
+ const value=options.some(([value])=>value===chosen)?chosen:fallback;
+ if(select.value!==value)select.value=value;
+}
+function setSelect(items,chosen){
+ setOptions('modelSelect',[['','Selecione um modelo'],...items.map(m=>[m.name,m.name+' ('+fmt(m.size_bytes)+')'+(m.moe?' · MoE':'')])],chosen);
+}
+function setDraftModels(items,chosen){
+ setOptions('draftModelSelect',[['','Sem draft'],...items.map(m=>[m.name,m.name])],chosen);
 }
 function settingsFromForm(model) {
  return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, threads_batch:+$('threadsBatch').value, parallel_slots:+$('parallelSlots').value, prompt_cache_mib:+$('promptCacheMiB').value, load_mode:$('loadMode').value, lazy_mode:$('lazyMode').value, numa:$('numaPolicy').value, context_tokens:+$('contextTokens').value,
@@ -193,27 +206,51 @@ function el(tag, className, content) {
  if(content!==undefined)node.textContent=content;
  return node;
 }
-function action(label, className, handler, disabled=false) {
- const btn=el('button', className, label);
- btn.type='button';btn.disabled=disabled;btn.addEventListener('click',()=>guard(handler));
+async function withBusy(button,handler){
+ if(button.disabled)return;
+ button.disabled=true;button.setAttribute('aria-busy','true');
+ try{return await handler()}finally{button.disabled=false;button.setAttribute('aria-busy','false')}
+}
+function action(label,className,handler,disabled=false){
+ const btn=el('button',className,label);
+ btn.type='button';btn.disabled=disabled;btn.addEventListener('click',()=>guard(()=>withBusy(btn,handler)));
  return btn;
 }
-function renderDownload(download) {
- for(const id of ['downloadProgress','catalogDownloadProgress']) {
-  const area=$(id); if(!area)continue; area.replaceChildren();
-  if(!download)continue;
-  const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':download.status==='cancelled'?'Interrompido':'Falhou';
-  area.append(el('div','download-label',label+' · '+download.name));
-  if(download.status==='downloading') {
-   const bar=el('progress','download-bar');
-   bar.max=download.total>0?download.total:1;
-   if(download.total>0)bar.value=download.received;
-   bar.setAttribute('aria-label','Progresso do download de '+download.name);
-   area.append(bar);
-   const percent=download.total>0?Math.min(100,Math.floor(download.received*100/download.total))+'%':'Tamanho desconhecido';
-   area.append(action('Interromper download','secondary',()=>api('/api/download','DELETE')));
-   area.append(el('small','muted',fmt(download.received)+(download.total>0?' / '+fmt(download.total):'')+' · '+percent));
-  }else if(download.error) area.append(el('small','muted',download.error));
+function bindForm(formId,buttonId,handler){
+ $(formId).addEventListener('submit',event=>{event.preventDefault();return guard(()=>withBusy($(buttonId),handler))});
+}
+function updateProgress(bar,received,total){
+ bar.max=total>0?total:1;
+ if(total>0)bar.value=received;
+ else bar.removeAttribute?.('value');
+}
+function renderProgress(label,received,total){
+ const bar=el('progress','download-bar');
+ updateProgress(bar,received,total);bar.setAttribute('aria-label',label);
+ return bar;
+}
+function transferLabel(received,total){
+ return fmt(received)+(total>0?' / '+fmt(total)+' · '+Math.min(100,Math.floor(received*100/total))+'%':' · Tamanho desconhecido');
+}
+let downloadStructure='',downloadMeter=null,downloadText=null;
+function renderDownload(download){
+ const area=$('downloadProgress'),key=JSON.stringify(download?[download.name,download.status,download.error]:null);
+ if(key!==downloadStructure){
+  downloadStructure=key;downloadMeter=null;downloadText=null;area.replaceChildren();
+  if(download){
+   const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':download.status==='cancelled'?'Interrompido':'Falhou';
+   area.append(el('div','download-label',label+' · '+download.name));
+   if(download.status==='downloading'){
+    downloadMeter=renderProgress('Progresso do download de '+download.name,download.received,download.total);
+    downloadText=el('small','muted');
+    area.append(downloadMeter,downloadText,action('Interromper download','secondary',()=>api('/api/download','DELETE')));
+   }else if(download.error)area.append(el('small','muted',download.error));
+  }
+ }
+ if(downloadMeter&&download){
+  updateProgress(downloadMeter,download.received,download.total);
+  const text=transferLabel(download.received,download.total);
+  if(downloadText.textContent!==text)downloadText.textContent=text;
  }
 }
 async function applyModel(name) {
@@ -312,8 +349,11 @@ async function updateLoadingPlan(status){
  try{loadingPlan=await api('/api/plan')}catch(e){console.warn('Placement estimate unavailable during load',e.message)}
  if(latestStatus?.runtime?.loading)renderLoadStatus(latestStatus);
 }
+let localModelStructure='';
 function renderLocalModels(models,status) {
- const list=$('models');list.replaceChildren();
+ const list=$('models'),key=JSON.stringify([models,residentModelNames,status.runtime.loaded,status.runtime.model,status.runtime.loading,actionBusy]);
+ if(key===localModelStructure)return;
+ localModelStructure=key;list.replaceChildren();
  if(!models.length){list.append(el('div','empty-state','Nenhum GGUF salvo. Pesquise no catálogo abaixo para baixar.'));return;}
  for(const m of models) {
   const row=el('article','model-item');
@@ -324,7 +364,7 @@ function renderLocalModels(models,status) {
   const blocked=loaded || status.runtime.loading || actionBusy;
   if(loaded)controls.append(el('span','model-tag active','Em uso'));
   else controls.append(action('Aplicar','',()=>applyModel(m.name),blocked));
-  controls.append(action('Excluir','secondary',async()=>{
+  controls.append(action('Excluir','secondary danger',async()=>{
    if(!await confirmAction('Excluir definitivamente '+m.name+' e todas as suas partes GGUF?','Excluir'))return;
    await api('/api/models/'+encodeURIComponent(m.name),'DELETE');
    notice('Modelo excluído: '+m.name);settingsInitialized=false;await refresh();
@@ -340,18 +380,33 @@ function placement(model) {
   default:return {name:'Não estimado',kind:'neutral'};
  }
 }
-function renderCatalog() {
- const dest=$('catalogResults');dest.replaceChildren();
- const choice=$('catalogFilter').value;
+let catalogStructure='',catalogProgress=[],catalogFailure=false;
+function updateCatalogProgress(){
+ const transfer=latestStatus?.download;
+ if(transfer?.status!=='downloading')return;
+ for(const {bar,label} of catalogProgress){
+  updateProgress(bar,transfer.received,transfer.total);
+  const text=transferLabel(transfer.received,transfer.total);
+  if(label.textContent!==text)label.textContent=text;
+ }
+}
+function renderCatalog(){
+ if(catalogSearching||catalogFailure)return;
+ const dest=$('catalogResults'),choice=$('catalogFilter').value;
+ const installedNames=new Set(localModels.map(m=>m.name));
+ const transfer=latestStatus?.download;
+ const busy=transfer?.status==='downloading';
+ const key=JSON.stringify([catalogModels,choice,[...installedNames],catalogSearched,busy,busy?transfer.name:'',actionBusy]);
+ if(key===catalogStructure){updateCatalogProgress();return}
+ catalogStructure=key;catalogProgress=[];dest.replaceChildren();
  const filtered=catalogModels.filter(m=>{
-  const installed=localModels.some(x=>x.name===modelFile(m));
+  const installed=installedNames.has(modelFile(m));
   return choice==='decision'?m.decision_model===true:choice==='downloaded'?installed:choice==='available'?['single-node-candidate','distributed-candidate'].includes(m.placement):true;
  });
  $('catalogCount').textContent=catalogModels.length?filtered.length+' de '+catalogModels.length+' arquivos GGUF encontrados':(catalogSearched?'Nenhum arquivo GGUF encontrado':'Pesquise para encontrar modelos GGUF.');
  if(!filtered.length){dest.append(el('div','empty-state',!catalogSearched?'Use a busca acima para explorar modelos GGUF.':catalogModels.length?'Nenhum resultado para este filtro.':'Nenhum resultado. Experimente outra pesquisa.'));return;}
- const busy=latestStatus?.download?.status==='downloading';
  for(const m of filtered) {
-  const name=modelFile(m);const installed=localModels.some(x=>x.name===name);
+  const name=modelFile(m);const installed=installedNames.has(name);
   const row=el('article','catalog-item');
   const info=el('div','model-info');
   info.append(el('strong','model-title',m.filename));
@@ -362,15 +417,9 @@ function renderCatalog() {
   if(installed)tags.append(el('span','model-tag active','Baixado'));
   info.append(tags);
   if(m.reason)info.append(el('p','model-reason',m.reason));
-  const transfer=latestStatus?.download;
-  if(transfer?.status==='downloading' && transfer.name===name) {
-   const bar=el('progress','download-bar');bar.max=transfer.total>0?transfer.total:1;
-   if(transfer.total>0)bar.value=transfer.received;
-   bar.setAttribute('aria-label','Baixando '+name);
-   info.append(bar);
-   info.append(el('div','model-meta',transfer.total>0?
-    Math.min(100,Math.floor(transfer.received*100/transfer.total))+'% · '+fmt(transfer.received)+' / '+fmt(transfer.total):
-    'Baixando · '+fmt(transfer.received)));
+  if(busy && transfer.name===name){
+   const bar=renderProgress('Baixando '+name,transfer.received,transfer.total),label=el('div','model-meta',transferLabel(transfer.received,transfer.total));
+   catalogProgress.push({bar,label});info.append(bar,label);
   }
   const actions=el('div','model-actions');
   if(installed)actions.append(action('Aplicar','',()=>applyModel(name),actionBusy));
@@ -435,21 +484,23 @@ function renderNodeResources(devices) {
   area.append(card);
  }
 }
+let refreshEpoch=0;
 async function refresh(){
+ const epoch=++refreshEpoch,session=token;
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
+ if(epoch!==refreshEpoch||session!==token)return;
  renderResidentModels(resident);
  $('residentCount').textContent=resident.length;
  latestStatus=status;localModels=models;
  if(activityVisible())await refreshTopology();else stopActivity();
  renderLoadStatus(status);
  await updateLoadingPlan(status);
+ if(epoch!==refreshEpoch||session!==token)return;
  renderNodeResources(cluster.devices);
  $('resourceRefresh').textContent='Atualizado agora · heartbeats dos Guests a cada 15 s';
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
- $('sideOnline').textContent=nodes.filter(n=>n.status==='online').length;
  $('overviewCapacity').textContent=fmt(c.aggregate_budget_bytes);
- $('sideCapacity').textContent=fmt(c.aggregate_budget_bytes);
  $('modelState').textContent=status.runtime.loading
   ? 'Carregando · '+String(status.runtime.phase||'preparando').replace(/_/g,' ')
   : status.runtime.phase==='cancelled'?'Carregamento cancelado'
@@ -468,27 +519,20 @@ async function refresh(){
   configureBackendUI();
  }
  renderLocalModels(models,status);renderCatalog();
- const primary=$('primaryNode'), selectedPrimary=settingsInitialized&&primary.dataset.initialized==='yes'?primary.value:(s.primary_node==='auto'?'':s.primary_node||'');
- primary.replaceChildren();
- for(const [value,label] of [['','Automático'],['host','Host']]){const option=el('option','',label);option.value=value;primary.append(option);}
- for(const node of nodes){if(node.status!=='online'||!node.runtime?.rpc_ready||!cluster.rpc_guests?.[node.id])continue;const option=el('option','',node.name||node.id);option.value=node.id;primary.append(option);}
- if(selectedPrimary&&![...primary.children].some(o=>o.value===selectedPrimary)){const option=el('option','','Guest indisponível: '+selectedPrimary);option.value=selectedPrimary;primary.append(option);}
- primary.value=selectedPrimary;primary.dataset.initialized='yes';
- const benchTarget=$('inferenceBenchTarget'), selectedTarget=benchTarget.value;
- benchTarget.replaceChildren();
- const hostOption=el('option','', 'Host local (sem RPC)');hostOption.value='';benchTarget.append(hostOption);
- if(nodes.some(n=>n.status==='online'&&n.runtime?.rpc_ready&&cluster.rpc_guests?.[n.id])){const opt=el('option','','Cluster (planejamento atual)');opt.value='cluster';benchTarget.append(opt);}
- for(const node of nodes){
-  if(node.status!=='online'||!node.runtime?.rpc_ready||!cluster.rpc_guests?.[node.id])continue;
-  const option=el('option','', (node.name||'Guest')+' · '+(node.platform||'')+' · '+node.id.slice(0,8));
-  option.value=node.id;benchTarget.append(option);
- }
- if([...benchTarget.children].some(option=>option.value===selectedTarget))benchTarget.value=selectedTarget;
+ const primary=$('primaryNode'),selectedPrimary=primary.dataset.initialized==='yes'?primary.value:(s.primary_node==='auto'?'':s.primary_node||'');
+ const guests=nodes.filter(n=>n.status==='online'&&n.runtime?.rpc_ready&&cluster.rpc_guests?.[n.id]);
+ const primaryOptions=[['','Automático'],['host','Host'],...guests.map(n=>[n.id,n.name||n.id])];
+ if(selectedPrimary&&!primaryOptions.some(([id])=>id===selectedPrimary))primaryOptions.push([selectedPrimary,'Guest indisponível: '+selectedPrimary]);
+ setOptions('primaryNode',primaryOptions,selectedPrimary);primary.dataset.initialized='yes';
+ const benchOptions=[['','Host local (sem RPC)']];
+ if(guests.length)benchOptions.push(['cluster','Cluster (planejamento atual)']);
+ benchOptions.push(...guests.map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)]));
+ setOptions('inferenceBenchTarget',benchOptions,$('inferenceBenchTarget').value);
  const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
  const gpus=Array.isArray(n.gpus)?n.gpus:[];
  const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
  const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
- const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');const btn=document.createElement('button');btn.className='secondary';btn.textContent='Revogar';btn.addEventListener('click',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;try{await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh();}catch(e){notice(e.message)}});td.append(btn);if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));if(n.runtime?.rpc_ready && n.status==='online')td.append(action('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(n.id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))}));tr.append(td);tbody.append(tr)}
+ const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');td.append(action('Revogar','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh()}));if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));if(n.runtime?.rpc_ready && n.status==='online')td.append(action('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(n.id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))}));tr.append(td);tbody.append(tr)}
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -519,7 +563,24 @@ function saveReasoningPreference(){
  if(!effortLevels.has(effort)||!Number.isInteger(budget)||budget<0||budget>4096)return;
  try{localStorage.setItem('nodexlm-chat-reasoning',JSON.stringify({effort,budget}))}catch{/* Private browser mode can disable storage. */}
 }
-function renderChat(){const output=$('chatOutput');output.replaceChildren();for(const message of chatHistory){output.append(el('strong','',message.role==='user'?'Você':'NodexLM'),el('p','',message.content))}}
+function chatMessage(role,content){
+ const message=el('article','chat-message '+role);
+ message.append(el('strong','',role==='user'?'Você':'NodexLM'),el('p','',content));
+ return message;
+}
+let chatScrollScheduled=false,chatFollow=true;
+function followChat(force=false){
+ if(force)chatFollow=true;
+ if(!chatFollow||chatScrollScheduled)return;
+ const scroll=()=>{chatScrollScheduled=false;if(chatFollow){const output=$('chatOutput');output.scrollTop=output.scrollHeight}};
+ if(typeof requestAnimationFrame==='function'){chatScrollScheduled=true;requestAnimationFrame(scroll)}else scroll();
+}
+function renderChat(){
+ const output=$('chatOutput');output.replaceChildren();
+ if(!chatHistory.length)output.append(el('p','chat-empty','Carregue um modelo e envie uma mensagem para começar.'));
+ for(const message of chatHistory)output.append(chatMessage(message.role,message.content));
+ followChat(true);
+}
 function confirmAction(text,label){
  const dialog=$('confirmation');$('confirmationText').textContent=text;$('confirmAction').textContent=label;
  return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.returnValue='cancel';dialog.showModal()});
@@ -555,7 +616,13 @@ async function sendChat(){
  const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
  const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let rpcTraffic=null;let done=false;let reader;
- renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');const details=el('details','reasoning-details');const summary=el('summary','','Raciocínio do modelo');const thoughts=el('p','reasoning-content');details.append(summary,thoughts);details.hidden=true;output.append(details,reply);
+ renderChat();const output=$('chatOutput');
+ if(!chatHistory.length)output.replaceChildren();
+ const userMessage=chatMessage('user',prompt),assistantMessage=el('article','chat-message assistant');
+ const reply=el('p','','Gerando resposta…'),details=el('details','reasoning-details'),summary=el('summary','','Raciocínio do modelo'),thoughts=el('p','reasoning-content');
+ details.append(summary,thoughts);details.hidden=true;
+ assistantMessage.append(el('strong','','NodexLM'),details,reply);
+ output.append(userMessage,assistantMessage);followChat(true);
  try{
   const effort=$('chatEffort').value;
   if(!effortLevels.has(effort))throw Error('Esforço de raciocínio inválido.');
@@ -578,7 +645,7 @@ async function sendChat(){
    const fallback=await fetch('/api/chat/fallback',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({model,messages:payload.messages,max_tokens:maxTokens,temperature:payload.temperature,stream:false})});
    const result=await fallback.json();if(!fallback.ok)throw Error(result.error||'Fallback indisponível.');
    if(typeof result.answer!=='string'||result.answer.length>65536)throw Error('Resposta externa inválida.');
-   answer=result.answer;reply.textContent=answer;done=true;$('allowExternalFallback').checked=false;
+   answer=result.answer;reply.textContent=answer;followChat();done=true;$('allowExternalFallback').checked=false;
   }else{
   if(!response.ok){const text=await response.text();let message=text;try{const error=JSON.parse(text).error;message=error?.message||error||text}catch{}throw Error(message)}
   reader=response.body.getReader();const decoder=new TextDecoder();let pending='';
@@ -598,9 +665,9 @@ async function sendChat(){
      nativeDecode=1000*Number(timing.predicted_n)/Number(timing.predicted_ms);
     }
     const thinking=event.choices?.[0]?.delta?.reasoning_content||'';
-    if(thinking){if(firstGenerated===null)firstGenerated=performance.now();reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning}
+    if(thinking){if(firstGenerated===null)firstGenerated=performance.now();reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning;followChat()}
     const text=event.choices?.[0]?.delta?.content||'';
-    if(text){if(firstGenerated===null)firstGenerated=performance.now();if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer}
+    if(text){if(firstGenerated===null)firstGenerated=performance.now();if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer;followChat()}
    }
    if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
   }
@@ -629,7 +696,7 @@ async function sendChat(){
   if(chatController===controller)chatController=null;$('sendChat').disabled=false;$('stopChat').disabled=true;
  }
 }
-$('login').addEventListener('submit',e=>{e.preventDefault();token=$('secret').value.trim();guard(async()=>{await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')})});
+bindForm('login','loginSubmit',async()=>{token=$('secret').value.trim();await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')});
 $('decisionForm').addEventListener('submit',event=>{
  event.preventDefault();
  guard(async()=>{
@@ -649,13 +716,12 @@ $('decisionForm').addEventListener('submit',event=>{
   }finally{button.disabled=false}
  });
 });
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();setupAuth()});
+$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;$('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
-$('importDirectoryForm').addEventListener('submit',event=>{event.preventDefault();guard(async()=>{
- const button=$('importDirectoryButton');button.disabled=true;
- try{const result=await api('/api/models/import-directory','POST',{source:$('importDirectoryPath').value.trim(),link:$('importDirectoryLink').checked});notice(result.imported+' modelos importados');}finally{button.disabled=false;await refresh()}
-})});
-$('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
+bindForm('importDirectoryForm','importDirectoryButton',async()=>{
+ try{const result=await api('/api/models/import-directory','POST',{source:$('importDirectoryPath').value.trim(),link:$('importDirectoryLink').checked});notice(result.imported+' modelos importados');}finally{await refresh()}
+});
+bindForm('downloadForm','startDownload',async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()});
 function configureBackendUI(){
  const other=$('runtimeBackend').value==='mistralrs';
  $('distributed').disabled=other;
@@ -666,7 +732,7 @@ function configureBackendUI(){
  }
 }
 $('runtimeBackend').addEventListener('change',configureBackendUI);
-$('settingsForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/settings','PUT',settingsFromForm($('modelSelect').value));notice('Configuração salva');settingsInitialized=false;await refresh()})});
+bindForm('settingsForm','saveSettings',async()=>{await api('/api/settings','PUT',settingsFromForm($('modelSelect').value));notice('Configuração salva');settingsInitialized=false;await refresh()});
 $('load').addEventListener('click',()=>guard(async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
 $('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
 // The 8-character code is a short-lived *pairing* credential, not the
@@ -764,8 +830,9 @@ $('pairQR').addEventListener('click',()=>guard(async()=>{
  const session=pairingSession, startingToken=token, button=$('pairQR');
  button.disabled=true;
  try{
-  const result=await api('/api/pairing/qr','POST',{host:$('pairQRHost').value.trim(),code:session.code});
-  if(token!==startingToken||pairingSession!==session||!pairingSecondsLeft())return;
+  const host=$('pairQRHost').value.trim();
+  const result=await api('/api/pairing/qr','POST',{host,code:session.code});
+  if(token!==startingToken||pairingSession!==session||!pairingSecondsLeft()||$('pairQRHost').value.trim()!==host)return;
   if(!result.png||result.png.length>350000||!/^[A-Za-z0-9+/=]+$/.test(result.png))throw Error('QR inválido.');
   $('pairQRImage').src='data:image/png;base64,'+result.png;$('pairQRImage').hidden=false;
  }finally{button.disabled=false}
@@ -792,10 +859,19 @@ $('previewPlan').addEventListener('click',()=>guard(async()=>{
  area.append(el('p','muted','Camadas e KV F16 são estimativas; a alocação final depende do runtime. Aviso de rede: RTT acima de 10 ms ou eco abaixo de 50 MiB/s. Tokens/s são medidos, sem previsão pela banda; mudar a configuração ou os nós pode invalidar a comparação.'));
 }));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
-$('imageForm').addEventListener('submit',event=>{event.preventDefault();guard(async()=>{
- const button=$('generateImage');const session=token;button.disabled=true;$('imageOutput').hidden=true;
- try{const result=await api('/api/images/generations','POST',{prompt:$('imagePrompt').value.trim(),size:$('imageSize').value,steps:+$('imageSteps').value});if(!token||token!==session)return;const image=result.data?.[0]?.b64_json;if(typeof image!=='string'||image.length>45000000)throw Error('Imagem inválida.');$('imageOutput').src='data:image/png;base64,'+image;$('imageOutput').hidden=false;}finally{button.disabled=false}
-})});
+$('chatForm').addEventListener('invalid',e=>{const details=e.target.closest?.('details');if(details)details.open=true},true);
+$('chatOutput').addEventListener('scroll',()=>{const output=$('chatOutput');chatFollow=output.scrollHeight-output.scrollTop-output.clientHeight<80});
+$('prompt').addEventListener('keydown',e=>{
+ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){e.preventDefault();if(!chatController)$('chatForm').requestSubmit()}
+});
+bindForm('imageForm','generateImage',async()=>{
+ const session=token;$('imageOutput').hidden=true;
+ const result=await api('/api/images/generations','POST',{prompt:$('imagePrompt').value.trim(),size:$('imageSize').value,steps:+$('imageSteps').value});
+ if(!token||token!==session)return;
+ const image=result.data?.[0]?.b64_json;
+ if(typeof image!=='string'||image.length>45000000)throw Error('Imagem inválida.');
+ $('imageOutput').src='data:image/png;base64,'+image;$('imageOutput').hidden=false;
+});
 $('chatEffort').addEventListener('change',()=>{
  const disabled=$('chatEffort').value==='none';
  $('chatThinkingBudget').disabled=disabled;
@@ -814,9 +890,10 @@ setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
  if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;
- downloadPollBusy=true;
+ downloadPollBusy=true;const session=token;
  try {
   const d=await api('/api/download');
+  if(session!==token||!latestStatus)return;
   latestStatus.download=d;renderDownload(d);renderCatalog();
   if(d?.status!=='downloading')await refresh();
  } catch(e) {console.warn('Download status unavailable',e);}
@@ -827,22 +904,41 @@ $('catalogFilter').addEventListener('change',()=>{
  if($('catalogFilter').value==='decision' && ($('catalogQuery').value.trim()===''||$('catalogQuery').value==='Qwen3'))$('catalogQuery').value='decision';
  renderCatalog();
 });
-$('catalogForm').addEventListener('submit',e=>{e.preventDefault();if(catalogSearching)return;guard(async()=>{
- catalogSearching=true;
- const btn=$('catalogSearch');btn.disabled=true;
- const result=$('catalogResults');result.replaceChildren(el('div','empty-state','Consultando catálogo Hugging Face...'));
- $('catalogCount').textContent='Buscando modelos...';
- try {
-  catalogModels=await api('/api/catalog?q='+encodeURIComponent($('catalogQuery').value));
-  catalogSearched=true;renderCatalog();
- } finally {catalogSearching=false;btn.disabled=false;}
-})});
+let catalogRequest=null;
+$('catalogClear').addEventListener('click',()=>{
+ catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';$('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');
+ $('catalogQuery').value='';$('catalogFilter').value='all';catalogModels=[];catalogSearched=false;renderCatalog();$('catalogQuery').focus();
+});
+$('catalogForm').addEventListener('submit',event=>{
+ event.preventDefault();if(catalogSearching)return;
+ return guard(async()=>{
+  const controller=new AbortController(),session=token;catalogRequest=controller;catalogSearching=true;catalogFailure=false;catalogStructure='';
+  const button=$('catalogSearch');button.disabled=true;button.setAttribute('aria-busy','true');
+  $('catalogResults').replaceChildren(el('div','empty-state','Consultando catálogo Hugging Face…'));$('catalogCount').textContent='Buscando modelos…';
+  try{
+   const models=await api('/api/catalog?q='+encodeURIComponent($('catalogQuery').value),'GET',undefined,controller.signal);
+   if(catalogRequest!==controller||session!==token)return;
+   catalogModels=models;catalogSearched=true;catalogSearching=false;renderCatalog();
+  }catch(error){
+   if(controller.signal.aborted||session!==token)return;
+   catalogFailure=true;
+   $('catalogResults').replaceChildren(el('div','empty-state','Falha ao consultar o catálogo. Tente novamente.'));$('catalogCount').textContent='Busca indisponível';throw error;
+  }finally{if(catalogRequest===controller){catalogRequest=null;catalogSearching=false;button.disabled=false;button.setAttribute('aria-busy','false')}}
+ });
+});
 
 function renderResidentModels(models){
+ const list=$('residentModels'),prior=$('chatModel').value;
+ const changed=JSON.stringify(residentModelNames)!==JSON.stringify(models)||!list.children.length;
  residentModelNames=models;
- const list=$('residentModels');list.replaceChildren();const selector=$('chatModel');const prior=selector.value;selector.replaceChildren();
- for(const model of models){const option=el('option','',model);option.value=model;selector.append(option);const row=el('div','model-item');row.append(el('strong','',model),action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));list.append(row)}
- selector.value=models.includes(prior)?prior:(models[0]||'');
+ setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
+ if(!changed)return;
+ list.replaceChildren();
+ for(const model of models){
+  const row=el('div','model-item'),info=el('div','model-info'),controls=el('div','model-actions');
+  info.append(el('strong','model-title',model));controls.append(action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));
+  row.append(info,controls);list.append(row);
+ }
 }
 $('loadAdditional').addEventListener('click',()=>guard(async()=>{
  const button=$('loadAdditional');button.disabled=true;

@@ -60,7 +60,91 @@ const sandbox={document,performance:{now:()=>Date.now()},localStorage,sessionSto
 vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
+function checkResponsiveLayout(html,css){
+  const {spawnSync}=require('node:child_process');
+  const os=require('node:os');
+  const browsers=[process.env.CHROME_BIN,'google-chrome','google-chrome-stable','chromium','chromium-browser'].filter(Boolean);
+  const browser=browsers.find(bin=>spawnSync(bin,['--version'],{stdio:'ignore'}).status===0);
+  if(!browser){
+    if(process.env.GITHUB_ACTIONS==='true')throw Error('Headless Chromium is required for dashboard layout regression');
+    console.log('Skipping real-browser layout checks: Chrome/Chromium unavailable');
+    return;
+  }
+  // Inline the real stylesheet and remove the network-dependent application
+  // script. Behavioral tests above/below exercise the actual JS separately.
+  const fixture=html.replace('<link rel="stylesheet" href="/styles.css">','<style>'+css+'</style>').replace('<script src="/app.js" defer></script>','');
+  const escape=value=>value.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const widths=[320,360,480,768,1024,1440];
+  const frames=widths.map(w=>'<iframe title="'+w+'" width="'+w+'" height="950" style="display:block;border:0" srcdoc="'+escape(fixture)+'"></iframe>').join('');
+  const probe=`<script>
+  window.addEventListener('load',()=>{
+    const errors=[];
+    for(const frame of document.querySelectorAll('iframe')){
+      const d=frame.contentDocument,w=frame.contentWindow;
+      const width=Number(frame.title),id=x=>d.getElementById(x);
+      const check=(ok,message)=>{if(!ok)errors.push(width+'px: '+message)};
+      id('auth').hidden=true;id('app').hidden=false;
+      const views=[...d.querySelectorAll('.console-view')];
+      for(const view of views){
+        views.forEach(v=>v.hidden=v!==view);
+        if(view.id==='view-chat'){
+          d.querySelector('.chat-settings').open=true;
+          d.querySelector('.chat-attachments').open=true;
+          id('chatOutput').textContent='A'.repeat(200);
+          const fallback=id('allowExternalFallback'),checkbox=fallback.getBoundingClientRect();
+          const send=id('sendChat').getBoundingClientRect(),stop=id('stopChat').getBoundingClientRect(),clear=id('clearChat').getBoundingClientRect();
+          check(checkbox.width>=16&&checkbox.width<=22&&checkbox.height>=16&&checkbox.height<=22,'checkbox must remain compact');
+          check(send.width>=95&&send.height<=75,'send button compressed or vertically wrapped');
+          check(stop.width>=55&&stop.height<=75&&clear.height<=75,'chat actions must remain readable');
+          check(send.top>=fallback.closest('label').getBoundingClientRect().bottom-1,'fallback must not share the action row');
+          check(send.right<=view.getBoundingClientRect().right+2,'send action outside workspace');
+          check(w.getComputedStyle(id('sendChat')).overflowWrap!=='anywhere','button words may not break letter by letter');
+        }
+        if(view.id==='view-models'){
+          for(const item of view.querySelectorAll('details'))item.open=true;
+        }
+        check(d.documentElement.scrollWidth<=d.documentElement.clientWidth+2,view.id+' document horizontal overflow');
+        const main=id('consoleMain');
+        check(main.scrollWidth<=main.clientWidth+2,view.id+' workspace horizontal overflow');
+      }
+    }
+    document.getElementById('layout-result').textContent=errors.length?'LAYOUT_FAIL: '+errors.join(' | '):'LAYOUT_PASS_6_WIDTHS';
+  });
+  </script>`;
+  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'nodexlm-layout-'));
+  try{
+    const file=path.join(tmp,'layout.html');
+    fs.writeFileSync(file,'<!doctype html><meta charset="utf-8"><pre id="layout-result">LAYOUT_PENDING</pre>'+frames+probe);
+    const result=spawnSync(browser,['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--disable-background-networking','--user-data-dir='+path.join(tmp,'profile'),'--window-size=1600,1100','--virtual-time-budget=7000','--dump-dom','file://'+file],{encoding:'utf8',timeout:45000,maxBuffer:8*1024*1024});
+    if(result.error)throw result.error;
+    assert.equal(result.status,0,'headless browser failed: '+result.stderr?.slice(-2000));
+    const match=result.stdout.match(/<pre id="layout-result">([^<]*)<\/pre>/);
+    assert.equal(match?.[1],'LAYOUT_PASS_6_WIDTHS',match?.[1]||'No browser layout result');
+    console.log('Responsive dashboard layout passed at 320, 360, 480, 768, 1024 and 1440 px');
+  }finally{fs.rmSync(tmp,{recursive:true,force:true})}
+}
 async function main(){
+  const html=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/index.html'),'utf8');
+  const css=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/styles.css'),'utf8');
+  checkResponsiveLayout(html,css);
+  const chat=html.slice(html.indexOf('id="view-chat"'),html.indexOf('id="view-images"'));
+  assert.match(chat,/<label class="check-field"><input id="allowExternalFallback" type="checkbox"><span>/);
+  assert.match(chat,/<div class="chat-actions">[\s\S]*?<div class="buttons"><button id="stopChat"/);
+  assert.doesNotMatch(chat,/<div class="buttons"><label/);
+  assert.match(css,/\.buttons button\{flex:0 0 auto\}/);
+  assert.match(html,/id="nav-images"[^>]*aria-controls="view-images"/);
+  assert.equal(new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1])).size,[...html.matchAll(/\bid="([^"]+)"/g)].length,'IDs must be unique');
+  vm.runInContext("chatHistory=[{role:'user',content:'Olá'},{role:'assistant',content:'Resposta'}];renderChat()",sandbox);
+  assert.equal(get('chatOutput').children.length,2,'each message must have its own layout container');
+  assert.equal(get('chatOutput').children[0].textContent,'VocêOlá');
+  vm.runInContext("chatHistory=[];renderChat()",sandbox);
+  assert.ok(get('chatOutput').textContent.includes('começar'),'empty chat retains useful guidance');
+  vm.runInContext("setOptions('chatModel',[['a','A'],['b','B']],'b')",sandbox);
+  const originalOption=get('chatModel').children[0];
+  vm.runInContext("setOptions('chatModel',[['a','A'],['b','B']],'a')",sandbox);
+  assert.equal(get('chatModel').children[0],originalOption,'unchanged options retain DOM identity');
+  assert.equal(get('chatModel').value,'a');
+
   // Telemetry must never turn an unknown CPU/GPU counter into a claimed idle reading.
   const device = {
     id:'guest-1',name:'Guest Linux',platform:'linux',status:'online',
@@ -194,7 +278,13 @@ async function main(){
   assert.equal(download.status,'downloading');
   assert.equal(download.name,'Qwen3-Q4_K_M.gguf');
   assert.equal(get('downloadProgress').children[1].tag,'progress');
-  assert.equal(get('catalogDownloadProgress').children[1].tag,'progress');
+  const stableMeter=get('downloadProgress').children[1];
+  const stableCatalogRow=get('catalogResults').children[0];
+  vm.runInContext("latestStatus.download.received=1048576;renderDownload(latestStatus.download);renderCatalog()",sandbox);
+  assert.equal(get('downloadProgress').children[1],stableMeter,'global transfer meter must update in place');
+  assert.equal(get('catalogResults').children[0],stableCatalogRow,'progress must not replace catalog row');
+  assert.equal(stableMeter.value,1048576);
+  assert.ok(!html.includes('id="catalogDownloadProgress"'),'only one global transfer status');
   assert.ok(get('catalogResults').children[0].children[0].children.some(n=>n.tag==='progress'));
   locals.push({name:download.name,size_bytes:model.size_bytes});
   download.status='completed';download.received=download.total;
