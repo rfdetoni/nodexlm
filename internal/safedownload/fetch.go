@@ -43,7 +43,7 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 		return 0, ctx.Err()
 	}
 	defer func() { <-transfers }()
-	return fetch(ctx, client, source, target, limit, progress, true)
+	return fetch(ensureBandwidth(ctx), client, source, target, limit, progress, true)
 }
 
 func fetch(ctx context.Context, client *http.Client, source, target string, limit int64, progress func(int64, int64), parallel bool) (int64, error) {
@@ -189,6 +189,9 @@ func fetch(ctx context.Context, client *http.Client, source, target string, limi
 				return received, errors.New("model exceeds download limit")
 			}
 			if n > 0 {
+				if err := paceDownload(ctx, n); err != nil {
+					return received, err
+				}
 				if _, err := file.Write(buf[:n]); err != nil {
 					return received, err
 				}

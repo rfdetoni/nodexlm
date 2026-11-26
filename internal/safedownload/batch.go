@@ -58,7 +58,7 @@ func FetchBatch(ctx context.Context, client *http.Client, files []BatchFile, lim
 	if uint64(total) > free {
 		return errors.New("insufficient free disk space for model set")
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ensureBandwidth(ctx))
 	defer cancel()
 	if client == nil {
 		client = Client()

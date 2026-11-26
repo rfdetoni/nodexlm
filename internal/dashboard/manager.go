@@ -823,6 +823,16 @@ func (m *Manager) StartDownload(urlText, name string) error {
 		return errors.New("another download is in progress")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = safedownload.WithBandwidthPolicy(ctx, func() int64 {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		// Keep WAN downloads from competing with loading and active decoding.
+		// Do not throttle merely because a resident model is idle.
+		if m.loading || len(m.generations) > 0 {
+			return 2 << 20
+		}
+		return 0
+	})
 	m.cancel = cancel
 	m.downloadDone = make(chan struct{})
 	m.download = &Download{Name: name, Status: "downloading", ShardCount: len(parts)}

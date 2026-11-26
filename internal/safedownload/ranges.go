@@ -400,6 +400,9 @@ func writeRange(ctx context.Context, client *http.Client, source string, meta pa
 	for pos < end {
 		n, err := io.ReadFull(resp.Body, buf[:min(int64(len(buf)), end-pos)])
 		if n > 0 {
+			if err := paceDownload(ctx, n); err != nil {
+				return err
+			}
 			before := time.Now()
 			written, writeErr := file.WriteAt(buf[:n], pos)
 			writeTime += time.Since(before)
