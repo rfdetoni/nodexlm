@@ -213,6 +213,8 @@ func fetch(ctx context.Context, client *http.Client, source, target string, limi
 				return received, readErr
 			}
 		}
+		resp.Body.Close()
+		done()
 	}
 	if meta.Total >= 0 && received != meta.Total {
 		return received, errors.New("incomplete model download")

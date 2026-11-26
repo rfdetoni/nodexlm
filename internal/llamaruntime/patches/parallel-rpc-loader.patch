@@ -11,7 +11,7 @@ diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
  #include <map>
  #include <set>
  #include <stdexcept>
-@@ -134,7 +135,11 @@
+@@ -134,7 +135,12 @@
      std::string arch_name;
      LLM_KV      llm_kv    = LLM_KV(LLM_ARCH_UNKNOWN);
  
@@ -19,6 +19,7 @@ diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
 +    // Model-wide upload scope, owned by the caller of load_all_data.
 +    std::function<bool(ggml_tensor *, const void *, size_t)> rpc_queue;
 +    std::function<void()> rpc_finish;
++    std::function<size_t()> rpc_pending_bytes;
 +
 +    size_t size_done = 0;
      size_t size_data = 0;
@@ -27,21 +28,22 @@ diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -1785,9 +1785,10 @@
+@@ -1785,9 +1785,11 @@
          }
  
          if (progress_callback) {
 -            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
 -                return false;
 -            }
-+            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
++            const size_t pending = rpc_pending_bytes ? rpc_pending_bytes() : 0;
++            if (!progress_callback((float) (size_done - std::min(size_done, pending)) / size_data, progress_callback_user_data)) {
 +                if (rpc_finish) { rpc_finish(); }
 +                return false;
 +            }
          }
  
          size_t n_size = ggml_nbytes(cur);
-@@ -1827,10 +1828,12 @@
+@@ -1827,10 +1829,12 @@
                  auto & mmap_used = mmaps_used[weight->idx];
                  mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                  mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
@@ -58,7 +60,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
              const auto & file = files.at(weight->idx);
  
              if (ggml_backend_buffer_is_host(cur->buffer)) {
-@@ -1949,8 +1952,10 @@
+@@ -1949,8 +1953,10 @@
      }
  
      // check if this is the last call and do final cleanup
@@ -90,7 +92,7 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
  #include <cassert>
  #include <cfloat>
  #include <cstdint>
-@@ -2153,12 +2161,143 @@
+@@ -2153,12 +2161,148 @@
          });
      }
  
@@ -118,9 +120,10 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 +        std::exception_ptr failure;
 +        std::atomic<size_t> & active;
 +        std::atomic<size_t> & peak;
++        std::atomic<size_t> & queued_bytes;
 +        std::thread worker;
 +
-+        rpc_upload_worker(std::atomic<size_t> & a, std::atomic<size_t> & p) : active(a), peak(p), worker([this] {
++        rpc_upload_worker(std::atomic<size_t> & a, std::atomic<size_t> & p, std::atomic<size_t> & q) : active(a), peak(p), queued_bytes(q), worker([this] {
 +            for (;;) {
 +                std::unique_lock<std::mutex> lock(mutex);
 +                wake.wait(lock, [this] { return stopping || !pending.empty(); });
@@ -136,6 +139,7 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 +                while (seen < now && !peak.compare_exchange_weak(seen, now)) {}
 +                try {
 +                    ggml_backend_tensor_set(next.tensor, next.data, 0, next.size);
++                    queued_bytes.fetch_sub(next.size);
 +                    active.fetch_sub(1);
 +                } catch (...) {
 +                    active.fetch_sub(1);
@@ -161,6 +165,7 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 +                throw std::runtime_error("RPC tensor worker is stopped");
 +            }
 +            pending.push_back({tensor, data, size});
++            queued_bytes.fetch_add(size);
 +            wake.notify_all();
 +        }
 +
@@ -185,7 +190,7 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 +
 +    const char * parallel_setting = std::getenv("NODEXLM_PARALLEL_RPC_UPLOAD");
 +    const bool parallel_rpc = ml.use_mmap && !ml.check_tensors && parallel_setting && std::strcmp(parallel_setting, "1") == 0;
-+    std::atomic<size_t> active_uploads{0}, peak_uploads{0};
++    std::atomic<size_t> active_uploads{0}, peak_uploads{0}, pending_bytes{0};
 +    std::unordered_map<ggml_backend_dev_t, std::unique_ptr<rpc_upload_worker>> rpc_uploads;
 +    ml.rpc_queue = [&](ggml_tensor * tensor, const void * data, size_t size) -> bool {
 +        if (!parallel_rpc || !tensor->buffer) {
@@ -202,11 +207,12 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 +            if (rpc_uploads.size() >= 8) {
 +                return false;
 +            }
-+            it = rpc_uploads.emplace(dev, std::make_unique<rpc_upload_worker>(active_uploads, peak_uploads)).first;
++            it = rpc_uploads.emplace(dev, std::make_unique<rpc_upload_worker>(active_uploads, peak_uploads, pending_bytes)).first;
 +        }
 +        it->second->submit(tensor, data, size);
 +        return true;
 +    };
++    ml.rpc_pending_bytes = [&] { return pending_bytes.load(); };
 +    ml.rpc_finish = [&] {
 +        for (auto & entry : rpc_uploads) {
 +            entry.second->finish();
@@ -227,6 +233,7 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 +        ~clear_upload_callbacks() {
 +            loader.rpc_queue = nullptr;
 +            loader.rpc_finish = nullptr;
++            loader.rpc_pending_bytes = nullptr;
 +        }
 +    } clear_callbacks{ml};
 +
