@@ -95,6 +95,8 @@ func run(args []string) error {
 		return chat(args[1:])
 	case "local":
 		return localChat(args[1:])
+	case "image":
+		return generateImage(args[1:])
 	case "models":
 		return models(args[1:])
 	case "hub":
@@ -126,6 +128,7 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm guest --rejoin --server https://host:8443 --code ABCD2345 # renew stale node credentials
   nodexlm join --code ABCD2345 --name worker-1
   nodexlm pairing # issue a fresh 8-character code
+  nodexlm pairing --qr-host https://192.168.1.5:8443 # terminal QR (qrencode)
   nodexlm join --server https://host:8443 --name worker-1 --model model.gguf --ca ./server.crt
   nodexlm node --backend http://127.0.0.1:8080 --model model.gguf --ca ./server.crt
   nodexlm rpc-node                   # shares CPU/GPU for ONE distributed GGUF
@@ -137,6 +140,8 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm hub download --repo owner/repo --file model.Q4_K_M.gguf --dir ./models
   nodexlm hub import --file /path/to/manual.gguf --dir ./models
   nodexlm local --model ./models/model.gguf --prompt "hello"
+  nodexlm local --model model.gguf --mmproj projector.gguf --image photo.png --prompt "Describe"
+  nodexlm image --model model.safetensors --prompt "A landscape" --output landscape.png # optional sd-cli
   nodexlm local --model ./models/moe.gguf --moe-cpu --prompt "hello"
   nodexlm node --model moe.gguf --model-path ./models/moe.gguf --moe-cpu --ca ./server.crt
 
@@ -829,7 +834,7 @@ func chat(args []string) error {
 	ca := f.String("ca", "", "certificate")
 	model := f.String("model", "", "model")
 	prompt := f.String("prompt", "", "prompt")
-	document := f.String("document", "", "optional local UTF-8 text document (max 64 KiB)")
+	document := f.String("document", "", "optional local UTF-8 text or DOCX (max 64 KiB extracted text)")
 	target := f.String("node", "", "optional target node id")
 	fallbackURL := f.String("fallback-url", "", "explicit HTTPS provider base URL; sends prompt/document externally on local 404/503")
 	fallbackModel := f.String("fallback-model", "", "external provider model")

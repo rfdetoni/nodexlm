@@ -15,14 +15,18 @@ This change is an independent implementation, not a port of third-party Flutter 
 - Explicit CLI external fallback: `nodexlm chat --model local.gguf --prompt "Hello" --fallback-url https://provider.example/v1 --fallback-model external-model`. Set `NODEXLM_FALLBACK_API_KEY` separately. The chosen provider receives the prompt/document on local HTTP 404/503 only; no fallback on authentication, timeout, targeted Guest or ambiguous failures. Do not use for private documents unless external processing is acceptable.
 - QR-assisted enrollment: `nodexlm pairing --qr-host https://192.168.1.5:8443` with optional local qrencode executable. A compatible QR scanner opens the Android app and fills the pairing form; user confirmation and existing TLS/proof checks remain mandatory. No embedded camera scanner or dashboard QR yet.
 
+- Experimental standalone diffusion: `nodexlm image --model model.safetensors --prompt "Landscape" --output image.png`. Requires a separately installed stable-diffusion.cpp sd-cli and self-contained compatible checkpoint. Bounded dimensions/steps, new PNG output only; no server, APK or distributed diffusion. Local process arguments may expose the prompt to same-machine process inspection.
+- Android optional adaptive Wi-Fi performance lock uses the existing supervisor and authenticated claim count; releases after 30 seconds without claims. Defaults off, requires worker restart to apply. A long-lived claim can outlive generation; actual RTT/energy improvements are not established, and first-request latency may increase.
+- CLI DOCX text extraction reads only word/document.xml (16 MiB archive, 2 MiB XML, 64 KiB output); does not execute macros, resolve external relationships or extract filesystem entries. PDF and document UI remain pending.
+
 ## Acceptance before enabling broader mobile changes
 - Build both Android ABIs; CPU-only device must not initialize Vulkan in the RPC process; Auto/GPU/Hybrid must retain device discovery and fallback.
 - Compare greedy output with cold cache for extended conversations, changed system prompts, identical requests, stop/cancel and model reload. Measure TTFT, PSS, tokens/s, thermal and energy on real devices. Prefix caching is scoped to the loaded embedded context; do not share it across unrelated trust domains.
 - iOS guest: native Swift/ObjC++ or Rust authenticated outbound transport, exact pinned GGML RPC ABI, Metal memory reporting, foreground execution and explicit handling of OS suspension. No unauthenticated LAN RPC.
-- Adaptive Wi-Fi: use existing tunnel claims and measured RTT/jitter; only activate probes during active inference with bounded overhead and energy/thermal policy.
+- Adaptive Wi-Fi: validate claim-based policy on Android and design RTT/jitter-driven tuning on mobile; avoid unnecessary probes during idle.
 - Android host: reuse current coordinator and authenticated transport, not a parallel scheduler; admission must account for UI, unified memory and weights.
 - LiteRT-LM: optional independent executor with verified artifact format, supported accelerator discovery and no claim of GGML tensor splitting.
-- Multimodal Host API/dashboard and diffusion: optional executors, bounded media decoding and validated model capabilities; separate image-generation API. QR dashboard/camera integration remains pending. PDF/DOCX extraction and Android/web document and directory UI remain future work. External provider routing in the dashboard/API remains pending.
+- Multimodal Host API/dashboard and diffusion: optional executors, bounded media decoding and validated model capabilities; separate image-generation API. QR dashboard/camera integration remains pending. PDF extraction and Android/web document and directory UI remain future work. External provider routing in the dashboard/API remains pending.
 - Preserve existing measured RTT planner, Rust transport, parallel upload and cache rather than replacing them with PrivateLM's simpler placement.
 
 These remaining items are not implemented by this change. Full Go, Android and native integration tests remain pending.
