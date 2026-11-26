@@ -829,11 +829,16 @@ func chat(args []string) error {
 	prompt := f.String("prompt", "", "prompt")
 	document := f.String("document", "", "optional local UTF-8 text document (max 64 KiB)")
 	target := f.String("node", "", "optional target node id")
+	fallbackURL := f.String("fallback-url", "", "explicit HTTPS provider base URL; sends prompt/document externally on local 404/503")
+	fallbackModel := f.String("fallback-model", "", "external provider model")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
 	if *model == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
+	}
+	if (*fallbackURL == "") != (*fallbackModel == "") || (*fallbackURL != "" && *target != "") {
+		return errors.New("fallback requires URL and model together, and cannot target a Guest")
 	}
 	content, err := documentPrompt(*prompt, *document)
 	if err != nil { return err }
@@ -849,8 +854,15 @@ func chat(args []string) error {
 			Message protocol.Message `json:"message"`
 		} `json:"choices"`
 	}
-	_, err = cli.Request(c, "POST", "/v1/chat/completions", request, &out)
+	status, err := cli.Request(c, "POST", "/v1/chat/completions", request, &out)
 	if err != nil {
+		if *fallbackURL != "" && (status == 404 || status == 503) {
+			fmt.Fprintln(os.Stderr, "Local model unavailable; using explicitly configured external provider.")
+			answer, fallbackErr := externalFallback(c,*fallbackURL,*fallbackModel,request.Messages)
+			if fallbackErr != nil { return fallbackErr }
+			fmt.Println(answer)
+			return nil
+		}
 		return err
 	}
 	if len(out.Choices) == 0 {
@@ -891,6 +903,8 @@ func localChat(args []string) error {
 	f := fs("local")
 	path := f.String("model", "", "local GGUF file path")
 	prompt := f.String("prompt", "", "prompt")
+	imagePath := f.String("image", "", "local JPEG/PNG image for vision inference")
+	projector := f.String("mmproj", "", "local GGUF vision projector matching the model")
 	bin := f.String("llama-bin", "llama-server", "llama-server binary")
 	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp or experimental mistralrs")
 	mistralBin := f.String("mistralrs-bin", "", "mistral.rs executable; requires NODEXLM_EXPERIMENTAL_MISTRALRS=1")
@@ -905,6 +919,18 @@ func localChat(args []string) error {
 	}
 	if *path == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
+	}
+	if (*imagePath == "") != (*projector == "") {
+		return errors.New("--image and --mmproj must be supplied together")
+	}
+	var dataURL string
+	if *imagePath != "" {
+		if local.EffectiveBackend(*engineName) != local.BackendLlama {
+			return errors.New("vision requires llama.cpp")
+		}
+		var err error
+		dataURL, err = visionDataURL(*imagePath)
+		if err != nil { return err }
 	}
 	cpu := *threads
 	if cpu <= 0 {
@@ -926,10 +952,16 @@ func localChat(args []string) error {
 	default:
 		return fmt.Errorf("unknown inference engine: %s", *engineName)
 	}
-	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, VisionProjectorPath: *projector, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 	defer engine.Close()
 	c, cancel := ctx()
 	defer cancel()
+	if dataURL != "" {
+		result, err := generateVision(c,engine,filepath.Base(*path),*prompt,dataURL)
+		if err != nil { return err }
+		fmt.Println(result)
+		return nil
+	}
 	result, err := engine.Generate(c, protocol.ChatRequest{Model: filepath.Base(*path), Messages: []protocol.Message{{Role: "user", Content: *prompt}}, MaxTokens: 512})
 	if err != nil {
 		return err
