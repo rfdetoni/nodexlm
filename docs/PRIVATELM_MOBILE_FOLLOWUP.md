@@ -11,6 +11,10 @@ This change is an independent implementation, not a port of third-party Flutter 
 - CLI text document chat: `nodexlm chat --model model.gguf --prompt "Summarize" --document notes.md`. Local UTF-8 text only, up to 64 KiB; context limits still apply. The document is sent to the configured authenticated Host; no automatic external upload or PDF/DOCX extraction.
 - Go tests cover linked file identity, complete shards, no clobber, invalid headers and bounded text inputs. Full repository test execution remains pending.
 
+- Experimental local vision CLI: `nodexlm local --model model.gguf --mmproj projector.gguf --image photo.png --prompt "Describe"`. The pinned llama.cpp backend handles vision; input is limited to JPEG/PNG, 4 MiB and 16 megapixels, projector must have CLIP GGUF architecture. Projector runs on Host CPU. No distributed vision or dashboard support yet.
+- Explicit CLI external fallback: `nodexlm chat --model local.gguf --prompt "Hello" --fallback-url https://provider.example/v1 --fallback-model external-model`. Set `NODEXLM_FALLBACK_API_KEY` separately. The chosen provider receives the prompt/document on local HTTP 404/503 only; no fallback on authentication, timeout, targeted Guest or ambiguous failures. Do not use for private documents unless external processing is acceptable.
+- QR-assisted enrollment: `nodexlm pairing --qr-host https://192.168.1.5:8443` with optional local qrencode executable. A compatible QR scanner opens the Android app and fills the pairing form; user confirmation and existing TLS/proof checks remain mandatory. No embedded camera scanner or dashboard QR yet.
+
 ## Acceptance before enabling broader mobile changes
 - Build both Android ABIs; CPU-only device must not initialize Vulkan in the RPC process; Auto/GPU/Hybrid must retain device discovery and fallback.
 - Compare greedy output with cold cache for extended conversations, changed system prompts, identical requests, stop/cancel and model reload. Measure TTFT, PSS, tokens/s, thermal and energy on real devices. Prefix caching is scoped to the loaded embedded context; do not share it across unrelated trust domains.
@@ -18,7 +22,7 @@ This change is an independent implementation, not a port of third-party Flutter 
 - Adaptive Wi-Fi: use existing tunnel claims and measured RTT/jitter; only activate probes during active inference with bounded overhead and energy/thermal policy.
 - Android host: reuse current coordinator and authenticated transport, not a parallel scheduler; admission must account for UI, unified memory and weights.
 - LiteRT-LM: optional independent executor with verified artifact format, supported accelerator discovery and no claim of GGML tensor splitting.
-- Multimodal and diffusion: optional executors, bounded media decoding and validated model capabilities; separate image-generation API. QR enrollment must preserve TLS pin and short-lived codes. PDF/DOCX extraction and Android/web document and directory UI remain future work. External APIs require explicit opt-in and credentials.
+- Multimodal Host API/dashboard and diffusion: optional executors, bounded media decoding and validated model capabilities; separate image-generation API. QR dashboard/camera integration remains pending. PDF/DOCX extraction and Android/web document and directory UI remain future work. External provider routing in the dashboard/API remains pending.
 - Preserve existing measured RTT planner, Rust transport, parallel upload and cache rather than replacing them with PrivateLM's simpler placement.
 
-These remaining items are not implemented by this change.
+These remaining items are not implemented by this change. Full Go, Android and native integration tests remain pending.
