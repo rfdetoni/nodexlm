@@ -264,4 +264,17 @@
     <string name="mobile_advice_32">32-bit process: prefer small quantized models, or contribute memory to a cluster. GPU support requires a successful native probe.</string>
     <string name="mobile_advice_low">Limited available RAM: prefer small Q4 models and short contexts. Check available capacity before loading.</string>
     <string name="mobile_advice_bench">Start with Q4 or Q5 and automatic backend selection. Compare CPU and Vulkan using measured throughput and thermal behavior; chipset alone does not guarantee GPU support.</string>
+    <string name="probe_gpu">Probe Vulkan GPU (optional)</string>
+    <string name="litert_title">LiteRT-LM local (experimental)</string>
+    <string name="litert_help">Standalone ARM64 text inference. Stop other workers before loading. Each request releases its model after completion.</string>
+    <string name="litert_import">Import .litertlm model</string>
+    <string name="litert_gpu">Use GPU (experimental)</string>
+    <string name="litert_prompt">Text prompt</string>
+    <string name="litert_run">Generate (up to 256 tokens)</string>
+    <string name="litert_cancel">Cancel</string>
+    <string name="litert_busy">Working…</string>
+    <string name="litert_ready">Model ready</string>
+    <string name="litert_missing">Import a .litertlm model first</string>
+    <string name="litert_error">LiteRT-LM operation failed: %1$s</string>
+    <string name="litert_disabled">LiteRT-LM is not included in this build</string>
 </resources>

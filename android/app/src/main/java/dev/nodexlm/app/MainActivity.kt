@@ -253,6 +253,13 @@ class MainActivity : Activity() {
             else getString(R.string.node_paired),
             12, false
         ))
+        if (BuildConfig.LITERT_ENABLED && android.os.Process.is64Bit()) {
+            overview.addView(action(getString(R.string.litert_title)) {
+                startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))
+                startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
+                startActivity(Intent(this,LiteRTActivity::class.java))
+            })
+        }
         overview.addView(action(getString(R.string.tab_connection)) { showTab(1) })
         overview.addView(action(getString(R.string.tab_processing)) { showTab(2) })
         content.addView(overview)
@@ -297,7 +304,9 @@ class MainActivity : Activity() {
         worker.addView(action(getString(R.string.ui_2940dc16b87e)) {startRpcGuest()})
         val gpuStatus = label(getString(R.string.ui_54c9d56ac072),12,false)
         worker.addView(gpuStatus)
-        thread(name="nodexlm-vulkan-probe") {
+        worker.addView(action(getString(R.string.probe_gpu)) {
+            gpuStatus.text = getString(R.string.ui_54c9d56ac072)
+            thread(name="nodexlm-vulkan-probe") {
             val report = try {
                 NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
                 val devices = org.json.JSONObject(NativeRpc.inspect()).optJSONArray("gpus")
@@ -310,8 +319,9 @@ class MainActivity : Activity() {
                     }
                 }
             } catch(e: Throwable) { getString(R.string.gpu_probe_failed) }
-            runOnUiThread {gpuStatus.text = report}
-        }
+                runOnUiThread {gpuStatus.text = report}
+            }
+        })
         worker.addView(action(getString(R.string.ui_586f2f6fc723)) {
             startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
             setStatus(getString(R.string.ui_f54a84193c11))
