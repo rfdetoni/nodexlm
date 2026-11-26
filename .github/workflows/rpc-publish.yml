@@ -2,7 +2,7 @@ name: Publish verified RPC artifacts
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, feat/adaptive-download-model-wide-rpc]
     paths: ['.github/workflows/rpc-publish.yml', 'internal/llamaruntime/rpc-build.json']
 permissions: {contents: write, actions: read, attestations: read}
 concurrency:
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/adaptive-download-model-wide-rpc'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

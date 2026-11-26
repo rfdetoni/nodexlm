@@ -2,11 +2,6 @@ name: Portable RPC bundles
 # Build immutable candidate once, promote reviewed hashes rather than rebuild.
 on:
   workflow_dispatch:
-  # One consolidated r6 candidate build on this review branch. Ordinary
-  # commits do not rebuild native binaries. Remove after promotion.
-  push:
-    branches: [feat/adaptive-download-model-wide-rpc]
-    paths: ['.github/workflows/rpc-platforms.yml']
 permissions:
   contents: read
 concurrency:
