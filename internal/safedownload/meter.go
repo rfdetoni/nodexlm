@@ -56,13 +56,13 @@ func measureConnection(ctx context.Context, file string, start, end int64) (func
 	m.active[id] = c
 	m.mu.Unlock()
 	return func(n int) {
-		c.n.Add(int64(n))
-		m.bytes.Add(int64(n))
-	}, func() {
-		m.mu.Lock()
-		delete(m.active, id)
-		m.mu.Unlock()
-	}
+			c.n.Add(int64(n))
+			m.bytes.Add(int64(n))
+		}, func() {
+			m.mu.Lock()
+			delete(m.active, id)
+			m.mu.Unlock()
+		}
 }
 
 // Snapshot computes actual accepted body throughput, including retry traffic,
