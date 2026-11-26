@@ -29,6 +29,8 @@ var nativeTokenPatch []byte
 //go:embed patches/smolmax-single-row.patch
 var smolmaxRowPatch []byte
 
+func modelWideRPCBuild() bool { return os.Getenv("NODEXLM_MODEL_WIDE_RPC_BUILD") == "1" }
+
 func nativeTraceBuild() bool { return os.Getenv("NODEXLM_NATIVE_TOKEN_TRACE") == "1" }
 
 func smolmaxSingleRowBuild(backend string) bool {

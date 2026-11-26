@@ -1,12 +1,84 @@
+diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
+--- a/src/llama-model-loader.h
++++ b/src/llama-model-loader.h
+@@ -10,7 +10,8 @@
+ #include "ggml-cpp.h"
+ 
+ #include <cstddef>
+-#include <cstring>
++#include <cstring>
++#include <functional>
+ #include <map>
+ #include <set>
+ #include <stdexcept>
+@@ -134,7 +135,11 @@
+     std::string arch_name;
+     LLM_KV      llm_kv    = LLM_KV(LLM_ARCH_UNKNOWN);
+ 
+-    size_t size_done = 0;
++    // Model-wide upload scope, owned by the caller of load_all_data.
++    std::function<bool(ggml_tensor *, const void *, size_t)> rpc_queue;
++    std::function<void()> rpc_finish;
++
++    size_t size_done = 0;
+     size_t size_data = 0;
+     std::vector<std::pair<size_t, size_t>> mmaps_used;
+ 
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -7,7 +7,14 @@
- #include "llama.h"
+@@ -1785,9 +1785,10 @@
+         }
  
- #include <algorithm>
--#include <array>
-+#include <array>
+         if (progress_callback) {
+-            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
+-                return false;
+-            }
++            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
++                if (rpc_finish) { rpc_finish(); }
++                return false;
++            }
+         }
+ 
+         size_t n_size = ggml_nbytes(cur);
+@@ -1827,10 +1828,12 @@
+                 auto & mmap_used = mmaps_used[weight->idx];
+                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
+                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
+-            } else {
+-                ggml_backend_tensor_set(cur, data, 0, n_size);
+-            }
+-        } else {
++            } else {
++                if (!rpc_queue || !rpc_queue(cur, data, n_size)) {
++                    ggml_backend_tensor_set(cur, data, 0, n_size);
++                }
++            }
++        } else {
+             const auto & file = files.at(weight->idx);
+ 
+             if (ggml_backend_buffer_is_host(cur->buffer)) {
+@@ -1949,8 +1952,10 @@
+     }
+ 
+     // check if this is the last call and do final cleanup
+-    if (size_done >= size_data) {
+-        // unmap offloaded tensors and metadata
++    if (size_done >= size_data) {
++        // All contexts share the same queue. Drain before any mapping is released.
++        if (rpc_finish) { rpc_finish(); }
++        // unmap offloaded tensors and metadata
+         if (use_mmap) {
+             for (uint32_t idx = 0; idx < mappings.size(); idx++) {
+                 const auto & mmap_used = mmaps_used.at(idx);
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -26,6 +26,13 @@
+ #include "ggml-cpp.h"
+ 
+-#include <algorithm>
++#include <algorithm>
 +#include <condition_variable>
 +#include <cstdlib>
 +#include <deque>
@@ -14,16 +86,19 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +#include <mutex>
 +#include <thread>
 +#include <unordered_map>
- #include <cinttypes>
+ #include <cassert>
+ #include <cfloat>
  #include <cstdint>
- #include <cstring>
-@@ -1658,7 +1665,116 @@
+@@ -2153,12 +2160,132 @@
+         });
      }
-     GGML_ASSERT(size_data != 0 && "call init_mappings() first");
  
--    std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
-+    std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
-+
+-    // load tensor data
+-    for (auto & [ctx, bufs] : ctx_bufs) {
+-        if (!ml.load_all_data(ctx, bufs, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
+-            return false;
+-        }
+-    }
 +    // NodexLM: one long-lived worker per RPC device, each with a bounded
 +    // queue of lightweight tensor descriptors (never tensor payload copies).
 +    // GGUF mappings remain valid until all workers finish.
@@ -101,9 +176,9 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +    };
 +
 +    const char * parallel_setting = std::getenv("NODEXLM_PARALLEL_RPC_UPLOAD");
-+    const bool parallel_rpc = use_mmap && parallel_setting && std::strcmp(parallel_setting, "1") == 0;
++    const bool parallel_rpc = ml.use_mmap && !ml.check_tensors && parallel_setting && std::strcmp(parallel_setting, "1") == 0;
 +    std::unordered_map<ggml_backend_dev_t, std::unique_ptr<rpc_upload_worker>> rpc_uploads;
-+    auto queue_rpc_upload = [&](ggml_tensor * tensor, const void * data, size_t size) -> bool {
++    ml.rpc_queue = [&](ggml_tensor * tensor, const void * data, size_t size) -> bool {
 +        if (!parallel_rpc || !tensor->buffer) {
 +            return false;
 +        }
@@ -115,7 +190,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +        auto it = rpc_uploads.find(dev);
 +        if (it == rpc_uploads.end()) {
 +            // Hard cap: no unbounded threads, tensor queues or extra mappings.
-+            if (rpc_uploads.size() >= 4) {
++            if (rpc_uploads.size() >= 8) {
 +                return false;
 +            }
 +            it = rpc_uploads.emplace(dev, std::make_unique<rpc_upload_worker>()).first;
@@ -123,61 +198,33 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +        it->second->submit(tensor, data, size);
 +        return true;
 +    };
-+    auto finish_rpc_uploads = [&] {
++    ml.rpc_finish = [&] {
 +        for (auto & entry : rpc_uploads) {
 +            entry.second->finish();
 +        }
 +        rpc_uploads.clear();
 +    };
 +    if (parallel_rpc) {
-+        LLAMA_LOG_INFO("%s: bounded parallel RPC tensor uploads enabled (max 4 workers)\n", __func__);
++        LLAMA_LOG_INFO("%s: bounded parallel RPC tensor uploads enabled (model-wide, max 8 workers)\n", __func__);
 +    }
- 
-     // 4 staging buffers for async uploads, each sized 1MB seems to be a good default for single NVMe drives.
-     // NVMe raid configurations might require more / larger buffers.
-@@ -1785,9 +1901,10 @@
-         }
- 
-         if (progress_callback) {
--            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
--                return false;
--            }
-+            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
-+                finish_rpc_uploads();
-+                return false;
-+            }
-         }
- 
-         size_t n_size = ggml_nbytes(cur);
-@@ -1828,9 +1945,11 @@
-                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
-                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
-             } else {
--                ggml_backend_tensor_set(cur, data, 0, n_size);
--            }
--        } else {
-+                if (!queue_rpc_upload(cur, data, n_size)) {
-+                    ggml_backend_tensor_set(cur, data, 0, n_size);
-+                }
-+            }
-+        } else {
-             const auto & file = files.at(weight->idx);
- 
-             if (ggml_backend_buffer_is_host(cur->buffer)) {
-@@ -1922,10 +2041,12 @@
-             }
-         }
- 
--        size_done += n_size;
--    }
--
--    // free temporary resources used for async uploads
-+        size_done += n_size;
-+    }
-+    // Drain before mmap fragment unmapping and before reporting 100% loaded.
-+    finish_rpc_uploads();
 +
-+    // free temporary resources used for async uploads
-     for (auto * event : events) {
-         ggml_backend_event_synchronize(event);
-         ggml_backend_event_free(event);
++    // Callbacks reference this scope. Clear them before the loader can be used
++    // again; the worker map joins all threads during exceptional unwinding.
++    struct clear_upload_callbacks {
++        llama_model_loader & loader;
++        ~clear_upload_callbacks() {
++            loader.rpc_queue = nullptr;
++            loader.rpc_finish = nullptr;
++        }
++    } clear_callbacks{ml};
++
++    // load tensor data
++    for (auto & [ctx, bufs] : ctx_bufs) {
++        if (!ml.load_all_data(ctx, bufs, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
++            return false;
++        }
++    }
++    ml.rpc_finish();
+ 
+     if (use_mmap_buffer) {
+         for (auto & mapping : ml.mappings) {

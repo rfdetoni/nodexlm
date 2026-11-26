@@ -1,0 +1,7 @@
+# Parallel transfers
+
+The Internet downloader schedules verified 8 MiB ranges across a bounded pool (4 desktop, 2 Android Go, configurable 1–16 via NODEXLM_DOWNLOAD_CONNECTIONS). Large files require a strong ETag and expected SHA-256; unsupported range responses fall back to the existing sequential implementation. Each worker writes directly into a separate sparse staging file, with durable checkpoints after sync. Final verification precedes publication. No whole-model buffers or joining step.
+
+The pinned llama.cpp patch previously drained its workers at the end of each load_all_data call. Upstream calls that function per buffer context, often one per RPC device. The replacement shares workers across the entire load (up to eight RPC devices); the last context drains before unmapping. Commands to one device remain ordered; the RPC endpoint dispatcher still serializes same-endpoint traffic. mmap and non-check-tensors loads only. Existing published r5 remains pinned until r6 artifacts are verified and promoted. To test the new native patch locally, use NODEXLM_MODEL_WIDE_RPC_BUILD=1 nodexlm host; this requires a source build toolchain. Set NODEXLM_PARALLEL_RPC_UPLOAD=0 for comparison.
+
+Not yet implemented: Android native DownloadManager replacement, adaptive measured connection admission, parallel shards, Xet, authenticated P2P cache, bandwidth priority, per-connection Web/APK telemetry. Real throughput and mixed-device loading overlap must be measured before claiming improvement.
