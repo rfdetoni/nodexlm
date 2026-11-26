@@ -26,6 +26,55 @@ internal object RpcWeightCache {
         })
     }
 
+
+    private const val QUOTA_BYTES = 512L * 1024L * 1024L
+    private const val TARGET_BYTES = 384L * 1024L * 1024L
+    private const val RESERVE_BYTES = 512L * 1024L * 1024L
+    private const val ENTRY_LIMIT = 16L * 1024L * 1024L
+    private val entryName = Regex("[0-9a-f]{16}")
+
+    /** Trim only an app-private enrollment directory. Test budgets are small
+     * so we can verify oldest-first eviction without writing 512 MiB in CI.
+     */
+    internal fun prune(
+        directory: File,
+        maxBytes: Long = QUOTA_BYTES,
+        targetBytes: Long = TARGET_BYTES,
+        reserveBytes: Long = RESERVE_BYTES
+    ): Boolean {
+        require(maxBytes >= targetBytes && targetBytes >= 0 && reserveBytes >= 0)
+        if (Files.isSymbolicLink(directory.toPath()) || !directory.isDirectory) return false
+        val entries = directory.listFiles() ?: return false
+        val valid = mutableListOf<File>()
+        var occupied = 0L
+        for (entry in entries) {
+            val path = entry.toPath()
+            if (Files.isSymbolicLink(path) || !entry.isFile ||
+                !entryName.matches(entry.name) || entry.length() !in 1L..ENTRY_LIMIT
+            ) {
+                if (entry.isDirectory && !Files.isSymbolicLink(path)) removeTree(path)
+                else Files.deleteIfExists(path)
+                continue
+            }
+            valid.add(entry)
+            occupied += entry.length()
+        }
+        // Keep free disk above the reserve, and bound cache occupancy and
+        // inode count. Avoid symlink-based path escapes during eviction.
+        val oldest = valid.sortedWith(compareBy<File> { it.lastModified() }.thenBy { it.name })
+        var count = valid.size
+        for (entry in oldest) {
+            if (occupied <= targetBytes && occupied <= maxBytes &&
+                directory.usableSpace >= reserveBytes && count <= 1024) break
+            val length = entry.length()
+            if (Files.deleteIfExists(entry.toPath())) {
+                occupied -= length
+                count--
+            }
+        }
+        return occupied <= maxBytes && directory.usableSpace >= reserveBytes && count <= 1024
+    }
+
     fun prepare(base: File, certificate: ByteArray, node: String, token: String, revision: String, enabled: Boolean): File? {
         val root = File(base, "rpc-weights-v1")
         if (!enabled) {
@@ -47,8 +96,10 @@ internal object RpcWeightCache {
             removeTree(root.toPath())
             check(directory.mkdirs()) { "Cannot create private RPC weight cache" }
         }
-        // Interrupted writes are never cache hits.
-        directory.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach { Files.deleteIfExists(it.toPath()) }
+        // A bounded cold-start eviction leaves headroom for newly delivered
+        // tensors. Native reads verify FNV before using an entry. Untrusted
+        // directory entries are never followed or counted as valid cache hits.
+        if (!prune(directory)) return null
         return directory
     }
 }

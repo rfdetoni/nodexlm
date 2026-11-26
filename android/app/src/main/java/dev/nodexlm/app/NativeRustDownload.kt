@@ -12,4 +12,6 @@ internal object NativeRustDownload {
     external fun cancel()
     external fun transferred(): Long
     external fun bytesPerSecond(): Long
+    /** Snapshot per native connection: id, bytes, bytesPerSecond and error count. */
+    external fun connectionStats(): String
 }
