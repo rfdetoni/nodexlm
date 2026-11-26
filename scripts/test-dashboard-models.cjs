@@ -204,7 +204,7 @@ async function main(){
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
   assert.equal(get('nodeResourceCards').children.length,1,'one card per device');
   assert.ok(resourceCard.textContent.includes('Revogar acesso'),'tools belong to the device card');
-  assert.ok(!html.includes('id="nodes"'),'duplicate Guest table removed');
+  assert.equal([...html.matchAll(/id="nodes"/g)].length,1,'Guest management table exists exactly once');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
   // Alternate runtimes must never silently enable incompatible GGML RPC.
   get('runtimeBackend').value='mistralrs';

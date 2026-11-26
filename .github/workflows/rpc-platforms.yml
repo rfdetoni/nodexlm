@@ -2,6 +2,11 @@ name: Portable RPC bundles
 # Build immutable candidate once, promote reviewed hashes rather than rebuild.
 on:
   workflow_dispatch:
+  # One consolidated r6 candidate build on this review branch. Ordinary
+  # commits do not rebuild native binaries. Remove after promotion.
+  push:
+    branches: [feat/adaptive-download-model-wide-rpc]
+    paths: ['.github/workflows/rpc-platforms.yml']
 permissions:
   contents: read
 concurrency:
@@ -105,6 +110,7 @@ jobs:
               digest=hashlib.sha256(p.read_bytes()).hexdigest()
               (p.parent/(p.name+'.sha256')).write_text(digest+'  '+p.name+'\n')
           PY
+          cat dist/*.sha256
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: {go-version-file: go.mod, cache: true}
       - name: Software Vulkan driver for CI

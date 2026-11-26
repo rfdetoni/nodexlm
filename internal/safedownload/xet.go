@@ -67,6 +67,54 @@ func TryXet(ctx context.Context, client *http.Client, source, target string, lim
 	if os.Getenv("NODEXLM_DOWNLOAD_XET") != "1" || runtime.GOOS == "android" {
 		return 0, false, nil
 	}
+	originalSource := source
+	// The catalog returns /resolve/main/ for single-file models. Resolve it
+	// once, then retrieve and verify the immutable revision separately before
+	// asking the official Xet client to fetch any bytes.
+	if client == nil {
+		client = Client()
+	}
+	if _, err := parseXetLocation(source); err != nil {
+		u, parseErr := url.Parse(source)
+		if parseErr != nil || ValidateURL(u) != nil || u.Host != "huggingface.co" ||
+			!strings.Contains(u.EscapedPath(), "/resolve/main/") || u.RawQuery != "" {
+			return 0, false, nil
+		}
+		ctxHead, cancel := context.WithTimeout(ctx, 20*time.Second)
+		req, reqErr := http.NewRequestWithContext(ctxHead, http.MethodHead, source, nil)
+		if reqErr != nil {
+			cancel()
+			return 0, false, nil
+		}
+		req.Header.Set("Accept-Encoding", "identity")
+		response, headErr := client.Do(req)
+		if headErr != nil {
+			cancel()
+			return 0, false, nil
+		}
+		_ = response.Body.Close()
+		cancel()
+		if response.StatusCode != http.StatusOK {
+			return 0, false, nil
+		}
+		revision := ""
+		for current := response; current != nil; {
+			if candidate := current.Header.Get("X-Repo-Commit"); candidate != "" {
+				revision = candidate
+			}
+			if current.Request == nil {
+				break
+			}
+			current = current.Request.Response
+		}
+		if len(revision) != 40 {
+			return 0, false, nil
+		}
+		if _, decodeErr := hex.DecodeString(revision); decodeErr != nil {
+			return 0, false, nil
+		}
+		source = strings.Replace(source, "/resolve/main/", "/resolve/"+revision+"/", 1)
+	}
 	parsed, err := parseXetLocation(source)
 	if err != nil {
 		return 0, false, nil
@@ -155,7 +203,7 @@ func TryXet(ctx context.Context, client *http.Client, source, target string, lim
 	if err := ctx.Err(); err != nil {
 		return 0, true, err
 	}
-	meta := partial{Source: source, Validator: fmt.Sprintf("%q", expected), SHA256: expected, Total: expectedSize}
+	meta := partial{Source: originalSource, Validator: fmt.Sprintf("%q", expected), SHA256: expected, Total: expectedSize}
 	raw, err := json.Marshal(meta)
 	if err != nil {
 		return 0, true, err

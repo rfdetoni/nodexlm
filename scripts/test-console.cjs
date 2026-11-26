@@ -24,7 +24,7 @@ const {chromium} = require('playwright');
     });
     await page.goto(base);
     await page.locator('#secret').fill(token);
-    await page.locator('#login button').click();
+    await page.locator('#loginSubmit').click();
     await page.locator('#app').waitFor({state: 'visible'});
     // The desktop and mobile consoles use separate, hidden workspaces.
     // A field existing in the DOM does not make it visible to Playwright.
