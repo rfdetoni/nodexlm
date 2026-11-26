@@ -345,7 +345,9 @@ internal class ModelLibraryView(
             }.getOrElse { it.message ?: "Native download unavailable" }
             activity.runOnUiThread {
                 if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -2L) {
-                    scratch.delete()
+                    // This was cancelled/replaced. Never leave a sidecar that
+                    // prevents future recovery or silently retains gigabytes.
+                    discardRustStage(fileName)
                     return@runOnUiThread
                 }
                 cacheTransfer = false
@@ -353,10 +355,12 @@ internal class ModelLibraryView(
                     // Rust streamed, hashed and fsynced the verified bytes.
                     finishDownload()
                 } else {
-                    scratch.delete()
                     prefs.edit().putLong("id", 0L).commit()
                     try {
                         enqueueDownloadManager(source, fileName, repository)
+                        // No second, hidden partial copy while Android owns
+                        // the verified sequential fallback download.
+                        discardRustStage(fileName)
                     } catch (e: Exception) {
                         clearDownload()
                         status.text = activity.getString(R.string.download_failed, e.message)
@@ -525,11 +529,26 @@ internal class ModelLibraryView(
         finally {if(prefs.getLong("id",0L)==0L)clearDownload()}
     }
 
+    private fun discardRustStage(fileName: String) {
+        runCatching {
+            val root = ModelFiles.directory(activity).canonicalFile
+            for (suffix in listOf("native.partial", "native.partial.ranges")) {
+                val file = File(root, ".$fileName.$suffix")
+                if (file.canonicalFile.parentFile == root) file.delete()
+            }
+        }
+    }
+
     private fun cancelDownload() {
         val id=prefs.getLong("id",0L)
         if (id == -1L || id == -2L) {
             cacheCancelled = true; cacheEpoch++; cacheTransfer = false
-            if (id == -2L) runCatching { NativeRustDownload.cancel() }
+            if (id == -2L) {
+                runCatching { NativeRustDownload.cancel() }
+                val root = ModelFiles.directory(activity).canonicalFile
+                val target = File(prefs.getString("target", "") ?: "")
+                if (target.canonicalFile.parentFile == root) discardRustStage(target.name)
+            }
         }
         if (id>0L) downloads.remove(id)
         File(prefs.getString("staging","") ?: "").takeIf { it.isFile }?.delete()
