@@ -277,4 +277,6 @@
     <string name="litert_missing">Import a .litertlm model first</string>
     <string name="litert_error">LiteRT-LM operation failed: %1$s</string>
     <string name="litert_disabled">LiteRT-LM is not included in this build</string>
+    <string name="import_directory">Import GGUF directory</string>
+    <string name="import_directory_done">Imported %1$d new models</string>
 </resources>

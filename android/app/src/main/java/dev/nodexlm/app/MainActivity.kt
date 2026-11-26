@@ -90,6 +90,7 @@ class MainActivity : Activity() {
     private val pickModel = 900
     private val pickCertificate = 901
     private val pickDecision = 902
+    private val pickModelDirectory = 903
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -139,6 +140,7 @@ class MainActivity : Activity() {
                 }
                 startActivityForResult(intent,pickModel)
             },
+            importDirectoryPicker={ startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), pickModelDirectory) },
             onSelected={ file -> setStatus(getString(R.string.model_selected,file.name)) }
         )
         showTab(0)
@@ -906,6 +908,7 @@ class MainActivity : Activity() {
         val uri=uris.firstOrNull()?:return
         when(requestCode) {
             pickModel -> {showTab(3);library.importFromUris(uris)}
+            pickModelDirectory -> {showTab(3);library.importDirectory(uri)}
             pickDecision -> {
                 val alias = prefs.getString("decision_model", DecisionModelStore.DEFAULT_ALIAS)
                     .orEmpty().ifBlank { DecisionModelStore.DEFAULT_ALIAS }

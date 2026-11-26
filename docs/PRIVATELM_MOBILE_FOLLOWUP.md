@@ -32,6 +32,8 @@ This change is an independent implementation, not a port of third-party Flutter 
 - Optional native Android LiteRT-LM SDK build: `cd android && gradle -PnodexLiteRT=true :app:assembleDebug` (ARM64 only, Kotlin 2.2.21, AGP 8.10.1, SDK 0.16.1). Standard universal APK stays on existing dependencies and ABIs. The separate process offers foreground, one-shot local text generation from imported .litertlm models, CPU or explicit GPU. It is not a cluster worker, does not support tensor RPC, and needs optional-build and physical-device verification.
 - Android processing screen now loads Vulkan for inspection only after explicit user action instead of entering the screen.
 
+- Android Storage Access Framework directory import now groups complete GGUF shard sets, rejects orphan shards and normalized filename collisions, skips existing valid sets, and retains the active model selection. Copies stream sequentially; no zero-copy promise for content-provider URIs. The directory scan is nonrecursive and capped at 1024 entries.
+
 ## Acceptance before enabling broader mobile changes
 - Build both Android ABIs; CPU-only device must not initialize Vulkan in the RPC process; Auto/GPU/Hybrid must retain device discovery and fallback.
 - Compare greedy output with cold cache for extended conversations, changed system prompts, identical requests, stop/cancel and model reload. Measure TTFT, PSS, tokens/s, thermal and energy on real devices. Prefix caching is scoped to the loaded embedded context; do not share it across unrelated trust domains.

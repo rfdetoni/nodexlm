@@ -277,4 +277,6 @@
     <string name="litert_missing">Importe um modelo .litertlm primeiro</string>
     <string name="litert_error">Falha na operação LiteRT-LM: %1$s</string>
     <string name="litert_disabled">LiteRT-LM não está incluído nesta compilação</string>
+    <string name="import_directory">Importar diretório GGUF</string>
+    <string name="import_directory_done">%1$d novos modelos importados</string>
 </resources>
