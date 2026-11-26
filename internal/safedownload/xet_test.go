@@ -14,6 +14,8 @@ func TestXetLocationRejectsUntrustedAndMutableSources(t *testing.T) {
 		"https://huggingface.co/o/r/resolve/" + rev + "/%2E%2E/model.gguf",
 		"https://huggingface.co/o/r/resolve/" + rev + "/model.gguf?x=1",
 		"https://huggingface.co/o/r/resolve/" + rev + "/weights.bin",
+		"https://huggingface.co/o/r/resolve/" + rev + "/--local-dir.gguf",
+		"https://huggingface.co/--bad/r/resolve/" + rev + "/model.gguf",
 	}
 	for _, input := range cases {
 		if _, err := parseXetLocation(input); err == nil {
