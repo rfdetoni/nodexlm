@@ -24,15 +24,15 @@ type InferenceSample struct {
 	// rate includes prefill and first-token latency (end_to_end).
 	RateBasis string `json:"rate_basis,omitempty"`
 	// PromptMilliseconds is the native prefill timing, not an invented TTFT.
-	PromptMilliseconds         float64              `json:"prompt_ms,omitempty"`
-	PrefillTokensPerSecond     float64              `json:"prefill_tokens_per_second,omitempty"`
-	DraftTokens                int                  `json:"draft_tokens,omitempty"`
-	DraftAccepted              int                  `json:"draft_accepted,omitempty"`
-	DraftAcceptance            *float64             `json:"draft_acceptance,omitempty"`
-	LoadMilliseconds           float64              `json:"load_ms,omitempty"`
-	FirstOutputMilliseconds    float64              `json:"first_output_ms,omitempty"`
-	FirstTextMilliseconds      *float64             `json:"first_text_ms,omitempty"`
-	FirstReasoningMilliseconds *float64             `json:"first_reasoning_ms,omitempty"`
+	PromptMilliseconds         float64  `json:"prompt_ms,omitempty"`
+	PrefillTokensPerSecond     float64  `json:"prefill_tokens_per_second,omitempty"`
+	DraftTokens                int      `json:"draft_tokens,omitempty"`
+	DraftAccepted              int      `json:"draft_accepted,omitempty"`
+	DraftAcceptance            *float64 `json:"draft_acceptance,omitempty"`
+	LoadMilliseconds           float64  `json:"load_ms,omitempty"`
+	FirstOutputMilliseconds    float64  `json:"first_output_ms,omitempty"`
+	FirstTextMilliseconds      *float64 `json:"first_text_ms,omitempty"`
+	FirstReasoningMilliseconds *float64 `json:"first_reasoning_ms,omitempty"`
 
 	ReasoningTokens    *int `json:"reasoning_tokens,omitempty"`
 	NonReasoningTokens *int `json:"non_reasoning_tokens,omitempty"`
