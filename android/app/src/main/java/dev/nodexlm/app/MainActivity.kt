@@ -302,6 +302,11 @@ class MainActivity : Activity() {
         deviceName=field(pairing,getString(R.string.device_name),
             deviceNameDraft ?: (prefs.getString("name",Build.MODEL) ?: Build.MODEL))
         pairing.addView(action(getString(R.string.ui_c06cce69d22b)) {joinCluster()})
+        pairing.addView(action(getString(R.string.scan_pairing_qr)) {
+            com.google.zxing.integration.android.IntentIntegrator(this)
+                .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+                .setBeepEnabled(false).setOrientationLocked(false).initiateScan()
+        })
         pairing.addView(action(getString(R.string.ui_5701de13e132)) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type="*/*";addCategory(Intent.CATEGORY_OPENABLE)
@@ -928,6 +933,20 @@ class MainActivity : Activity() {
     @Deprecated("Android file picker callback")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        val scan = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(requestCode,resultCode,data)
+        if (scan != null) {
+            val content = scan.contents
+            if (content != null && content.length <= 2048) {
+                val parsed = runCatching { parsePairingLink(content) }.getOrNull()
+                if (parsed != null) {
+                    coordinatorDraft = parsed.first
+                    pairingCodeDraft = parsed.second
+                    showTab(1)
+                    setStatus(getString(R.string.pair_qr_confirm))
+                } else setStatus(getString(R.string.pair_qr_invalid))
+            }
+            return
+        }
         if(resultCode!=RESULT_OK)return
         val uris=data?.clipData?.let {clip -> (0 until clip.itemCount).map {clip.getItemAt(it).uri}} ?: listOfNotNull(data?.data)
         val uri=uris.firstOrNull()?:return

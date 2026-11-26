@@ -51,9 +51,6 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 		}
 		args := m.args(port, nctx, threads, gpu, meta.BlockCount)
 		if m.VisionProjectorPath != "" {
-			if len(m.RPCServers) != 0 {
-				return backendLaunchSpec{}, errors.New("vision projector requires a local Host")
-			}
 			if err := ValidateVisionProjector(m.VisionProjectorPath, m.ModelPath); err != nil {
 				return backendLaunchSpec{}, err
 			}

@@ -555,8 +555,14 @@ class RpcGuestService : Service() {
         connection.setRequestProperty("Authorization", "Bearer $token")
         connection.setRequestProperty("X-Nodex-Node", node)
         try {
+            val start = android.os.SystemClock.elapsedRealtime()
             connection.outputStream.use { it.write(device.toString().toByteArray(Charsets.UTF_8)) }
             check(connection.responseCode == 200) { "Host heartbeat HTTP ${connection.responseCode}" }
+            val elapsed = android.os.SystemClock.elapsedRealtime()
+            if (adaptiveWifi) synchronized(wifiGuard) {
+                wifiPolicy.observe(elapsed,connection.getHeaderField("X-Nodex-RPC-RTT")?.toDoubleOrNull(),
+                    connection.getHeaderField("X-Nodex-RPC-Jitter")?.toDoubleOrNull(),(elapsed-start).toDouble())
+            }
             connection.inputStream.close()
         } finally { connection.disconnect() }
     }

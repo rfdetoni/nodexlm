@@ -30,11 +30,16 @@ import kotlin.math.min
 
 /** Explicit user-started foreground worker; the UI process can leave the screen. */
 class ComputeService : Service() {
-    companion object { const val START="dev.nodexlm.START";const val STOP="dev.nodexlm.STOP";private const val CHANNEL="nodexlm_worker" }
+    companion object { const val START="dev.nodexlm.START";const val STOP="dev.nodexlm.STOP";const val EXTRA_LITERT="litert";const val EXTRA_LITERT_GPU="litert_gpu";private const val CHANNEL="nodexlm_worker" }
     private val running = AtomicBoolean(false)
     // A STOP intent sent before any whole-model job must not load GGML/Vulkan
     // into the UI process merely to cancel a nonexistent inference.
     private val nativeTouched = AtomicBoolean(false)
+    private val liteTouched = AtomicBoolean(false)
+    private fun cancelInference() {
+        if (liteTouched.get()) runCatching { LiteRTWorkerRuntime.cancel() }
+        if (nativeTouched.get()) runCatching { NativeEntry.cancel() }
+    }
     // This is an explicitly user-started foreground worker. Keep CPU/network
     // polling running through screen-off Doze, but never outside worker lifetime.
     private var workerWakeLock: PowerManager.WakeLock? = null
@@ -52,6 +57,8 @@ class ComputeService : Service() {
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
         if (intent?.action==STOP) {stopWorker();return START_NOT_STICKY}
         if (!running.compareAndSet(false,true))return START_STICKY
+        val useLiteRT = BuildConfig.LITERT_ENABLED && intent?.getBooleanExtra(EXTRA_LITERT,false) == true
+        val useLiteGPU = intent?.getBooleanExtra(EXTRA_LITERT_GPU,false) == true
         RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_START)
         val manager=getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL,"NodexLM background inference",NotificationManager.IMPORTANCE_LOW))
@@ -78,16 +85,16 @@ class ComputeService : Service() {
         thread(name="nodexlm-worker",isDaemon=false) {
             val lease = MobileRuntimeLease.acquire(this)
             if (lease == null) { stopWorker(); return@thread }
-            lease.use { if (running.get()) workerLoop() }
+            lease.use { if (running.get()) workerLoop(useLiteRT, useLiteGPU) }
         }
-        return START_STICKY
+        return if (useLiteRT) START_NOT_STICKY else START_STICKY
     }
 
     private fun stopWorker() {
         running.set(false)
         RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_STOP)
         releaseWorkerWakeLock()
-        if (nativeTouched.get()) try { NativeEntry.cancel() } catch (_: Throwable) {}
+        cancelInference()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -97,10 +104,12 @@ class ComputeService : Service() {
         super.onDestroy()
     }
 
-    private fun workerLoop() {
+    private fun workerLoop(useLiteRT: Boolean, useLiteGPU: Boolean) {
         var backoff=1000L
-        val model=ModelFiles.selected(this)
-        val decisionModel = (prefs.getString("decision_model", "") ?: "").trim()
+        val model=if (useLiteRT) LiteRTWorkerRuntime.modelFile(this) else ModelFiles.selected(this)
+        val modelAlias=if (useLiteRT) LiteRTWorkerRuntime.ALIAS else model?.name.orEmpty()
+        fun unloadModel() { if (useLiteRT) LiteRTWorkerRuntime.unload() else NativeEntry.unload() }
+        val decisionModel = if (useLiteRT) "" else (prefs.getString("decision_model", "") ?: "").trim()
         val decisionPort = prefs.getInt("decision_port", MobileDecisionClient.DEFAULT_PORT)
         val decisionKey = try {
             if (decisionModel.isNotEmpty()) DecisionSecrets.read(this) else ""
@@ -126,7 +135,7 @@ class ComputeService : Service() {
                 try {
                     if (android.os.SystemClock.elapsedRealtime() - lastInference > 120_000L) {
                         if (loaded) {
-                            NativeEntry.unload()
+                            unloadModel()
                             loaded = false
                         }
                         EmbeddedDecisionRuntime.close()
@@ -141,8 +150,9 @@ class ComputeService : Service() {
                         MobileDecisionClient.available(decisionPort, decisionModel, decisionKey)
                     }
                     val models = JSONArray()
-                    if (model?.isFile == true) models.put(model.name)
+                    if (model?.isFile == true) models.put(modelAlias)
                     val payload=JSONObject().put("models", models)
+                        .put("runtime",JSONObject().put("engine",if (useLiteRT) "litertlm" else "llama.cpp").put("installed",true).put("rpc_ready",false))
                         .put("decision_models", if (decisionReady) JSONArray().put(decisionModel) else JSONArray())
                         .put("ram_bytes",memory.totalMem).put("available_ram_bytes",memory.availMem)
                         .put("ram_used_bytes",(memory.totalMem-memory.availMem).coerceAtLeast(0L))
@@ -174,7 +184,7 @@ class ComputeService : Service() {
                                 "Decision model not available on Android"
                             }
                             if (loaded) {
-                                NativeEntry.unload()
+                                unloadModel()
                                 loaded = false
                             }
                             answer = if (embedded) {
@@ -185,19 +195,26 @@ class ComputeService : Service() {
                                     job.getJSONObject("decision"), decisionKey).toString()
                             }
                         } else {
-                        require(model?.isFile == true) { "GGUF chat model not selected" }
+                        require(model?.isFile == true) { "Chat model not selected" }
+                        require(job.getJSONObject("request").getString("model")==modelAlias) { "Requested model not available" }
                         if (!loaded) {
                             EmbeddedDecisionRuntime.close()
-                            nativeTouched.set(true)
                             check(running.get()) { "Worker stopped" }
-                            NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
                             val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
                             val requestedThreads = prefs.getInt("rpc_threads", 0)
-                            val threads = if (requestedThreads == 0) NativeRpc.recommendedThreads(cores)
-                                          else requestedThreads.coerceIn(1, minOf(8, cores))
-                            val useGpu = prefs.getString("rpc_mode", "auto") == "gpu"
-                            val init=NativeEntry.load(model!!.absolutePath,2048,threads,useGpu)
-                            if(init.isNotEmpty())throw IllegalStateException(init)
+                            if (useLiteRT) {
+                                liteTouched.set(true)
+                                val threads = if (requestedThreads == 0) minOf(4,cores) else requestedThreads.coerceIn(1,minOf(8,cores))
+                                LiteRTWorkerRuntime.load(this,requireNotNull(model),useLiteGPU,threads)
+                            } else {
+                                nativeTouched.set(true)
+                                NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
+                                val threads = if (requestedThreads == 0) NativeRpc.recommendedThreads(cores)
+                                              else requestedThreads.coerceIn(1, minOf(8, cores))
+                                val useGpu = prefs.getString("rpc_mode", "auto") == "gpu"
+                                val init=NativeEntry.load(model!!.absolutePath,2048,threads,useGpu)
+                                if(init.isNotEmpty())throw IllegalStateException(init)
+                            }
                             loaded=true
                             RuntimeLogs.append(this, RuntimeRole.GUEST, RuntimeLevel.INFO, RuntimeEvent.WORKER_MODEL_LOADED)
                         }
@@ -211,8 +228,8 @@ class ComputeService : Service() {
                             while(!monitorDone.get()&&running.get()){
                                 try{
                                     val state=request(coordinator+"/v1/nodes/jobs/$jid",token,id,null,"GET")
-                                    if(state.optString("status")!="running"||android.os.SystemClock.elapsedRealtime()>deadline){NativeEntry.cancel();break}
-                                }catch(_:Exception){NativeEntry.cancel();break}
+                                    if(state.optString("status")!="running"||android.os.SystemClock.elapsedRealtime()>deadline){cancelInference();break}
+                                }catch(_:Exception){cancelInference();break}
                                 try{Thread.sleep(1000)}catch(_:InterruptedException){break}
                             }
                         }
@@ -241,7 +258,14 @@ class ComputeService : Service() {
                         val stops=when(stopValue){is String->arrayOf(stopValue);is JSONArray->Array(stopValue.length()){stopValue.getString(it)};else->emptyArray()}
                         try{
                             val sink=if(streaming)NativeEntry.TokenSink {piece -> pending.write(piece);flushChunk()} else null
-                            answer=String(NativeEntry.generate(roles,contents,(input.optInt("max_tokens",256)).coerceIn(1,1024),input.optDouble("temperature",0.7).toFloat(),input.optDouble("top_p",1.0).toFloat(),stops,sink),Charsets.UTF_8)
+                            val maxTokens = input.optInt("max_tokens",256).coerceIn(1,1024)
+                            if (useLiteRT) {
+                                answer = LiteRTWorkerRuntime.generate(roles,contents,maxTokens,input.optDouble("temperature",0.7),input.optDouble("top_p",1.0),stops,
+                                    input.optString("reasoning_effort"),input.optInt("reasoning_budget_tokens"))
+                                if (streaming && answer.isNotEmpty()) { pending.write(answer.toByteArray(Charsets.UTF_8));flushChunk(true) }
+                            } else {
+                                answer=String(NativeEntry.generate(roles,contents,maxTokens,input.optDouble("temperature",0.7).toFloat(),input.optDouble("top_p",1.0).toFloat(),stops,sink),Charsets.UTF_8)
+                            }
                             if(streaming){flushChunk(true);require(undecoded.isEmpty()){ "Incomplete UTF-8 output" }}
                         }finally{monitorDone.set(true);monitor.interrupt();monitor.join(1000)}
                         if(answer.startsWith("NODEXLM_ERROR:")){failure=answer;answer=""}
@@ -270,6 +294,7 @@ class ComputeService : Service() {
         }
         finally {
             if (nativeTouched.get()) try { NativeEntry.unload() } catch (_: Throwable) {}
+            if (liteTouched.get()) runCatching { LiteRTWorkerRuntime.unload() }
             try { EmbeddedDecisionRuntime.close() } catch (e: Exception) {
                 Log.w(logTag, "Could not close local ONNX decision session", e)
             }

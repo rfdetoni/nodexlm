@@ -67,6 +67,19 @@ class LiteRTActivity : Activity() {
             text = getString(R.string.litert_cancel)
             setOnClickListener { cancelInference() }
         })
+        panel.addView(Button(this).apply {
+            text = getString(R.string.litert_worker_start)
+            setOnClickListener {
+                if (busy.get() || !model.isFile || runCatching { NodeSecrets.read(this@LiteRTActivity) }.getOrDefault("").isBlank()) {
+                    status.text = getString(R.string.litert_worker_requires_pairing)
+                    return@setOnClickListener
+                }
+                startForegroundService(Intent(this@LiteRTActivity,ComputeService::class.java)
+                    .setAction(ComputeService.START).putExtra(ComputeService.EXTRA_LITERT,true)
+                    .putExtra(ComputeService.EXTRA_LITERT_GPU,gpu.isChecked))
+                finish()
+            }
+        })
         setContentView(ScrollView(this).apply { addView(panel) })
         idle()
     }
@@ -84,7 +97,10 @@ class LiteRTActivity : Activity() {
         importButton.isEnabled = false
         status.text = getString(R.string.litert_busy)
         thread(name = "nodexlm-litert") {
-            val result = try { action() } catch (e: Exception) {
+            val result = try {
+                val lease = MobileRuntimeLease.acquire(this) ?: error("Another mobile runtime is active")
+                lease.use { action() }
+            } catch (e: Exception) {
                 getString(R.string.litert_error, e.message ?: "error")
             } catch (e: LinkageError) {
                 getString(R.string.litert_error, "Native SDK unavailable")

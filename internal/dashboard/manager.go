@@ -245,9 +245,9 @@ func (m *Manager) DownloadState() *Download {
 }
 func (m *Manager) validate(s Settings) error {
 	if s.VisionProjector != "" {
-		if s.Distributed || local.EffectiveBackend(s.Backend) != local.BackendLlama ||
+		if local.EffectiveBackend(s.Backend) != local.BackendLlama ||
 			s.SpeculativeMode == "draft" || s.SpeculativeMode == "ngram" || s.ParallelSlots > 1 {
-			return errors.New("vision requires local llama.cpp, one slot and no speculative decoding")
+			return errors.New("vision requires llama.cpp, one slot and no speculative decoding")
 		}
 		if s.Model == "" || s.VisionProjector == s.Model {
 			return errors.New("select a language model and a separate vision projector")

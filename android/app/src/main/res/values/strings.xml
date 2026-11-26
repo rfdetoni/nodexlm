@@ -287,4 +287,7 @@
     <string name="android_host_token">Copy local admin token</string>
     <string name="android_host_token_copied">Admin token copied</string>
     <string name="android_host_unavailable">Start Host first</string>
+    <string name="litert_worker_start">Start LiteRT-LM cluster worker</string>
+    <string name="litert_worker_requires_pairing">Import a model and pair with the Host first</string>
+    <string name="scan_pairing_qr">Scan pairing QR</string>
 </resources>
