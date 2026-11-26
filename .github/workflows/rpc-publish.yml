@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths: ['.github/workflows/rpc-publish.yml', 'internal/llamaruntime/rpc-build.json']
-permissions: {contents: write, actions: read}
+permissions: {contents: write, actions: read, attestations: read}
 concurrency:
   group: nodexlm-rpc-publish
   cancel-in-progress: false
@@ -58,7 +58,13 @@ jobs:
           # Publish from current main only while its pinned native source/patch
           # still matches the build. The release notes retain the build SHA.
           subprocess.run(['git','fetch','--depth=1','origin',build['commit']],check=True)
-          for file in ['internal/llamaruntime/patches/unix-rpc.patch', 'internal/llamaruntime/patches/parallel-rpc-loader.patch']:
+          for file in [
+              'internal/llamaruntime/patches/unix-rpc.patch',
+              'internal/llamaruntime/patches/arm32-rpc-wire.patch',
+              'internal/llamaruntime/patches/parallel-rpc-loader.patch',
+              'internal/llamaruntime/patches/rpc-command-batching.patch',
+              'scripts/optimized-rpc-backend-search.patch',
+          ]:
               assert subprocess.check_output(['git','show',build['commit']+':'+file])==pathlib.Path(file).read_bytes()
           before=json.loads(subprocess.check_output(['git','show',build['commit']+':internal/llamaruntime/revision.json']))
           assert current["rpc_release"] == build["tag"], "Old artifact tag cannot publish a new runtime revision"
@@ -82,6 +88,27 @@ jobs:
           test "$(find dist -name '*.tar.gz' | wc -l)" -eq "$expected_count"
           cat dist/*.sha256 > dist/SHA256SUMS.txt
           (cd dist && sha256sum -c SHA256SUMS.txt)
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path("dist")
+          pinned = json.loads(pathlib.Path("internal/llamaruntime/revision.json").read_text())
+          expected = pinned["published"]
+          assert len(expected) == 6
+          seen = set()
+          for platform, digest in expected.items():
+              name = "nodexlm-rpc_" + pinned["version"] + "_" + platform.replace("/", "_") + ".tar.gz"
+              path = root / name
+              assert path.is_file() and path.stat().st_size <= 419430400, name
+              with path.open("rb") as stream:
+                  actual = hashlib.file_digest(stream, "sha256").hexdigest()
+              assert actual == digest, "Pinned artifact digest mismatch: " + name
+              seen.add(name)
+          assert {p.name for p in root.glob("*.tar.gz")} == seen, "Unexpected native archives"
+          PY
+          for archive in dist/*.tar.gz; do
+            gh attestation verify "$archive" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/rpc-platforms.yml"
+          done
           tag=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/rpc-build.json"))["tag"])')
           build=$(python3 -c 'import json;print(json.load(open("internal/llamaruntime/rpc-build.json"))["commit"])')
           cp internal/llamaruntime/rpc-build.json dist/BUILD.json
