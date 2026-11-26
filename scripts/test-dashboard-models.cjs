@@ -130,10 +130,12 @@ async function main(){
   const html=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/index.html'),'utf8');
   const css=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/styles.css'),'utf8');
   checkResponsiveLayout(html,css);
-  const metrics=vm.runInContext("chatRunMetrics({usage:{completion_tokens:100,completion_tokens_details:{reasoning_tokens:60}},timings:{predicted_n:100,predicted_ms:2000,prompt_ms:500},elapsed:3,firstOutput:0.6,firstText:2,firstReasoning:0.6,lastReasoning:1.8,hasReasoning:true})",sandbox);
+  const metrics=vm.runInContext("chatRunMetrics({usage:{completion_tokens:100,completion_tokens_details:{reasoning_tokens:60}},timings:{predicted_n:100,predicted_ms:2000,prompt_ms:500},elapsed:3,firstOutput:0.6,firstText:2,lastText:2.5,firstReasoning:0.6,lastReasoning:1.8,hasReasoning:true})",sandbox);
   assert.ok(metrics.text.includes('Decode nativo (inclui reasoning): 50.0 t/s'));
   assert.ok(metrics.text.includes('Reasoning: 60 tokens'));
   assert.ok(metrics.text.includes('Saída sem reasoning: 40 tokens'));
+  assert.ok(metrics.text.includes('Reasoning observado (SSE): 42.9 t/s'));
+  assert.ok(metrics.text.includes('Texto observado (SSE): 80.0 t/s'));
   assert.ok(metrics.text.includes('Média total (inclui prompt): 33.3 t/s'));
   const missing=vm.runInContext("chatRunMetrics({usage:{completion_tokens:100},elapsed:3,hasReasoning:true})",sandbox);
   assert.ok(missing.text.includes('contagem separada indisponível'));

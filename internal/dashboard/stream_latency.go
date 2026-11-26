@@ -11,6 +11,8 @@ import (
 type streamLatency struct {
 	start, first, last        time.Time
 	firstText, firstReasoning time.Time
+	lastText                  time.Time
+	interleaved               bool
 	gaps                      []float64
 }
 
@@ -32,11 +34,25 @@ func (l *streamLatency) observe(payload []byte, now time.Time) {
 		if d.Content == "" && d.Reasoning == "" && len(d.Tools) == 0 {
 			continue
 		}
-		if d.Content != "" && l.firstText.IsZero() {
-			l.firstText = now
+		// Do not infer separate phase throughput when a stream mixes
+		// visible text and reasoning in the same event, or resumes reasoning
+		// after it has already begun emitting visible text.
+		if d.Reasoning != "" {
+			if !l.firstText.IsZero() || d.Content != "" {
+				l.interleaved = true
+			}
+			if l.firstReasoning.IsZero() {
+				l.firstReasoning = now
+			}
 		}
-		if d.Reasoning != "" && l.firstReasoning.IsZero() {
-			l.firstReasoning = now
+		if d.Content != "" {
+			if l.firstText.IsZero() {
+				l.firstText = now
+			}
+			l.lastText = now
+		}
+		if len(d.Tools) != 0 {
+			l.interleaved = true
 		}
 		if l.first.IsZero() {
 			l.first = now
@@ -61,6 +77,23 @@ func (l streamLatency) apply(s *InferenceSample) {
 		if !l.firstReasoning.IsZero() {
 			ms := float64(l.firstReasoning.Sub(l.start)) / float64(time.Millisecond)
 			s.FirstReasoningMilliseconds = &ms
+		}
+	}
+	// Usage reports actual token counts; SSE gives event-level phase
+	// boundaries, NOT exact per-token timestamps. Report phase-window
+	// rates only for strictly ordered streams with both reported counts.
+	if !l.interleaved && s.ReasoningTokens != nil && s.NonReasoningTokens != nil &&
+		*s.ReasoningTokens > 0 && *s.NonReasoningTokens > 0 &&
+		!l.firstReasoning.IsZero() && !l.firstText.IsZero() &&
+		l.firstText.After(l.firstReasoning) {
+		reasonSeconds := l.firstText.Sub(l.firstReasoning).Seconds()
+		rate := float64(*s.ReasoningTokens) / reasonSeconds
+		s.ObservedReasoningTokensPerSecond = &rate
+		s.PhaseRateBasis = "sse_event_window"
+		if l.lastText.After(l.firstText) {
+			visibleSeconds := l.lastText.Sub(l.firstText).Seconds()
+			visibleRate := float64(*s.NonReasoningTokens) / visibleSeconds
+			s.ObservedAnswerTokensPerSecond = &visibleRate
 		}
 	}
 	if len(l.gaps) > 0 {

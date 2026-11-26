@@ -33,8 +33,15 @@ type InferenceSample struct {
 	FirstOutputMilliseconds    float64              `json:"first_output_ms,omitempty"`
 	FirstTextMilliseconds      *float64             `json:"first_text_ms,omitempty"`
 	FirstReasoningMilliseconds *float64             `json:"first_reasoning_ms,omitempty"`
-	ReasoningTokens            *int                 `json:"reasoning_tokens,omitempty"`
-	NonReasoningTokens         *int                 `json:"non_reasoning_tokens,omitempty"`
+
+	ReasoningTokens    *int `json:"reasoning_tokens,omitempty"`
+	NonReasoningTokens *int `json:"non_reasoning_tokens,omitempty"`
+	// SSE is not a per-token clock. These optional throughput values use
+	// server-reported token counts and observed reasoning/text event windows.
+	ObservedReasoningTokensPerSecond *float64 `json:"observed_reasoning_tokens_per_second,omitempty"`
+	ObservedAnswerTokensPerSecond    *float64 `json:"observed_answer_tokens_per_second,omitempty"`
+	PhaseRateBasis                   string   `json:"phase_rate_basis,omitempty"`
+
 	OutputChunkP50Milliseconds float64              `json:"output_chunk_p50_ms,omitempty"`
 	OutputChunkP95Milliseconds float64              `json:"output_chunk_p95_ms,omitempty"`
 	Workloads                  []BenchmarkWorkload  `json:"workloads,omitempty"`
