@@ -255,6 +255,31 @@ class MainActivity : Activity() {
             else getString(R.string.node_paired),
             12, false
         ))
+        if (BuildConfig.HOST_ENABLED && android.os.Process.is64Bit()) {
+            overview.addView(label(getString(R.string.android_host_title),18,true))
+            overview.addView(label(getString(R.string.android_host_help),12,false))
+            overview.addView(action(getString(R.string.android_host_start)) {
+                startForegroundService(Intent(this,HostService::class.java).setAction(HostService.START))
+            })
+            overview.addView(action(getString(R.string.android_host_stop)) {
+                startService(Intent(this,HostService::class.java).setAction(HostService.STOP))
+            })
+            overview.addView(action(getString(R.string.android_host_open)) {
+                runCatching { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("http://127.0.0.1:8787"))) }
+                    .onFailure { setStatus(getString(R.string.start_failed,it.message)) }
+            })
+            overview.addView(action(getString(R.string.android_host_token)) {
+                val key = runCatching { org.json.JSONObject(File(filesDir,"host/secrets.json").readText()).getString("admin") }.getOrNull()
+                if (key.isNullOrBlank()) setStatus(getString(R.string.android_host_unavailable))
+                else {
+                    val clip = ClipData.newPlainText("NodexLM Host",key)
+                    if (Build.VERSION.SDK_INT >= 33) clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE",true) }
+                    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                    setStatus(getString(R.string.android_host_token_copied))
+                }
+            })
+            overview.addView(label(HostService.status(this),12,false))
+        }
         if (BuildConfig.LITERT_ENABLED && android.os.Process.is64Bit()) {
             overview.addView(action(getString(R.string.litert_title)) {
                 startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))

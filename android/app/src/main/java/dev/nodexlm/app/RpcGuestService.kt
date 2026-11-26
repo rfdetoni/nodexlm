@@ -96,6 +96,7 @@ class RpcGuestService : Service() {
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
     private var cpuLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var runtimeLease: MobileRuntimeLease? = null
     private val wifiGuard = Any()
     private var adaptiveWifi = false
     private val wifiPolicy = WifiClaimPolicy()
@@ -147,6 +148,8 @@ class RpcGuestService : Service() {
         }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
+                runtimeLease = MobileRuntimeLease.acquire(this)
+                check(runtimeLease != null && running.get()) { "Another mobile runtime owns this device" }
                 logPreviousLowMemoryExit()
                 val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
                 val requestedThreads = energy.getInt("rpc_threads", 0)

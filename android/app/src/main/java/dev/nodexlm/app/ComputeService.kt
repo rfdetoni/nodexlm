@@ -75,7 +75,11 @@ class ComputeService : Service() {
         } catch (e: Exception) {
             Log.e(logTag, "Cannot keep cluster polling active while screen is locked", e)
         }
-        thread(name="nodexlm-worker",isDaemon=false) {workerLoop()}
+        thread(name="nodexlm-worker",isDaemon=false) {
+            val lease = MobileRuntimeLease.acquire(this)
+            if (lease == null) { stopWorker(); return@thread }
+            lease.use { if (running.get()) workerLoop() }
+        }
         return START_STICKY
     }
 

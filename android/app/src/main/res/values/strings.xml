@@ -279,4 +279,12 @@
     <string name="litert_disabled">LiteRT-LM is not included in this build</string>
     <string name="import_directory">Import GGUF directory</string>
     <string name="import_directory_done">Imported %1$d new models</string>
+    <string name="android_host_title">Android Host (experimental)</string>
+    <string name="android_host_help">ARM64 CPU coordinator and authenticated Guests. Stop Guest/worker modes first. Manage models from the local browser.</string>
+    <string name="android_host_start">Start Host</string>
+    <string name="android_host_stop">Stop Host</string>
+    <string name="android_host_open">Open local Host dashboard</string>
+    <string name="android_host_token">Copy local admin token</string>
+    <string name="android_host_token_copied">Admin token copied</string>
+    <string name="android_host_unavailable">Start Host first</string>
 </resources>
