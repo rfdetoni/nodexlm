@@ -135,7 +135,8 @@ Native select geometry is OS-owned. No web font or decoration-only poll.
 Inference configuration and runtime operations are separate surfaces. They sit
 side by side only when the actual workspace is at least 1000 CSS pixels wide;
 otherwise they flow vertically. The runtime actions and live allocation stay
-in one panel. Guest tables paginate at 20 rows without replacing controls on
-telemetry-only updates. No additional CSS framework, font or animation is used.
+in one panel. Each registered Guest appears only as a resource card with a
+native disclosure menu for authenticated actions. Telemetry does not replace
+controls or steal keyboard focus. No additional CSS framework, font or animation is used.
 Native textareas use content sizing where supported, with bounded height and
 scrolling; native selects remain platform owned.

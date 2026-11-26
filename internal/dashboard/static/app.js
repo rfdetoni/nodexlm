@@ -559,36 +559,6 @@ function renderNodeResources(devices,registered=[]){
   }
  }
 }
-let nodeTableData=[],nodePage=0,nodeTableStructure='',nodeTableRows=[];
-const nodePageSize=20;
-function nodeCells(n){
- const gpus=Array.isArray(n.gpus)?n.gpus:[];
- const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
- const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
- return [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—'];
-}
-function renderNodeTable(nodes){
- nodeTableData=nodes;
- const total=nodes.length,pages=Math.max(1,Math.ceil(total/nodePageSize));
- nodePage=Math.max(0,Math.min(nodePage,pages-1));
- const visible=nodes.slice(nodePage*nodePageSize,(nodePage+1)*nodePageSize);
- const key=JSON.stringify(visible.map(n=>[n.id,n.name,n.status==='online'&&!!n.runtime?.benchmark,n.status==='online'&&!!n.runtime?.rpc_ready]));
- const tbody=$('nodes');
- if(key!==nodeTableStructure){
-  nodeTableStructure=key;nodeTableRows=[];tbody.replaceChildren();
-  if(!visible.length){const row=el('tr',''),cell=el('td','','Nenhum Guest registrado. Gere um código de pareamento para conectar dispositivos.');cell.colSpan=6;row.append(cell);tbody.append(row);}
-  for(const n of visible){
-   const tr=el('tr',''),cells=nodeCells(n).map(value=>el('td','',value));
-   const td=el('td','node-actions');td.append(action('Revogar','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh()}));if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));if(n.runtime?.rpc_ready && n.status==='online')td.append(action('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(n.id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))}));
-   tr.append(...cells,td);tbody.append(tr);nodeTableRows.push(cells);
-  }
- }else visible.forEach((n,index)=>nodeCells(n).forEach((value,column)=>setText(nodeTableRows[index][column],value)));
- setText($('nodePageStatus'),total?(nodePage*nodePageSize+1)+'–'+Math.min(total,(nodePage+1)*nodePageSize)+' de '+total+' Guests':'0 Guests');
- $('nodePrev').disabled=nodePage===0;$('nodeNext').disabled=nodePage>=pages-1;
-}
-$('nodePrev').addEventListener('click',()=>{nodePage--;renderNodeTable(nodeTableData)});
-$('nodeNext').addEventListener('click',()=>{nodePage++;renderNodeTable(nodeTableData)});
-
 let refreshEpoch=0,refreshInFlight=null;
 async function refresh(background=false){
  if(background&&refreshInFlight)return refreshInFlight;
@@ -641,7 +611,6 @@ async function refreshSnapshot(){
  if(guests.length)benchOptions.push(['cluster','Cluster (planejamento atual)']);
  benchOptions.push(...guests.map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)]));
  setOptions('inferenceBenchTarget',benchOptions,$('inferenceBenchTarget').value);
- renderNodeTable(nodes);
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -867,7 +836,7 @@ function endSession(){
  catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;
  $('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();
  clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
- nodePage=0;renderNodeTable([]);$('secret').type='password';$('toggleSecret').textContent='Mostrar';$('toggleSecret').setAttribute('aria-pressed','false');$('toggleSecret').setAttribute('aria-label','Mostrar credencial');
+ $('secret').type='password';$('toggleSecret').textContent='Mostrar';$('toggleSecret').setAttribute('aria-pressed','false');$('toggleSecret').setAttribute('aria-label','Mostrar credencial');
  $('prompt').value='';$('overviewPrompt').value='';$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;
  $('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();$('chatMetrics').textContent='';
  $('confirmation').close?.();setupAuth();$('secret').focus();

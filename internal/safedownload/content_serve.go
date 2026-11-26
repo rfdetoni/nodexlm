@@ -18,6 +18,7 @@ import (
 type verifiedModel struct {
 	info os.FileInfo
 }
+
 var verifiedModels = struct {
 	sync.Mutex
 	files map[string]verifiedModel

@@ -79,9 +79,9 @@ also retain controls and focus. Tests assert identity during a progress tick.
 - Shared async controls: `bindAction`, `bindForm`, `withBusy`; prevent
   repeated submission without changing button width. Dynamic collections use
   `collectionRow` and native controls, not screen-local variants.
-- Guest management: page size 20, clamp after revocation, preserve table row
-  controls when only telemetry changes. The table scrolls independently; use
-  previous/next to reach all rows. No additional server query for paging.
+- Guest management: one card per authenticated Guest, native “⋯” menu for
+  actions, no redundant table, and stable menu identity during telemetry
+  refreshes. Revoked nodes disappear from the cards without stale controls.
 - Background refresh skips if an existing refresh is active; requested refreshes
   serialize. Logout and unauthorized responses use one session reset path.
 - Credentials stay masked by default with a reversible, keyboard-operable reveal.

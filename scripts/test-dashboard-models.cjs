@@ -145,7 +145,7 @@ async function main(){
   assert.ok(noUsage.text.includes('Tokens decodificados (runtime): 20'));
   assert.ok(noUsage.text.includes('Decode nativo (inclui reasoning): 20.0 t/s'));
   const chat=html.slice(html.indexOf('id="view-chat"'),html.indexOf('id="view-images"'));
-  assert.match(html,/id="nodePageStatus"/);
+  assert.ok(html.includes('id="nodeResourceCards"'),'device cards remain visible');
   assert.match(html,/id="toggleSecret"/);
   vm.runInContext("hydrateSettings({threads:6,context_tokens:4096,distributed:true,backend:'llama.cpp',vision_projector:'vision.gguf'})",sandbox);
   const hydrated=vm.runInContext("settingsFromForm('test.gguf')",sandbox);
@@ -155,16 +155,8 @@ async function main(){
   assert.equal(hydrated.vision_projector,'vision.gguf');
   assert.equal(hydrated.parallel_slots,1);
 
-  vm.runInContext("renderNodeTable(Array.from({length:25},(_,i)=>({id:'guest-'+i,name:'Guest '+i,platform:'linux',architecture:'amd64',status:'online',runtime:{benchmark:true}})))",sandbox);
-  assert.equal(get('nodes').children.length,20);
-  const originalNodeAction=get('nodes').children[0].children[5].children[0];
-  vm.runInContext("nodeTableData[0].ram_bytes=1024;renderNodeTable(nodeTableData)",sandbox);
-  assert.equal(get('nodes').children[0].children[5].children[0],originalNodeAction,'telemetry should not replace focused row actions');
-  get('nodeNext').handlers.click();
-  assert.equal(get('nodes').children.length,5);
-  assert.equal(get('nodePageStatus').textContent,'21–25 de 25 Guests');
-  vm.runInContext("renderNodeTable(nodeTableData.slice(0,2))",sandbox);
-  assert.equal(get('nodes').children.length,2,'page clamped after revocation');
+  assert.ok(!html.includes('id="nodes"'),'duplicate Guest table must not return');
+  assert.ok(script.includes("el('details','device-tools')"),'device tools menu remains on each Guest card');
   get('secret').type='password';get('toggleSecret').handlers.click();
   assert.equal(get('secret').type,'text');
   get('toggleSecret').handlers.click();assert.equal(get('secret').type,'password');
@@ -204,7 +196,7 @@ async function main(){
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
   assert.equal(get('nodeResourceCards').children.length,1,'one card per device');
   assert.ok(resourceCard.textContent.includes('Revogar acesso'),'tools belong to the device card');
-  assert.equal([...html.matchAll(/id="nodes"/g)].length,1,'Guest management table exists exactly once');
+  assert.ok(!html.includes('id="nodes"'),'device card is the single source for Guest actions');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
   // Alternate runtimes must never silently enable incompatible GGML RPC.
   get('runtimeBackend').value='mistralrs';
