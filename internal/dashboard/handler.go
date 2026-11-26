@@ -295,6 +295,11 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("POST /api/unload", d.api(func(w http.ResponseWriter, r *http.Request) { d.Manager.Unload(); reply(w, 200, d.Manager.State()) }))
 
 	mux.HandleFunc("POST /api/chat", d.api(d.chat))
+	mux.HandleFunc("POST /api/documents/text", d.api(d.documentText))
+	mux.HandleFunc("GET /api/optional-capabilities", d.api(d.optionalCapabilities))
+	mux.HandleFunc("POST /api/chat/fallback", d.api(d.fallback))
+	mux.HandleFunc("POST /api/images/generations", d.api(d.generateImage))
+	mux.HandleFunc("POST /v1/images/generations", d.inference(d.generateImage))
 
 	return requestlog.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dashboard access is exclusively via loopback; use an SSH tunnel for remote management.
@@ -330,7 +335,16 @@ func (d *Dashboard) Handler() http.Handler {
 			inferenceAPI(w, r)
 			return
 		}
+		if r.URL.Path == "/api/documents/text" {
+			r.Body = http.MaxBytesReader(w, r.Body, (16<<20)+1)
+			mux.ServeHTTP(w, r)
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if r.URL.Path == "/v1/images/generations" {
+			mux.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/v1/") && r.URL.Path != "/v1/models" && r.URL.Path != "/v1/chat/completions" {
 			d.Cluster.Handler().ServeHTTP(w, r)
 			return

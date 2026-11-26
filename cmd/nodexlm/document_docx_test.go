@@ -19,7 +19,7 @@ func TestDOCXTextExtraction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = part.Write([]byte("<w:document xmlns:w=\"" + wordNS + "\"><w:body><w:p><w:r><w:t>Teste &amp; dados</w:t></w:r></w:p></w:body></w:document>"))
+	_, err = part.Write([]byte("<w:document xmlns:w=\"" + "http://schemas.openxmlformats.org/wordprocessingml/2006/main" + "\"><w:body><w:p><w:r><w:t>Teste &amp; dados</w:t></w:r></w:p></w:body></w:document>"))
 	if err != nil {
 		t.Fatal(err)
 	}

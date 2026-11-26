@@ -1,4 +1,4 @@
-package main
+package document
 
 import (
 	"context"
@@ -59,8 +59,8 @@ func readPDF(path string) (string, error) {
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
-	data, readErr := io.ReadAll(io.LimitReader(out, maxChatDocument+1))
-	if readErr != nil || len(data) > maxChatDocument {
+	data, readErr := io.ReadAll(io.LimitReader(out, MaxText+1))
+	if readErr != nil || len(data) > MaxText {
 		cancel()
 		_ = cmd.Wait()
 		return "", errors.New("PDF extracted text exceeds limit or could not be read")
