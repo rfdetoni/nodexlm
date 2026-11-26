@@ -144,14 +144,18 @@ def report(model: str, host: dict | None, rounds: list, guests: dict):
         host = valid_sample(host, "Host")
         if host.get("model") != model:
             raise ValueError("Host result belongs to a different model")
-        if host["fingerprint"] != fingerprint or host["rate_basis"] != basis:
-            raise ValueError("Host and cluster runtime/timing basis differ")
+        if host["fingerprint"] != fingerprint:
+            raise ValueError("Host and cluster fingerprint differ")
+        if host["rate_basis"] != basis:
+            raise ValueError("Host and cluster timing basis differ")
     for node, sample in guests.items():
         sample = valid_sample(sample, f"Guest {node}")
         if sample.get("model") != model + "@" + node:
             raise ValueError("Guest result belongs to a different model")
-        if sample["fingerprint"] != fingerprint or sample["rate_basis"] != basis:
-            raise ValueError(f"Guest {node} runtime/timing basis differs")
+        if sample["fingerprint"] != fingerprint:
+            raise ValueError(f"Guest {node} fingerprint differs")
+        if sample["rate_basis"] != basis:
+            raise ValueError(f"Guest {node} timing basis differs")
     cluster_rates = [s["tokens_per_second"] for s in samples]
     median_cluster = statistics.median(cluster_rates)
     return {
