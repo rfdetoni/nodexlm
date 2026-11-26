@@ -128,6 +128,22 @@ async function main(){
   const css=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/styles.css'),'utf8');
   checkResponsiveLayout(html,css);
   const chat=html.slice(html.indexOf('id="view-chat"'),html.indexOf('id="view-images"'));
+  assert.match(html,/id="nodePageStatus"/);
+  assert.match(html,/id="toggleSecret"/);
+  vm.runInContext("renderNodeTable(Array.from({length:25},(_,i)=>({id:'guest-'+i,name:'Guest '+i,platform:'linux',architecture:'amd64',status:'online',runtime:{benchmark:true}})))",sandbox);
+  assert.equal(get('nodes').children.length,20);
+  const originalNodeAction=get('nodes').children[0].children[5].children[0];
+  vm.runInContext("nodeTableData[0].ram_bytes=1024;renderNodeTable(nodeTableData)",sandbox);
+  assert.equal(get('nodes').children[0].children[5].children[0],originalNodeAction,'telemetry should not replace focused row actions');
+  get('nodeNext').handlers.click();
+  assert.equal(get('nodes').children.length,5);
+  assert.equal(get('nodePageStatus').textContent,'21–25 de 25 Guests');
+  vm.runInContext("renderNodeTable(nodeTableData.slice(0,2))",sandbox);
+  assert.equal(get('nodes').children.length,2,'page clamped after revocation');
+  get('secret').type='password';get('toggleSecret').handlers.click();
+  assert.equal(get('secret').type,'text');
+  get('toggleSecret').handlers.click();assert.equal(get('secret').type,'password');
+
   assert.match(chat,/<label class="check-field"><input id="allowExternalFallback" type="checkbox"><span>/);
   assert.match(chat,/<div class="chat-actions">[\s\S]*?<div class="buttons"><button id="stopChat"/);
   assert.doesNotMatch(chat,/<div class="buttons"><label/);

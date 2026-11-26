@@ -21,7 +21,7 @@ async function api(path, method='GET', body, signal) {
   const headers={Authorization:'Bearer '+token}; if (body!==undefined) headers['Content-Type']='application/json';
   const response=await fetch(path,{method,headers,body: body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal});
   const text=await response.text(); let data;try{data=JSON.parse(text)}catch{data={error:text}}
-  if (!response.ok) {if(response.status===401 && token===session) {sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();$('auth').hidden=false;$('app').hidden=true;}throw Error(data.error||'HTTP '+response.status)}
+  if (!response.ok) {if(response.status===401 && token===session) endSession();throw Error(data.error||'HTTP '+response.status)}
   return data;
 }
 const consoleViews=[
@@ -112,6 +112,7 @@ function activateConsoleView(view){
   $('view-'+item.id).hidden=!active;
   $('nav-'+item.id).setAttribute('aria-current',active?'page':'false');
  }
+ document.title=chosen.name+' · NodexLM';
  $('workspaceTitle').textContent=chosen.name;
  $('workspaceDescription').textContent=chosen.description;
  $('consoleMain').scrollTop=0;
@@ -218,6 +219,18 @@ function action(label,className,handler,disabled=false){
 }
 function bindForm(formId,buttonId,handler){
  $(formId).addEventListener('submit',event=>{event.preventDefault();return guard(()=>withBusy($(buttonId),handler))});
+}
+function bindAction(id,handler){
+ $(id).addEventListener('click',()=>guard(()=>withBusy($(id),handler)));
+}
+function setText(node,value){const text=String(value);if(node.textContent!==text)node.textContent=text}
+function emptyState(text){return el('div','empty-state',text)}
+function collectionRow(title,meta,kind='model-item'){
+ const row=el('article',kind),info=el('div','model-info'),controls=el('div','model-actions');
+ info.append(el('strong','model-title',title));
+ if(meta)info.append(el('div','model-meta',meta));
+ row.append(info,controls);
+ return {row,info,controls};
 }
 function updateProgress(bar,received,total){
  bar.max=total>0?total:1;
@@ -356,10 +369,7 @@ function renderLocalModels(models,status) {
  localModelStructure=key;list.replaceChildren();
  if(!models.length){list.append(el('div','empty-state','Nenhum GGUF salvo. Pesquise no catálogo abaixo para baixar.'));return;}
  for(const m of models) {
-  const row=el('article','model-item');
-  const info=el('div','model-info');info.append(el('strong','model-title',m.name));
-  info.append(el('div','model-meta',fmt(m.size_bytes)+(m.moe?' · MoE ('+m.expert_count+' experts)':'')));
-  const controls=el('div','model-actions');
+  const {row,controls}=collectionRow(m.name,fmt(m.size_bytes)+(m.moe?' · MoE ('+m.expert_count+' experts)':''));
   const loaded=residentModelNames.includes(m.name) || (status.runtime.loaded && status.runtime.model===m.name);
   const blocked=loaded || status.runtime.loading || actionBusy;
   if(loaded)controls.append(el('span','model-tag active','Em uso'));
@@ -369,7 +379,7 @@ function renderLocalModels(models,status) {
    await api('/api/models/'+encodeURIComponent(m.name),'DELETE');
    notice('Modelo excluído: '+m.name);settingsInitialized=false;await refresh();
   },blocked));
-  row.append(info,controls);list.append(row);
+  list.append(row);
  }
 }
 function placement(model) {
@@ -407,10 +417,7 @@ function renderCatalog(){
  if(!filtered.length){dest.append(el('div','empty-state',!catalogSearched?'Use a busca acima para explorar modelos GGUF.':catalogModels.length?'Nenhum resultado para este filtro.':'Nenhum resultado. Experimente outra pesquisa.'));return;}
  for(const m of filtered) {
   const name=modelFile(m);const installed=installedNames.has(name);
-  const row=el('article','catalog-item');
-  const info=el('div','model-info');
-  info.append(el('strong','model-title',m.filename));
-  info.append(el('div','model-meta',m.repository+' · '+fmt(m.size_bytes)));
+  const {row,info,controls:actions}=collectionRow(m.filename,m.repository+' · '+fmt(m.size_bytes),'catalog-item');
   if(m.decision_model)info.append(el('span','model-tag','Candidato System One'));
   const tier=placement(m);
   const tags=el('div','model-tags');tags.append(el('span','model-tag '+tier.kind,tier.name));
@@ -421,13 +428,12 @@ function renderCatalog(){
    const bar=renderProgress('Baixando '+name,transfer.received,transfer.total),label=el('div','model-meta',transferLabel(transfer.received,transfer.total));
    catalogProgress.push({bar,label});info.append(bar,label);
   }
-  const actions=el('div','model-actions');
   if(installed)actions.append(action('Aplicar','',()=>applyModel(name),actionBusy));
   else if(name && m.url) {
    actions.append(action('Baixar','secondary',()=>downloadCandidate(m,false),busy||actionBusy));
    actions.append(action('Baixar e aplicar','',()=>downloadCandidate(m,true),busy||actionBusy));
   } else actions.append(el('span','muted','Arquivo indisponível'));
-  row.append(info,actions);dest.append(row);
+  dest.append(row);
  }
 }
 // Never infer 0% from absent hardware counters. A nil metric is unavailable.
@@ -484,8 +490,44 @@ function renderNodeResources(devices) {
   area.append(card);
  }
 }
-let refreshEpoch=0;
-async function refresh(){
+let nodeTableData=[],nodePage=0,nodeTableStructure='',nodeTableRows=[];
+const nodePageSize=20;
+function nodeCells(n){
+ const gpus=Array.isArray(n.gpus)?n.gpus:[];
+ const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
+ const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
+ return [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—'];
+}
+function renderNodeTable(nodes){
+ nodeTableData=nodes;
+ const total=nodes.length,pages=Math.max(1,Math.ceil(total/nodePageSize));
+ nodePage=Math.max(0,Math.min(nodePage,pages-1));
+ const visible=nodes.slice(nodePage*nodePageSize,(nodePage+1)*nodePageSize);
+ const key=JSON.stringify(visible.map(n=>[n.id,n.name,n.status==='online'&&!!n.runtime?.benchmark,n.status==='online'&&!!n.runtime?.rpc_ready]));
+ const tbody=$('nodes');
+ if(key!==nodeTableStructure){
+  nodeTableStructure=key;nodeTableRows=[];tbody.replaceChildren();
+  if(!visible.length){const row=el('tr',''),cell=el('td','','Nenhum Guest registrado. Gere um código de pareamento para conectar dispositivos.');cell.colSpan=6;row.append(cell);tbody.append(row);}
+  for(const n of visible){
+   const tr=el('tr',''),cells=nodeCells(n).map(value=>el('td','',value));
+   const td=el('td','node-actions');td.append(action('Revogar','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh()}));if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));if(n.runtime?.rpc_ready && n.status==='online')td.append(action('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(n.id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))}));
+   tr.append(...cells,td);tbody.append(tr);nodeTableRows.push(cells);
+  }
+ }else visible.forEach((n,index)=>nodeCells(n).forEach((value,column)=>setText(nodeTableRows[index][column],value)));
+ setText($('nodePageStatus'),total?(nodePage*nodePageSize+1)+'–'+Math.min(total,(nodePage+1)*nodePageSize)+' de '+total+' Guests':'0 Guests');
+ $('nodePrev').disabled=nodePage===0;$('nodeNext').disabled=nodePage>=pages-1;
+}
+$('nodePrev').addEventListener('click',()=>{nodePage--;renderNodeTable(nodeTableData)});
+$('nodeNext').addEventListener('click',()=>{nodePage++;renderNodeTable(nodeTableData)});
+
+let refreshEpoch=0,refreshInFlight=null;
+async function refresh(background=false){
+ if(background&&refreshInFlight)return refreshInFlight;
+ if(refreshInFlight){await refreshInFlight.catch(()=>{});if(!token)return;return refresh(background)}
+ const task=refreshSnapshot();refreshInFlight=task;
+ try{return await task}finally{if(refreshInFlight===task)refreshInFlight=null}
+}
+async function refreshSnapshot(){
  const epoch=++refreshEpoch,session=token;
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
  if(epoch!==refreshEpoch||session!==token)return;
@@ -528,11 +570,7 @@ async function refresh(){
  if(guests.length)benchOptions.push(['cluster','Cluster (planejamento atual)']);
  benchOptions.push(...guests.map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)]));
  setOptions('inferenceBenchTarget',benchOptions,$('inferenceBenchTarget').value);
- const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
- const gpus=Array.isArray(n.gpus)?n.gpus:[];
- const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
- const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
- const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');td.append(action('Revogar','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh()}));if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));if(n.runtime?.rpc_ready && n.status==='online')td.append(action('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(n.id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))}));tr.append(td);tbody.append(tr)}
+ renderNodeTable(nodes);
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -696,15 +734,16 @@ async function sendChat(){
   if(chatController===controller)chatController=null;$('sendChat').disabled=false;$('stopChat').disabled=true;
  }
 }
+$('toggleSecret').addEventListener('click',()=>{
+ const field=$('secret'),visible=field.type==='text',button=$('toggleSecret');
+ field.type=visible?'password':'text';button.textContent=visible?'Mostrar':'Ocultar';
+ button.setAttribute('aria-pressed',String(!visible));button.setAttribute('aria-label',visible?'Mostrar credencial':'Ocultar credencial');
+});
 bindForm('login','loginSubmit',async()=>{token=$('secret').value.trim();await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')});
-$('decisionForm').addEventListener('submit',event=>{
- event.preventDefault();
- guard(async()=>{
+bindForm('decisionForm','runDecision',async()=>{
   let questions;
   try{questions=JSON.parse($('decisionQuestions').value)}catch{throw Error('Perguntas devem ser um objeto JSON válido.')}
   if(!questions || typeof questions!=='object' || Array.isArray(questions))throw Error('Perguntas devem ser um objeto JSON.');
-  const button=$('runDecision');
-  button.disabled=true;
   $('decisionOutput').textContent='Avaliando…';
   try{
    const result=await api('/v1/systemone','POST',{model:$('decisionModel').value.trim(),state:$('decisionState').value,questions});
@@ -713,10 +752,18 @@ $('decisionForm').addEventListener('submit',event=>{
   }catch(error){
    $('decisionOutput').textContent=error.message;
    throw error;
-  }finally{button.disabled=false}
- });
+  }
 });
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;$('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();setupAuth()});
+function endSession(){
+ sessionStorage.removeItem('nodexlm-admin');token='';refreshEpoch++;stopActivity();
+ catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;
+ $('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();
+ clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;
+ $('prompt').value='';$('overviewPrompt').value='';$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;
+ $('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();$('chatMetrics').textContent='';
+ $('confirmation').close?.();setupAuth();$('secret').focus();
+}
+$('logout').addEventListener('click',endSession);
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 bindForm('importDirectoryForm','importDirectoryButton',async()=>{
  try{const result=await api('/api/models/import-directory','POST',{source:$('importDirectoryPath').value.trim(),link:$('importDirectoryLink').checked});notice(result.imported+' modelos importados');}finally{await refresh()}
@@ -733,8 +780,8 @@ function configureBackendUI(){
 }
 $('runtimeBackend').addEventListener('change',configureBackendUI);
 bindForm('settingsForm','saveSettings',async()=>{await api('/api/settings','PUT',settingsFromForm($('modelSelect').value));notice('Configuração salva');settingsInitialized=false;await refresh()});
-$('load').addEventListener('click',()=>guard(async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
-$('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
+bindAction('load',async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()});
+bindAction('unload',async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()});
 // The 8-character code is a short-lived *pairing* credential, not the
 // admin bearer token nor an already-enrolled node's long-lived credential.
 let pairingSession = null;
@@ -825,7 +872,7 @@ function pairingTick(){
   return guard(()=>generatePairingCode(true));
  }
 }
-$('pairQR').addEventListener('click',()=>guard(async()=>{
+bindAction('pairQR',async()=>{
  if(!pairingSession||!pairingSecondsLeft())throw Error('Gere um código ativo antes do QR.');
  const session=pairingSession, startingToken=token, button=$('pairQR');
  button.disabled=true;
@@ -836,7 +883,7 @@ $('pairQR').addEventListener('click',()=>guard(async()=>{
   if(!result.png||result.png.length>350000||!/^[A-Za-z0-9+/=]+$/.test(result.png))throw Error('QR inválido.');
   $('pairQRImage').src='data:image/png;base64,'+result.png;$('pairQRImage').hidden=false;
  }finally{button.disabled=false}
-}));
+});
 $('pairQRHost').addEventListener('input',clearPairingQR);
 $('pair').addEventListener('click',()=>guard(()=>generatePairingCode(false)));
 $('pairAutoRenew').addEventListener('change',()=>{
@@ -845,7 +892,7 @@ $('pairAutoRenew').addEventListener('change',()=>{
 });
 setInterval(pairingTick,1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)return pairingTick()});
-$('previewPlan').addEventListener('click',()=>guard(async()=>{
+bindAction('previewPlan',async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.strategy||'capacity'))); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
  for(const suggestion of plan.suggestions||[])if(suggestion.kind==='speculative_ngram')area.append(el('p','muted',suggestion.reason+' RTT: '+suggestion.round_trip_ms.toFixed(1)+' ms.'));else if(suggestion.kind==='kv_q8_0')area.append(el('p','muted',suggestion.reason));
  for(const node of plan.nodes) {
@@ -857,7 +904,7 @@ $('previewPlan').addEventListener('click',()=>guard(async()=>{
  for(const node of plan.nodes){if(node.network)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.network.round_trip_ms.toFixed(2)+' ms RTT · '+node.network.mib_per_second.toFixed(1)+' MiB/s de eco'));}
  for(const node of plan.nodes){if(node.tokens_per_second)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.tokens_per_second.toFixed(1)+' tokens/s observados'));}
  area.append(el('p','muted','Camadas e KV F16 são estimativas; a alocação final depende do runtime. Aviso de rede: RTT acima de 10 ms ou eco abaixo de 50 MiB/s. Tokens/s são medidos, sem previsão pela banda; mudar a configuração ou os nós pode invalidar a comparação.'));
-}));
+});
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
 $('chatForm').addEventListener('invalid',e=>{const details=e.target.closest?.('details');if(details)details.open=true},true);
 $('chatOutput').addEventListener('scroll',()=>{const output=$('chatOutput');chatFollow=output.scrollHeight-output.scrollTop-output.clientHeight<80});
@@ -880,13 +927,13 @@ $('chatEffort').addEventListener('change',()=>{
 });
 $('chatThinkingBudget').addEventListener('change',saveReasoningPreference);
 $('stopChat').addEventListener('click',()=>chatController?.abort());
-$('clearChat').addEventListener('click',()=>guard(async()=>{
+bindAction('clearChat',async()=>{
  if(!await confirmAction('Apagar o histórico de conversas salvo neste navegador?','Apagar histórico'))return;
  chatController?.abort();chatHistory=[];saveChat();renderChat();$('chatMetrics').textContent='Histórico apagado.';
-}));
+});
 
 
-setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)},10000);
+setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(()=>refresh(true))},10000);
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
  if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;
@@ -934,29 +981,27 @@ function renderResidentModels(models){
  setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
  if(!changed)return;
  list.replaceChildren();
+ if(!models.length){list.append(emptyState('Nenhum modelo residente. Carregue um GGUF para começar.'));return;}
  for(const model of models){
-  const row=el('div','model-item'),info=el('div','model-info'),controls=el('div','model-actions');
-  info.append(el('strong','model-title',model));controls.append(action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));
-  row.append(info,controls);list.append(row);
+  const {row,controls}=collectionRow(model,'');
+  controls.append(action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));
+  list.append(row);
  }
 }
-$('loadAdditional').addEventListener('click',()=>guard(async()=>{
- const button=$('loadAdditional');button.disabled=true;
- try{await api('/api/resident-models','POST',{model:$('modelSelect').value});await refresh();notice('Modelo adicional carregado')}finally{button.disabled=false}
-}));
-$('inferenceBench').addEventListener('click',()=>guard(async()=>{
- const button=$('inferenceBench');button.disabled=true;
- try{
+bindAction('loadAdditional',async()=>{
+await api('/api/resident-models','POST',{model:$('modelSelect').value});await refresh();notice('Modelo adicional carregado')
+});
+bindAction('inferenceBench',async()=>{
+
    const target=$('inferenceBenchTarget').value;
    const sample=await api('/api/bench/inference','POST',{model:$('modelSelect').value,node_id:target,extended:$('extendedBench').checked});
    const basis=sample.rate_basis==='native_decode'?'decode nativo':'média com prefill';
    notice((target?'Guest':'Host')+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+basis);
    await refreshObservations();
-  }finally{button.disabled=false}
-}));
-$('autotuneBench').addEventListener('click',()=>guard(async()=>{
- const button=$('autotuneBench');button.disabled=true;
- try{
+  
+});
+bindAction('autotuneBench',async()=>{
+
   const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value,node_id:$('inferenceBenchTarget').value});
   const area=$('autotuneResults');area.replaceChildren();
   if(report.placement_fixed)area.append(el('p','muted','Placement fixado do baseline; candidatos com memória insuficiente são rejeitados.'));
@@ -964,9 +1009,9 @@ $('autotuneBench').addEventListener('click',()=>guard(async()=>{
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')+' · '+(s.speculative_tokens||0)+' tokens (0 = nativo)'));
    const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
   }else area.append(el('p','muted','Nenhum ganho comparável de decode ou prefill dentro dos limites.'));
- }finally{button.disabled=false}
-}));
-$('refreshObservations').addEventListener('click',()=>guard(refreshObservations));
+ 
+});
+bindAction('refreshObservations',refreshObservations);
 async function refreshObservations(){
  const data=await api('/api/observability');const area=$('observations');area.replaceChildren();
  for(const sample of data.inference)area.append(el('p','',
@@ -990,14 +1035,14 @@ async function refreshObservations(){
  if(!data.inference.length&&!data.nodes.length)area.append(el('p','muted','Nenhuma medição disponível.'));
 }
 
-$('copyModelFolder').addEventListener('click',()=>guard(async()=>{
+bindAction('copyModelFolder',async()=>{
  if(!modelFolderPath)throw Error('Caminho da pasta indisponível');
  if(!navigator.clipboard?.writeText)throw Error('Cópia automática indisponível neste navegador');
  await navigator.clipboard.writeText(modelFolderPath);notice('Caminho copiado');
-}));
-$('openModelFolder').addEventListener('click',()=>guard(async()=>{
+});
+bindAction('openModelFolder',async()=>{
  await api('/api/models/folder/open','POST',{});
  notice('Solicitada abertura da pasta no computador Host.');
-}));
+});
 setupConsoleNavigation();
 setupAuth();if(token){renderChat();guard(refresh);guard(loadModelFolder);}
