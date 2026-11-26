@@ -43,6 +43,10 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 		return 0, ctx.Err()
 	}
 	defer func() { <-transfers }()
+	return fetch(ctx, client, source, target, limit, progress, true)
+}
+
+func fetch(ctx context.Context, client *http.Client, source, target string, limit int64, progress func(int64, int64), parallel bool) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -148,6 +152,15 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 			return 0, errors.New("insufficient free disk space for model")
 		}
 	}
+	if parallel && offset == 0 && resp.StatusCode == http.StatusOK && meta.Total >= minParallelSize && meta.SHA256 != "" && strongETag(meta.Validator) && downloadWorkers() > 1 {
+		resp.Body.Close()
+		file.Close()
+		n, err := fetchRanges(ctx, client, source, target, meta, progress)
+		if errors.Is(err, errRangesUnsupported) {
+			return fetch(ctx, client, source, target, limit, progress, false)
+		}
+		return n, err
+	}
 	raw, err := json.Marshal(meta)
 	if err != nil {
 		return 0, err
@@ -159,6 +172,9 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 		return 0, err
 	}
 	received := offset
+	digest := sha256.New()
+	// Hash a fresh linear transfer as it arrives instead of rereading all weights.
+	inlineHash := offset == 0 && meta.SHA256 != ""
 	if progress != nil {
 		progress(received, meta.Total)
 	}
@@ -176,6 +192,9 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 				if _, err := file.Write(buf[:n]); err != nil {
 					return received, err
 				}
+				if inlineHash {
+					_, _ = digest.Write(buf[:n])
+				}
 				received += int64(n)
 				if progress != nil {
 					progress(received, meta.Total)
@@ -192,12 +211,13 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 	if meta.Total >= 0 && received != meta.Total {
 		return received, errors.New("incomplete model download")
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return received, err
-	}
-	digest := sha256.New()
-	if _, err := io.Copy(digest, &contextReader{ctx: ctx, reader: file}); err != nil {
-		return received, err
+	if !inlineHash && meta.SHA256 != "" {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return received, err
+		}
+		if _, err := io.Copy(digest, &contextReader{ctx: ctx, reader: file}); err != nil {
+			return received, err
+		}
 	}
 	if meta.SHA256 != "" && hex.EncodeToString(digest.Sum(nil)) != meta.SHA256 {
 		_ = file.Truncate(0)

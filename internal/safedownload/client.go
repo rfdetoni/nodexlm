@@ -116,7 +116,7 @@ func Client() *http.Client {
 		},
 		Transport: &http.Transport{
 			Proxy: nil, DialContext: Dial, ResponseHeaderTimeout: 30 * time.Second,
-			MaxIdleConns: 2, MaxIdleConnsPerHost: 1, IdleConnTimeout: 10 * time.Second,
+			MaxIdleConns: 16, MaxIdleConnsPerHost: 8, MaxConnsPerHost: 16, IdleConnTimeout: 15 * time.Second,
 		},
 	}
 }
