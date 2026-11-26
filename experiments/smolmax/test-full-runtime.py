@@ -29,6 +29,26 @@ def checked_model(path, expected):
     return path
 
 
+def stream_evidence(log):
+    """Check the entire log, retaining bounded evidence and no model data."""
+    zones = registrations = traces = 0
+    errors = False
+    for line in log:
+        line = line[:65536]
+        match = re.search(r"([0-9.]+) MB in stream zones", line)
+        if match and float(match[1]) > 0:
+            zones += 1
+        match = re.search(r"ggml_cpu_stream_register: stream zone ([0-9.]+) MB", line)
+        if match and float(match[1]) > 0:
+            registrations += 1
+        match = re.search(r"trace of (\d+) zone tensors recorded", line)
+        if match and int(match[1]) > 1:
+            traces += 1
+        if "stream VERIFY" in line or "cannot stream" in line:
+            errors = True
+    return zones, registrations, traces, errors
+
+
 def generate(server, model, profile=None, no_repack=False):
     # Ignore inherited experimental switches: validate a reproducible profile.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GGML_", "LLAMA_", "NODEXLM_SMOLMAX_"))}
@@ -44,7 +64,7 @@ def generate(server, model, profile=None, no_repack=False):
         with log.open("wb") as out:
             proc = subprocess.Popen(
                 [str(server), "-m", str(model), "--host", "127.0.0.1", "--port", str(port),
-                 "--parallel", "1", "-c", "256", "-t", "2", "-ngl", "0"] + (["--no-repack"] if no_repack else []),
+                 "--parallel", "1", "-c", "256", "-t", "2", "-ngl", "0", "-lv", "4" if profile else "3"] + (["--no-repack"] if no_repack else []),
                 env=env, stdout=out, stderr=out)
             try:
                 deadline = time.monotonic() + 180
@@ -80,7 +100,9 @@ def generate(server, model, profile=None, no_repack=False):
                     source.seek(max(0, log.stat().st_size - 64 * 1024))
                     diagnostic = source.read().decode(errors="replace")
                 print(diagnostic[-8000:])
-    return result["content"], diagnostic
+                with log.open("r", encoding="utf-8", errors="replace") as source:
+                    evidence = stream_evidence(source)
+    return result["content"], evidence
 
 
 def main():
@@ -105,17 +127,17 @@ def main():
             parser.error("--stream-sha256 required")
         dense = checked_model(args.stream_model, args.stream_sha256)
         normal, _ = generate(candidate, dense, no_repack=True)
-        streamed, log = generate(candidate, dense, {
+        streamed, evidence = generate(candidate, dense, {
             "LLAMA_STREAM_RESIDENT_MB": "64",
             "GGML_STREAM_WINDOW_MB": "32",
             "GGML_STREAM_READERS": "2",
             "GGML_STREAM_VERIFY": "1",
             "GGML_STREAM_STATS": "1",
         }, no_repack=True)
-        zones = re.findall(r"([0-9.]+) MB in stream zones", log)
-        if not any(float(x) > 0 for x in zones):
-            raise RuntimeError("streaming did not allocate a real stream zone")
-        if "stream VERIFY" in log or streamed != normal:
+        zones, registrations, traces, errors = evidence
+        if not (zones and registrations and traces):
+            raise RuntimeError(f"missing streaming evidence: zones={zones}, registrations={registrations}, traces={traces}")
+        if errors or streamed != normal:
             raise RuntimeError("streamed output or tensor bytes differ")
         print("Dense streaming smoke passed with nonzero zones")
 

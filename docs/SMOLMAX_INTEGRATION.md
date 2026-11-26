@@ -76,3 +76,16 @@ diferente e medições físicas de RSS/PSS, TTFT, throughput e energia ainda
 precisam de aceitação específica. Não ativar o candidato globalmente antes
 dessas verificações. O registro local do binário não constitui atestado
 de desempenho ou de segurança.
+
+### Baseline observations
+
+The initial ARM64 CI run passed tiny-model greedy equivalence but failed the
+stream-zone diagnostic: the server's default verbosity 3 suppresses native
+INFO messages (upstream maps them to level 4). The acceptance test now uses
+level 4 for the streaming profile and scans the complete log for actual zone
+registration and repeated tensor trace, not merely the loader's summary.
+This is a diagnostic correction, not a proof of successful streaming. The
+initial verification-enabled dense test reported 28.06 tokens/s without
+streaming and 1.27 tokens/s with streaming. Verification performs extra
+reads and byte comparisons, so these are not controlled production throughput
+measurements. No automatic activation based on these results.
