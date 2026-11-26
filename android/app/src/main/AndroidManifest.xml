@@ -15,15 +15,28 @@
         android:networkSecurityConfig="@xml/decision_network_security"
         android:label="NodexLM" android:theme="@style/NodexTheme"
         android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <activity android:name=".LocalChatActivity" android:exported="false" android:process=":localchat" />
+        <activity android:name=".LiteRTActivity" android:exported="false" android:process=":litert" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nodexlm" android:host="pair" />
+            </intent-filter>
         </activity>
         <receiver android:name=".UpdateInstallReceiver" android:exported="false" />
         <service android:name=".RpcGuestService" android:exported="false"
             android:process=":rpc" android:foregroundServiceType="connectedDevice" />
+        <service android:name=".HostService" android:exported="false" android:process=":host" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-started local cluster coordinator and language model host." />
+        </service>
         <service android:name=".ComputeService" android:exported="false"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

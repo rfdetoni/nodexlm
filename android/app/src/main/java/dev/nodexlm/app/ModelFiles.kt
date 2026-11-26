@@ -4,6 +4,7 @@ package dev.nodexlm.app
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -63,6 +64,61 @@ internal object ModelFiles {
         return clean
     }
 
+    // SAF directory grants do not guarantee real filesystem paths, so use
+    // the existing bounded streaming copy. No recursive traversal or links.
+    @Synchronized fun importDirectory(context: Context, tree: Uri): Int {
+        val resolver = context.contentResolver
+        val root = DocumentsContract.getTreeDocumentId(tree)
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, root)
+        val sources = linkedMapOf<String, Uri>()
+        val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE)
+        resolver.query(children, columns, null, null, null)?.use { cursor ->
+            var visited = 0
+            while (cursor.moveToNext()) {
+                require(++visited <= 1024) { "Directory contains more than 1024 entries" }
+                if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                val original = cursor.getString(1) ?: continue
+                if (!original.endsWith(".gguf", true)) continue
+                val name = safeFilename(original)
+                val uri = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0))
+                require(sources.put(name, uri) == null) { "Duplicate normalized filename: $name" }
+            }
+        } ?: error("Cannot read directory")
+        val groups = planDirectoryImports(sources.keys)
+        val dir = directory(context)
+        var count = 0
+        for (group in groups) {
+            val targets = group.map { File(dir, it) }
+            if (targets.all(::validGGUF)) continue
+            require(targets.none { it.exists() }) { "Partial or invalid destination model: ${group.first()}" }
+            try {
+                importSources(context, group.associateWith { sources.getValue(it) }, selectModel = false)
+                count++
+            } catch (e: Exception) {
+                throw IllegalStateException("Imported $count models; failed on ${group.first()}: ${e.message}", e)
+            }
+        }
+        return count
+    }
+
+    internal fun planDirectoryImports(names: Set<String>): List<List<String>> {
+        val remaining = names.toMutableSet()
+        val groups = mutableListOf<List<String>>()
+        val nonFirst = Regex("^(.*)-(\\d{5})-of-(\\d{5})\\.gguf$", RegexOption.IGNORE_CASE)
+        for (name in names.sorted()) {
+            if (name !in remaining) continue
+            val match = nonFirst.matchEntire(name)
+            if (match != null && match.groupValues[2] != "00001") continue
+            val group = shards(name)
+            require(group.all { it in remaining }) { "Incomplete model: $name" }
+            remaining.removeAll(group.toSet())
+            groups.add(group)
+        }
+        require(remaining.isEmpty()) { "Directory contains orphan GGUF shards" }
+        return groups
+    }
+
     fun import(context: Context, uri: Uri): File = importSet(context,listOf(uri))
     @Synchronized fun importSet(context: Context, uris: List<Uri>): File {
         require(uris.size in 1..128) { "Select up to 128 GGUF files" }
@@ -72,6 +128,11 @@ internal object ModelFiles {
             safeFilename(display)
         }
         require(sources.size==uris.size) { "Duplicate filenames" }
+        return importSources(context, sources, selectModel = true)
+    }
+
+    private fun importSources(context: Context, sources: Map<String, Uri>, selectModel: Boolean): File {
+        val resolver = context.contentResolver
         val first=sources.keys.sorted().first()
         val expected=shards(first)
         require(expected.toSet()==sources.keys) { "Select every shard of one model" }
@@ -86,7 +147,7 @@ internal object ModelFiles {
                 require(validGGUF(part)) { "Invalid GGUF shard: $name" }
             }
             for(name in expected.asReversed()) { val target=File(dir,name);require(!target.exists()&&File(stage,name).renameTo(target));created.add(target) }
-            val result=File(dir,first);select(context,result);return result
+            val result=File(dir,first);if (selectModel) select(context,result);return result
         } catch(e:Exception){created.forEach {it.delete()};throw e}
         finally {stage.deleteRecursively()}
     }

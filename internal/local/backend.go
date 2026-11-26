@@ -52,6 +52,9 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 		args := m.args(port, nctx, threads, gpu, meta.BlockCount)
 		mode := os.Getenv("NODEXLM_SMOLMAX_MODE")
 		if mode == "moe" || mode == "stream" {
+			if m.VisionProjectorPath != "" {
+				return backendLaunchSpec{}, errors.New("Smolmax paging and streaming do not support vision projectors")
+			}
 			if os.Getpagesize() != 4096 {
 				return backendLaunchSpec{}, errors.New("Smolmax paging and streaming require 4 KiB OS pages")
 			}
@@ -66,6 +69,13 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 				args = append(args, "--no-repack")
 			}
 		}
+		if m.VisionProjectorPath != "" {
+			if err := ValidateVisionProjector(m.VisionProjectorPath, m.ModelPath); err != nil {
+				return backendLaunchSpec{}, err
+			}
+			// Keep projector weights on the Host CPU, avoiding unplanned GPU allocation.
+			args = append(args, "--mmproj", m.VisionProjectorPath, "--no-mmproj-offload")
+		}
 		if meta.PoolingType >= 1 && meta.PoolingType <= 4 {
 			args = append(args, "--embedding")
 		}
@@ -76,6 +86,9 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 		return backendLaunchSpec{Binary: m.Binary, Args: args, Env: []string{"LLAMA_API_KEY=" + key},
 			APIKey: key, ReadyPath: "/health", Timeout: timeout}, nil
 	case BackendMistralRS:
+		if m.VisionProjectorPath != "" {
+			return backendLaunchSpec{}, errors.New("vision projector is supported only by llama.cpp")
+		}
 		if os.Getenv("NODEXLM_EXPERIMENTAL_MISTRALRS") != "1" {
 			return backendLaunchSpec{}, errors.New("mistral.rs is experimental and its local HTTP server has no authentication; set NODEXLM_EXPERIMENTAL_MISTRALRS=1 on the Host to opt in")
 		}

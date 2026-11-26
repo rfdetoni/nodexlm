@@ -73,6 +73,9 @@ func (m *Manager) DeleteModel(name string) error {
 	if m.loading || m.unloading || m.current == name && m.engine != nil || m.residents[name] != nil {
 		return errors.New("cannot delete a loaded or loading model; unload it first")
 	}
+	if m.settings.VisionProjector == name {
+		return errors.New("clear the selected vision projector before deleting it")
+	}
 	if m.download != nil && m.download.Status == "downloading" {
 		for _, part := range names {
 			if m.download.Name == part {

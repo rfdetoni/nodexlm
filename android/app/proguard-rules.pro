@@ -5,3 +5,6 @@
 -keepclassmembers class * implements dev.nodexlm.app.NativeEntry$TokenSink { public void onToken(byte[]); }
 
 -keep class dev.nodexlm.app.NativeRustRpc { *; }
+
+# Optional LiteRT-LM JNI bridge; no effect when the SDK is absent.
+-keep class com.google.ai.edge.litertlm.** { *; }

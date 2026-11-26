@@ -96,6 +96,10 @@ class RpcGuestService : Service() {
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
     private var cpuLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var runtimeLease: MobileRuntimeLease? = null
+    private val wifiGuard = Any()
+    private var adaptiveWifi = false
+    private val wifiPolicy = WifiClaimPolicy()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -110,6 +114,7 @@ class RpcGuestService : Service() {
         }
         if (!running.compareAndSet(false, true)) return START_NOT_STICKY
         val energy = getSharedPreferences("nodexlm", MODE_PRIVATE)
+        adaptiveWifi = energy.getBoolean("rpc_adaptive_wifi", false)
         energyPolicy = EnergyPolicy(energy.getBoolean("rpc_only_charging", false),energy.getInt("rpc_min_battery",15),energy.getInt("rpc_start_hour",0),energy.getInt("rpc_end_hour",0))
         val endpoint = intent.getStringExtra(EXTRA_ENDPOINT) ?: ""
         val node = intent.getStringExtra(EXTRA_NODE) ?: ""
@@ -143,6 +148,8 @@ class RpcGuestService : Service() {
         }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
+                runtimeLease = MobileRuntimeLease.acquire(this)
+                check(runtimeLease != null && running.get()) { "Another mobile runtime owns this device" }
                 logPreviousLowMemoryExit()
                 val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
                 val requestedThreads = energy.getInt("rpc_threads", 0)
@@ -309,6 +316,7 @@ class RpcGuestService : Service() {
                             break
                         }
                     }
+                    if (adaptiveWifi) refreshWifiLock()
                     sleepWhileRunning(1_000L)
                 }
             } catch (e: Throwable) {
@@ -375,12 +383,30 @@ class RpcGuestService : Service() {
             @Suppress("DEPRECATION")
             val mode = if (Build.VERSION.SDK_INT < 34) WifiManager.WIFI_MODE_FULL_HIGH_PERF
                        else WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-            wifiLock = wifi.createWifiLock(mode, "NodexLM:rpc-wifi")
-                .apply { setReferenceCounted(false); acquire() }
-            Log.i(LOG, "Wi-Fi lock acquired; API=${Build.VERSION.SDK_INT}, " +
+            synchronized(wifiGuard) {
+                if (!running.get()) return
+                wifiLock = wifi.createWifiLock(mode, "NodexLM:rpc-wifi")
+                    .apply { setReferenceCounted(false); acquire() }
+                wifiPolicy.active(android.os.SystemClock.elapsedRealtime(), true)
+            }
+            Log.i(LOG, "Wi-Fi lock acquired; adaptive=$adaptiveWifi API=${Build.VERSION.SDK_INT}, " +
                 "screen_off_supported_by_mode=${Build.VERSION.SDK_INT < 34}; " +
                 "device power policy and OEM may still suspend connectivity")
         } catch (e: Exception) { Log.w(LOG, "Wi-Fi wake lock unavailable", e) }
+    }
+
+    // Use existing authenticated claims and the existing supervisor tick;
+    // no UDP keepalive traffic or extra polling thread.
+    private fun refreshWifiLock() {
+        synchronized(wifiGuard) {
+            if (!running.get()) return
+            val lock = wifiLock ?: return
+            val wanted = wifiPolicy.active(android.os.SystemClock.elapsedRealtime(), activeClaims() > 0L)
+            try {
+                if (wanted && !lock.isHeld) lock.acquire()
+                else if (!wanted && lock.isHeld) lock.release()
+            } catch (e: Exception) { Log.w(LOG, "Cannot update adaptive Wi-Fi lock", e) }
+        }
     }
 
     private fun checkThermalsAndBattery(): String? {
@@ -529,8 +555,14 @@ class RpcGuestService : Service() {
         connection.setRequestProperty("Authorization", "Bearer $token")
         connection.setRequestProperty("X-Nodex-Node", node)
         try {
+            val start = android.os.SystemClock.elapsedRealtime()
             connection.outputStream.use { it.write(device.toString().toByteArray(Charsets.UTF_8)) }
             check(connection.responseCode == 200) { "Host heartbeat HTTP ${connection.responseCode}" }
+            val elapsed = android.os.SystemClock.elapsedRealtime()
+            if (adaptiveWifi) synchronized(wifiGuard) {
+                wifiPolicy.observe(elapsed,connection.getHeaderField("X-Nodex-RPC-RTT")?.toDoubleOrNull(),
+                    connection.getHeaderField("X-Nodex-RPC-Jitter")?.toDoubleOrNull(),(elapsed-start).toDouble())
+            }
             connection.inputStream.close()
         } finally { connection.disconnect() }
     }
@@ -780,7 +812,10 @@ class RpcGuestService : Service() {
             sockets.forEach { try { it.close() } catch (_: Exception) {} }
             sockets.clear()
         }
-        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (_: Exception) {}
+        synchronized(wifiGuard) {
+            try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (_: Exception) {}
+            wifiLock = null
+        }
         try { if (cpuLock?.isHeld == true) cpuLock?.release() } catch (_: Exception) {}
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
         stopSelf()

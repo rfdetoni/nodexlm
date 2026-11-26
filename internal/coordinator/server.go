@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -738,7 +739,17 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	profile.Runtime.RPCReady = false
 	n.device = profile
 	start, drain := s.rpcMicrobench, s.rpcDrain
+	var measurement rpcmesh.Measurement
+	history := s.measurements[id]
+	if len(history) != 0 {
+		measurement = history[len(history)-1]
+	}
 	s.mu.Unlock()
+	if measurement.Samples > 0 && time.Since(measurement.MeasuredAt) < 5*time.Minute && measurement.RoundTripMS >= 0 && measurement.RTTSpreadMS >= 0 {
+		w.Header().Set("X-Nodex-RPC-RTT", fmt.Sprintf("%.2f", measurement.RoundTripMS))
+		w.Header().Set("X-Nodex-RPC-Jitter", fmt.Sprintf("%.2f", measurement.RTTSpreadMS))
+		w.Header().Set("X-Nodex-RPC-Measured", measurement.MeasuredAt.UTC().Format(time.RFC3339Nano))
+	}
 	if profile.Status == "draining" && drain != nil {
 		drain(id)
 	} else if start != nil {

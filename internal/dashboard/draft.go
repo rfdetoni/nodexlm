@@ -37,6 +37,28 @@ func (m *Manager) hostBudget(s Settings, host protocol.Device) (uint64, error) {
 	ramHost.Runtime.RPCDevices = nil
 	ram := clusterplan.Budget(ramHost)
 	required := uint64(s.PromptCacheMiB) * clusterplan.MiB
+	if s.VisionProjector != "" {
+		projector, err := modelPath(m.modelDir, s.VisionProjector)
+		if err != nil {
+			return 0, err
+		}
+		model, err := modelPath(m.modelDir, s.Model)
+		if err != nil {
+			return 0, err
+		}
+		if err = local.ValidateVisionProjector(projector, model); err != nil {
+			return 0, err
+		}
+		size, err := local.ModelSize(projector)
+		if err != nil {
+			return 0, err
+		}
+		// Provisional allowance for CPU projector weights and image processing.
+		if uint64(size) > (^uint64(0)-required-512*clusterplan.MiB)/2 {
+			return 0, errors.New("vision projector allocation exceeds planner range")
+		}
+		required += 2*uint64(size) + 512*clusterplan.MiB
+	}
 	path, err := m.resolveDraftModel(s)
 	if err != nil {
 		return 0, err
@@ -67,7 +89,7 @@ func (m *Manager) hostBudget(s Settings, host protocol.Device) (uint64, error) {
 		required += weights + *transient
 	}
 	if required > ram || required > total {
-		return 0, errors.New("insufficient Host RAM for draft model and prompt cache")
+		return 0, errors.New("insufficient Host RAM for auxiliary weights and prompt cache")
 	}
 	// validatePlacementMemory charges the prompt cache itself; subtract only
 	// the draft here to prevent double charging while enforcing Host RAM.

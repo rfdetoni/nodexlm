@@ -63,7 +63,7 @@ func New(manager *Manager, cluster *coordinator.Server, adminToken string) *Dash
 }
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
-	openAI := &compat.Handler{Forward: d.Manager.openAI, Decision: d.decide, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout}
+	openAI := &compat.Handler{Forward: d.Manager.openAI, Decision: d.decide, Target: d.chat, Models: d.Manager.LoadedModels, Observe: d.Manager.recordInference, Timeout: d.Manager.inferenceTimeout, Vision: d.Manager.HasVision}
 	inferenceAPI := d.inference(openAI.ServeHTTP)
 	mux.HandleFunc("GET /metrics", d.api(func(w http.ResponseWriter, r *http.Request) { d.Cluster.WriteMetrics(w); d.Manager.WriteMetrics(w) }))
 	mux.HandleFunc("POST /api/bench/rpc-device/{id}", d.api(func(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +171,7 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		b, err := static.ReadFile("static/index.html")
 		if err != nil {
 			http.Error(w, "UI unavailable", 500)
@@ -191,6 +191,7 @@ func (d *Dashboard) Handler() http.Handler {
 		b, _ := static.ReadFile("static/styles.css")
 		_, _ = w.Write(b)
 	})
+	mux.HandleFunc("POST /api/pairing/qr", d.api(d.pairingQR))
 	mux.HandleFunc("GET /api/plan", d.api(func(w http.ResponseWriter, r *http.Request) {
 		plan, err := d.Manager.Plan()
 		if err != nil {
@@ -236,6 +237,7 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("GET /api/models/folder", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]string{"path": d.Manager.ModelFolder()})
 	}))
+	mux.HandleFunc("POST /api/models/import-directory", d.api(d.importDirectory))
 	mux.HandleFunc("POST /api/models/folder/open", d.api(func(w http.ResponseWriter, r *http.Request) {
 		if err := d.Manager.OpenModelFolder(); err != nil {
 			failure(w, 500, err)
@@ -294,6 +296,10 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("POST /api/unload", d.api(func(w http.ResponseWriter, r *http.Request) { d.Manager.Unload(); reply(w, 200, d.Manager.State()) }))
 
 	mux.HandleFunc("POST /api/chat", d.api(d.chat))
+	mux.HandleFunc("POST /api/documents/text", d.api(d.documentText))
+	mux.HandleFunc("POST /api/chat/fallback", d.api(d.fallback))
+	mux.HandleFunc("POST /api/images/generations", d.api(d.generateImage))
+	mux.HandleFunc("POST /v1/images/generations", d.inference(d.generateImage))
 
 	return requestlog.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dashboard access is exclusively via loopback; use an SSH tunnel for remote management.
@@ -329,7 +335,16 @@ func (d *Dashboard) Handler() http.Handler {
 			inferenceAPI(w, r)
 			return
 		}
+		if r.URL.Path == "/api/documents/text" {
+			r.Body = http.MaxBytesReader(w, r.Body, (16<<20)+1)
+			mux.ServeHTTP(w, r)
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if r.URL.Path == "/v1/images/generations" {
+			mux.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/v1/") && r.URL.Path != "/v1/models" && r.URL.Path != "/v1/chat/completions" {
 			d.Cluster.Handler().ServeHTTP(w, r)
 			return

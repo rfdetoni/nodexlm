@@ -9,7 +9,7 @@ import (
 func invalid(param, message string) error {
 	return &APIError{Status: 400, Message: message, Param: param, Code: "invalid_parameter"}
 }
-func normalize(in map[string]json.RawMessage, path string) error {
+func normalize(in map[string]json.RawMessage, path string, vision ...bool) error {
 	if extra := in["extra_params"]; len(extra) > 0 && string(extra) != "null" {
 		var params map[string]json.RawMessage
 		if json.Unmarshal(extra, &params) != nil {
@@ -75,6 +75,7 @@ func normalize(in map[string]json.RawMessage, path string) error {
 		if json.Unmarshal(in["messages"], &messages) != nil || len(messages) == 0 {
 			return invalid("messages", "messages must be a nonempty array")
 		}
+		imageCount := 0
 		for _, m := range messages {
 			role, e := stringField(m, "role")
 			if e != nil {
@@ -85,7 +86,15 @@ func normalize(in map[string]json.RawMessage, path string) error {
 			default:
 				return invalid("messages", "Invalid message role")
 			}
-			if e := textContent(m["content"]); e != nil {
+			if len(vision) > 0 && vision[0] && role == "user" {
+				content, e := visionContent(m["content"], &imageCount)
+				if e != nil {
+					return e
+				}
+				if content != nil {
+					m["content"] = content
+				}
+			} else if e := textContent(m["content"]); e != nil {
 				return e
 			}
 			if role == "tool" {
@@ -94,6 +103,10 @@ func normalize(in map[string]json.RawMessage, path string) error {
 					return invalid("messages.tool_call_id", "Tool messages require tool_call_id")
 				}
 			}
+		}
+		if imageCount > 0 {
+			// Forward the same canonical message objects that were validated.
+			in["messages"], _ = json.Marshal(messages)
 		}
 		if err := normalizeLegacy(in, messages); err != nil {
 			return err

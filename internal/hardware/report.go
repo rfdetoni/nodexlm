@@ -186,6 +186,11 @@ func Collect(name string, models []string) protocol.Device {
 	switch runtime.GOOS {
 	case "linux":
 		d.RAMBytes, d.AvailableRAMBytes = memoryLinux()
+	case "android":
+		d.RAMBytes, d.AvailableRAMBytes = memoryLinux()
+		if total, available, reserve, ok := androidMemory(); ok {
+			d.RAMBytes, d.AvailableRAMBytes, d.MemoryReserveBytes = total, available, reserve
+		}
 	case "darwin":
 		d.RAMBytes, d.AvailableRAMBytes = memoryDarwin()
 	case "windows":

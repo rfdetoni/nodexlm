@@ -47,6 +47,7 @@ type Managed struct {
 	MoECacheCPUShare                             float64
 	FlashAttention, KVCacheType, SpeculativeMode string
 	DraftModelPath                               string
+	VisionProjectorPath                          string
 	BatchSize, UBatchSize                        int
 	SpeculativeTokens, CacheReuseTokens          int
 	Idle                                         time.Duration

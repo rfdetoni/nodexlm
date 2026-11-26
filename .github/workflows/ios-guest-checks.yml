@@ -1,0 +1,38 @@
+name: iOS Metal Guest build
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'ios/**'
+      - 'cmd/nodexlm-ios-guest/**'
+      - 'scripts/build-ios-guest.sh'
+      - 'internal/rpcmesh/**'
+      - 'internal/pairing/**'
+      - 'internal/netclient/**'
+      - 'internal/protocol/**'
+      - 'internal/llamaruntime/revision.json'
+      - 'internal/llamaruntime/patches/**'
+      - 'android/app/src/main/cpp/android-rpc-shutdown.patch'
+      - 'go.mod'
+      - '.github/workflows/ios-guest-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-guest-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: command -v xcodegen || brew install xcodegen
+      - run: bash scripts/build-ios-guest.sh

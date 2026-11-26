@@ -2,6 +2,9 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+val hostEnabled = providers.gradleProperty("nodexHost").map { it == "true" }.orElse(false).get()
+val hostOutput = layout.buildDirectory.dir("generated/androidHost/jniLibs")
+val liteRTEnabled = providers.gradleProperty("nodexLiteRT").map { it == "true" }.orElse(false).get()
 val rustRpcEnabled = providers.gradleProperty("nodexRustRpc").map { it == "true" }.orElse(false).get()
 val kleidiAiEnabled = providers.gradleProperty("nodexKleidiAi").map { it == "true" }.orElse(true).get()
 val rustRpcOutput = layout.buildDirectory.dir("generated/rustRpc/jniLibs")
@@ -24,6 +27,8 @@ android {
     ndkVersion = "27.2.12479018"
     defaultConfig {
         buildConfigField("boolean", "RUST_RPC_ENABLED", rustRpcEnabled.toString())
+        buildConfigField("boolean", "LITERT_ENABLED", liteRTEnabled.toString())
+        buildConfigField("boolean", "HOST_ENABLED", hostEnabled.toString())
         buildConfigField("String", "LLAMA_VERSION", "\"${llamaRevision["version"]}\"")
         buildConfigField("String", "PERMANENT_SIGNING_CERT_SHA256", "\"$signingCertSha256\"")
         applicationId = "dev.nodexlm.app"
@@ -33,7 +38,7 @@ android {
         versionName = providers.gradleProperty("nodexVersionName").orNull ?: "0.1.0-alpha"
         // Both common smartphone ABIs: 32-bit Android 10 and 64-bit Android 10+.
         // Android loads only its matching library from the universal APK.
-        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
+        ndk { abiFilters += if (liteRTEnabled || hostEnabled) listOf("arm64-v8a") else listOf("armeabi-v7a", "arm64-v8a") }
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON", "-DNODEXLM_KLEIDIAI=${if (kleidiAiEnabled) "ON" else "OFF"}"); cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden") } }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
@@ -57,11 +62,16 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
-    packaging { jniLibs { useLegacyPackaging = false } }
+    packaging { jniLibs { useLegacyPackaging = hostEnabled } }
+    if (hostEnabled) sourceSets.getByName("main").jniLibs.srcDir(hostOutput)
     if (rustRpcEnabled) sourceSets.getByName("main").jniLibs.srcDir(rustRpcOutput)
+    sourceSets.getByName("main").java.srcDir(if (liteRTEnabled) "src/litert/java" else "src/standard/java")
 }
 
 dependencies {
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.5.4")
+    if (liteRTEnabled) implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
     // ONNX inference executes inside ComputeService; no external Ollaya server.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
     // Match Android JNI tokenizer and Java API versions. Both ABIs are packaged
@@ -97,5 +107,19 @@ if (rustRpcEnabled) {
     tasks.configureEach {
         if (name.startsWith("merge") && name.endsWith("NativeLibs")) dependsOn(buildRustRpc)
         if (name.startsWith("merge") && name.endsWith("JniLibFolders")) dependsOn(buildRustRpc)
+    }
+}
+
+if (hostEnabled) {
+    val prepareHost by tasks.registering(Exec::class) {
+        inputs.files(file("../../go.mod"), file("../../go.sum"), file("../../internal/llamaruntime/revision.json"), file("../../scripts/build-android-host.sh"))
+        inputs.dir(file("../../cmd"))
+        inputs.dir(file("../../internal"))
+        outputs.dir(hostOutput)
+        commandLine("bash", file("../../scripts/build-android-host.sh").absolutePath, hostOutput.get().asFile.absolutePath)
+    }
+    tasks.named("preBuild") { dependsOn(prepareHost) }
+    tasks.configureEach {
+        if (name.startsWith("merge") && (name.endsWith("NativeLibs") || name.endsWith("JniLibFolders"))) dependsOn(prepareHost)
     }
 }

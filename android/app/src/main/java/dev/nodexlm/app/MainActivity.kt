@@ -90,6 +90,7 @@ class MainActivity : Activity() {
     private val pickModel = 900
     private val pickCertificate = 901
     private val pickDecision = 902
+    private val pickModelDirectory = 903
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -139,12 +140,38 @@ class MainActivity : Activity() {
                 }
                 startActivityForResult(intent,pickModel)
             },
+            importDirectoryPicker={ startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), pickModelDirectory) },
             onSelected={ file -> setStatus(getString(R.string.model_selected,file.name)) }
         )
         showTab(0)
+        acceptPairingLink(intent)
         RuntimeLogs.append(this, RuntimeRole.APP, RuntimeLevel.INFO, RuntimeEvent.APP_OPEN)
         updateManager.onStateChanged = { if (tab == 4) refreshUpdatesStatus() }
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        acceptPairingLink(intent)
+    }
+
+    private fun acceptPairingLink(incoming: Intent?) {
+        if (incoming?.action != Intent.ACTION_VIEW) return
+        val link = incoming.data ?: return
+        if (link.scheme != "nodexlm" || link.host != "pair") return
+        val parsed = runCatching { parsePairingLink(link.toString()) }.getOrNull()
+        // Strip the ephemeral code from the Activity's retained intent.
+        incoming.data = null
+        if (parsed == null) {
+            setStatus(getString(R.string.pair_qr_invalid))
+            return
+        }
+        coordinatorDraft = parsed.first
+        pairingCodeDraft = parsed.second
+        showTab(1)
+        // Existing Join button is the explicit confirmation; PairingClient
+        // still validates the temporary proof, enrolled certificate and TLS.
+        setStatus(getString(R.string.pair_qr_confirm))
     }
 
     private fun showTab(index: Int) {
@@ -211,7 +238,16 @@ class MainActivity : Activity() {
         overview.addView(label(getString(R.string.ui_6fc9111417fd),14,false))
         overview.addView(label(getString(R.string.model_optional,selected?.name ?: getString(R.string.none)),12,false))
         overview.addView(label(getString(R.string.system,Build.VERSION.RELEASE,Build.SUPPORTED_ABIS.firstOrNull() ?: "?"),12,false))
-        overview.addView(label(getString(R.string.memory_budget,"%.2f".format(java.util.Locale.US,HuggingFaceHub(this).localBudgetBytes().toDouble()/(1L shl 30))),12,false))
+        val modelBudget = HuggingFaceHub(this).localBudgetBytes()
+        overview.addView(label(getString(R.string.memory_budget,"%.2f".format(java.util.Locale.US,modelBudget.toDouble()/(1L shl 30))),12,false))
+        val chipset = if (Build.VERSION.SDK_INT >= 31) {
+            listOf(Build.SOC_MANUFACTURER, Build.SOC_MODEL).filter { it.isNotBlank() && it != "unknown" }.joinToString(" ")
+        } else Build.HARDWARE
+        overview.addView(label(getString(R.string.mobile_chipset, chipset.ifBlank { "?" }),12,false))
+        val advice = if (!android.os.Process.is64Bit()) R.string.mobile_advice_32
+            else if (modelBudget < 2L * 1024 * 1024 * 1024) R.string.mobile_advice_low
+            else R.string.mobile_advice_bench
+        overview.addView(label(getString(advice),12,false))
         overview.addView(action(getString(R.string.ui_87125eeb01cb)) {showTab(3)})
         overview.addView(label(
             if (prefs.getString("node_id", "").isNullOrBlank())
@@ -219,6 +255,41 @@ class MainActivity : Activity() {
             else getString(R.string.node_paired),
             12, false
         ))
+        overview.addView(action(getString(R.string.local_document_chat)) {
+            startActivity(Intent(this,LocalChatActivity::class.java))
+        })
+        if (BuildConfig.HOST_ENABLED && android.os.Process.is64Bit()) {
+            overview.addView(label(getString(R.string.android_host_title),18,true))
+            overview.addView(label(getString(R.string.android_host_help),12,false))
+            overview.addView(action(getString(R.string.android_host_start)) {
+                startForegroundService(Intent(this,HostService::class.java).setAction(HostService.START))
+            })
+            overview.addView(action(getString(R.string.android_host_stop)) {
+                startService(Intent(this,HostService::class.java).setAction(HostService.STOP))
+            })
+            overview.addView(action(getString(R.string.android_host_open)) {
+                runCatching { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("http://127.0.0.1:8787"))) }
+                    .onFailure { setStatus(getString(R.string.start_failed,it.message)) }
+            })
+            overview.addView(action(getString(R.string.android_host_token)) {
+                val key = runCatching { org.json.JSONObject(File(filesDir,"host/secrets.json").readText()).getString("admin") }.getOrNull()
+                if (key.isNullOrBlank()) setStatus(getString(R.string.android_host_unavailable))
+                else {
+                    val clip = ClipData.newPlainText("NodexLM Host",key)
+                    if (Build.VERSION.SDK_INT >= 33) clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE",true) }
+                    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                    setStatus(getString(R.string.android_host_token_copied))
+                }
+            })
+            overview.addView(label(HostService.status(this),12,false))
+        }
+        if (BuildConfig.LITERT_ENABLED && android.os.Process.is64Bit()) {
+            overview.addView(action(getString(R.string.litert_title)) {
+                startService(Intent(this,ComputeService::class.java).setAction(ComputeService.STOP))
+                startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
+                startActivity(Intent(this,LiteRTActivity::class.java))
+            })
+        }
         overview.addView(action(getString(R.string.tab_connection)) { showTab(1) })
         overview.addView(action(getString(R.string.tab_processing)) { showTab(2) })
         content.addView(overview)
@@ -234,6 +305,11 @@ class MainActivity : Activity() {
         deviceName=field(pairing,getString(R.string.device_name),
             deviceNameDraft ?: (prefs.getString("name",Build.MODEL) ?: Build.MODEL))
         pairing.addView(action(getString(R.string.ui_c06cce69d22b)) {joinCluster()})
+        pairing.addView(action(getString(R.string.scan_pairing_qr)) {
+            com.google.zxing.integration.android.IntentIntegrator(this)
+                .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+                .setBeepEnabled(false).setOrientationLocked(false).initiateScan()
+        })
         pairing.addView(action(getString(R.string.ui_5701de13e132)) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type="*/*";addCategory(Intent.CATEGORY_OPENABLE)
@@ -263,7 +339,9 @@ class MainActivity : Activity() {
         worker.addView(action(getString(R.string.ui_2940dc16b87e)) {startRpcGuest()})
         val gpuStatus = label(getString(R.string.ui_54c9d56ac072),12,false)
         worker.addView(gpuStatus)
-        thread(name="nodexlm-vulkan-probe") {
+        worker.addView(action(getString(R.string.probe_gpu)) {
+            gpuStatus.text = getString(R.string.ui_54c9d56ac072)
+            thread(name="nodexlm-vulkan-probe") {
             val report = try {
                 NativeRpc.initBackends(applicationInfo.nativeLibraryDir)
                 val devices = org.json.JSONObject(NativeRpc.inspect()).optJSONArray("gpus")
@@ -276,8 +354,9 @@ class MainActivity : Activity() {
                     }
                 }
             } catch(e: Throwable) { getString(R.string.gpu_probe_failed) }
-            runOnUiThread {gpuStatus.text = report}
-        }
+                runOnUiThread {gpuStatus.text = report}
+            }
+        })
         worker.addView(action(getString(R.string.ui_586f2f6fc723)) {
             startService(Intent(this,RpcGuestService::class.java).setAction(RpcGuestService.STOP))
             setStatus(getString(R.string.ui_f54a84193c11))
@@ -696,6 +775,10 @@ class MainActivity : Activity() {
             text = getString(R.string.rpc_weight_cache)
             isChecked = prefs.getBoolean("rpc_weight_cache", false)
         }
+        val adaptiveWifi = CheckBox(this).apply {
+            text = getString(R.string.rpc_adaptive_wifi)
+            isChecked = prefs.getBoolean("rpc_adaptive_wifi", false)
+        }
         val dedicatedGuest = CheckBox(this).apply {
             text = getString(R.string.rpc_dedicated_guest)
             isChecked = prefs.getBoolean("rpc_dedicated_guest", false)
@@ -707,6 +790,7 @@ class MainActivity : Activity() {
         settings.addView(rpcCompression)
         settings.addView(cpuAffinity)
         settings.addView(weightCache)
+        settings.addView(adaptiveWifi)
         settings.addView(dedicatedGuest)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
@@ -732,6 +816,7 @@ class MainActivity : Activity() {
                     .putBoolean("rpc_compression", rpcCompression.isChecked)
                     .putBoolean("rpc_cpu_affinity", cpuAffinity.isChecked)
                     .putBoolean("rpc_weight_cache", weightCache.isChecked)
+                    .putBoolean("rpc_adaptive_wifi", adaptiveWifi.isChecked)
                     .putBoolean("rpc_dedicated_guest", dedicatedGuest.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
@@ -851,11 +936,26 @@ class MainActivity : Activity() {
     @Deprecated("Android file picker callback")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        val scan = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(requestCode,resultCode,data)
+        if (scan != null) {
+            val content = scan.contents
+            if (content != null && content.length <= 2048) {
+                val parsed = runCatching { parsePairingLink(content) }.getOrNull()
+                if (parsed != null) {
+                    coordinatorDraft = parsed.first
+                    pairingCodeDraft = parsed.second
+                    showTab(1)
+                    setStatus(getString(R.string.pair_qr_confirm))
+                } else setStatus(getString(R.string.pair_qr_invalid))
+            }
+            return
+        }
         if(resultCode!=RESULT_OK)return
         val uris=data?.clipData?.let {clip -> (0 until clip.itemCount).map {clip.getItemAt(it).uri}} ?: listOfNotNull(data?.data)
         val uri=uris.firstOrNull()?:return
         when(requestCode) {
             pickModel -> {showTab(3);library.importFromUris(uris)}
+            pickModelDirectory -> {showTab(3);library.importDirectory(uri)}
             pickDecision -> {
                 val alias = prefs.getString("decision_model", DecisionModelStore.DEFAULT_ALIAS)
                     .orEmpty().ifBlank { DecisionModelStore.DEFAULT_ALIAS }
