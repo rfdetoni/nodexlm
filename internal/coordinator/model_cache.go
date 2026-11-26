@@ -53,7 +53,7 @@ func (s *Server) nodeModelCache(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "model cache unavailable")
 		return
 	}
-	w.Header().Set("ETag", "\"" + digest + "\"")
+	w.Header().Set("ETag", "\""+digest+"\"")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, stat.Name(), time.Time{}, file)

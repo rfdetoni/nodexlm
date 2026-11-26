@@ -21,18 +21,26 @@ func TestAuthenticatedModelCacheRejectsUnauthenticatedAndStaleContent(t *testing
 	digest := sha256.Sum256(body)
 	sha := hex.EncodeToString(digest[:])
 	file := filepath.Join(root, "weights.gguf")
-	if err := os.WriteFile(file, body, 0600); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(file, body, 0600); err != nil {
+		t.Fatal(err)
+	}
 	stage := filepath.Join(root, ".metadata")
 	metadata := fmt.Sprintf("{\"sha256\":%q,\"total\":%d}", sha, len(body))
-	if err := os.WriteFile(stage+".json", []byte(metadata), 0600); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(stage+".json", []byte(metadata), 0600); err != nil {
+		t.Fatal(err)
+	}
 	safedownload.RememberPublished(safedownload.WithContentCache(t.Context(), root), stage, file)
 
 	server, err := New(strings.Repeat("a", 32), strings.Repeat("b", 32))
-	if err != nil { t.Fatal(err) }
-	if err := server.SetContentCacheDirectory(root); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.SetContentCacheDirectory(root); err != nil {
+		t.Fatal(err)
+	}
 	token := "trusted-node-token"
 	server.nodes["node-1"] = &nodeState{credential: sha256.Sum256([]byte(token))}
-	path := "/v1/nodes/cache/"+sha
+	path := "/v1/nodes/cache/" + sha
 	request := func(authorized bool) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		if authorized {
@@ -43,11 +51,17 @@ func TestAuthenticatedModelCacheRejectsUnauthenticatedAndStaleContent(t *testing
 		server.LANHandler().ServeHTTP(recorder, req)
 		return recorder
 	}
-	if got := request(false).Code; got != http.StatusUnauthorized { t.Fatalf("unauthorized cache: %d", got) }
+	if got := request(false).Code; got != http.StatusUnauthorized {
+		t.Fatalf("unauthorized cache: %d", got)
+	}
 	ok := request(true)
-	if ok.Code != 200 || ok.Body.String() != string(body) || ok.Header().Get("ETag") != fmt.Sprintf("%q",sha) {
+	if ok.Code != 200 || ok.Body.String() != string(body) || ok.Header().Get("ETag") != fmt.Sprintf("%q", sha) {
 		t.Fatalf("authenticated cache invalid: status=%d body=%q", ok.Code, ok.Body.String())
 	}
-	if err := os.WriteFile(file, []byte("GGUF tampered content"), 0600); err != nil { t.Fatal(err) }
-	if got := request(true).Code; got != http.StatusNotFound { t.Fatalf("stale model accepted: %d", got) }
+	if err := os.WriteFile(file, []byte("GGUF tampered content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := request(true).Code; got != http.StatusNotFound {
+		t.Fatalf("stale model accepted: %d", got)
+	}
 }

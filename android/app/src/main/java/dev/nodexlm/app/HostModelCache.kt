@@ -35,15 +35,18 @@ internal object HostModelCache {
         val prefs = context.getSharedPreferences("nodexlm", Context.MODE_PRIVATE)
         val url = prefs.getString("coordinator", "").orEmpty().trimEnd('/') +
             "/v1/nodes/cache/" + checksum
-        val connection = URL(url).openConnection() as HttpsURLConnection
-        connection.requestMethod = "GET"
-        connection.instanceFollowRedirects = false
-        connection.connectTimeout = 7_000
-        connection.readTimeout = 20_000
-        PinnedHostTls.configure(connection, context)
-        connection.setRequestProperty("Authorization", "Bearer " + NodeSecrets.read(context))
-        connection.setRequestProperty("X-Nodex-Node", prefs.getString("node_id", "").orEmpty())
-        connection.setRequestProperty("Accept-Encoding", "identity")
+        val connection = try {
+            (URL(url).openConnection() as HttpsURLConnection).also { conn ->
+                conn.requestMethod = "GET"
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = 7_000
+                conn.readTimeout = 20_000
+                PinnedHostTls.configure(conn, context)
+                conn.setRequestProperty("Authorization", "Bearer " + NodeSecrets.read(context))
+                conn.setRequestProperty("X-Nodex-Node", prefs.getString("node_id", "").orEmpty())
+                conn.setRequestProperty("Accept-Encoding", "identity")
+            }
+        } catch (_: Exception) { return false }
         try {
             if (connection.responseCode != 200 || connection.contentLengthLong != size ||
                 connection.getHeaderField("ETag")?.trim('"') != checksum

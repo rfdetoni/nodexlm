@@ -50,7 +50,9 @@ func OpenVerifiedContent(directory, digest string) (*os.File, error) {
 	}
 	closeOnError := true
 	defer func() {
-		if closeOnError { _ = file.Close() }
+		if closeOnError {
+			_ = file.Close()
+		}
 	}()
 	opened, err := file.Stat()
 	if err != nil || !os.SameFile(before, opened) {
