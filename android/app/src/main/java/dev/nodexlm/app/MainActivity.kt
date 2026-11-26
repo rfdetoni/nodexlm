@@ -142,9 +142,34 @@ class MainActivity : Activity() {
             onSelected={ file -> setStatus(getString(R.string.model_selected,file.name)) }
         )
         showTab(0)
+        acceptPairingLink(intent)
         RuntimeLogs.append(this, RuntimeRole.APP, RuntimeLevel.INFO, RuntimeEvent.APP_OPEN)
         updateManager.onStateChanged = { if (tab == 4) refreshUpdatesStatus() }
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        acceptPairingLink(intent)
+    }
+
+    private fun acceptPairingLink(incoming: Intent?) {
+        if (incoming?.action != Intent.ACTION_VIEW) return
+        val link = incoming.data ?: return
+        if (link.scheme != "nodexlm" || link.host != "pair") return
+        val parsed = runCatching { parsePairingLink(link.toString()) }.getOrNull()
+        // Strip the ephemeral code from the Activity's retained intent.
+        incoming.data = null
+        if (parsed == null) {
+            setStatus(getString(R.string.pair_qr_invalid))
+            return
+        }
+        coordinatorDraft = parsed.first
+        pairingCodeDraft = parsed.second
+        showTab(1)
+        // Existing Join button is the explicit confirmation; PairingClient
+        // still validates the temporary proof, enrolled certificate and TLS.
+        setStatus(getString(R.string.pair_qr_confirm))
     }
 
     private fun showTab(index: Int) {

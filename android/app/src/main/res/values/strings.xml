@@ -257,4 +257,6 @@
     <string name="rpc_compression">Experimental RPC compression (restart Guest)</string>
     <string name="rpc_cpu_affinity">Prefer performance cores for native CPU-only RPC (experimental; restart Guest)</string>
     <string name="rpc_weight_cache">Experimental persistent weight cache (512 MiB; restart Guest)</string>
+    <string name="pair_qr_invalid">Invalid pairing link</string>
+    <string name="pair_qr_confirm">Review the host address and select Join to confirm pairing.</string>
 </resources>

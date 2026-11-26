@@ -659,6 +659,7 @@ func newPairing(args []string) error {
 	server := f.String("server", "http://127.0.0.1:8787", "loopback management API")
 	ca := f.String("ca", "", "trusted certificate (optional)")
 	dir := f.String("dir", config.DefaultDir(), "local coordinator configuration directory")
+	qrHost := f.String("qr-host", "", "optional HTTPS LAN endpoint for terminal QR (requires qrencode)")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -693,6 +694,7 @@ func newPairing(args []string) error {
 		return err
 	}
 	fmt.Printf("NODEXLM PAIRING CODE: %s (valid %s)\n", result.Code, result.Expires)
+	if *qrHost != "" { return printPairingQR(c,*qrHost,result.Code) }
 	return nil
 }
 
