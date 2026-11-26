@@ -871,19 +871,43 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 	}
 	const limit int64 = 150 << 30
 	var received int64
+	files := make([]safedownload.BatchFile, 0, len(shards))
 	for _, shard := range shards {
 		partURL := *sourceURL
 		if len(shards) > 1 {
 			partURL.Path = urlpath.Join(urlpath.Dir(sourceURL.Path), shard)
 			partURL.RawPath = ""
 		}
-		out := filepath.Join(stage, shard)
-		n, err := m.fetchModelPart(ctx, partURL.String(), out, received, limit)
+		files = append(files, safedownload.BatchFile{Source: partURL.String(), Target: filepath.Join(stage, shard)})
+	}
+	batch, handled, err := safedownload.PlanHuggingFaceBatch(ctx, m.httpClient, files)
+	if err != nil {
+		errorText = err.Error()
+		return
+	}
+	if handled {
+		err = safedownload.FetchBatch(ctx, m.httpClient, batch, limit, func(n, total int64) {
+			m.mu.Lock()
+			m.download.Received = n
+			m.download.Total = total
+			m.mu.Unlock()
+		})
 		if err != nil {
-			errorText = fmt.Sprintf("GGUF shard %s: %v", shard, err)
+			errorText = err.Error()
 			return
 		}
-		received += n
+		for _, part := range batch {
+			received += part.Size
+		}
+	} else {
+		for _, part := range files {
+			n, err := m.fetchModelPart(ctx, part.Source, part.Target, received, limit)
+			if err != nil {
+				errorText = fmt.Sprintf("GGUF shard %s: %v", filepath.Base(part.Target), err)
+				return
+			}
+			received += n
+		}
 	}
 	// The first shard holds the architecture metadata; the other parts must
 	// be valid GGUF containers but may not repeat all of that metadata.
@@ -899,7 +923,8 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 			}
 		}
 	}()
-	for _, shard := range shards {
+	for i := len(shards) - 1; i >= 0; i-- {
+		shard := shards[i]
 		target := filepath.Join(m.modelDir, shard)
 		if len(shards) == 1 {
 			target = destination
