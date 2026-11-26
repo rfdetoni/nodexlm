@@ -259,4 +259,5 @@
     <string name="rpc_weight_cache">Experimental persistent weight cache (512 MiB; restart Guest)</string>
     <string name="pair_qr_invalid">Invalid pairing link</string>
     <string name="pair_qr_confirm">Review the host address and select Join to confirm pairing.</string>
+    <string name="rpc_adaptive_wifi">Experimental: release Wi-Fi performance lock after idle (may increase first-request latency)</string>
 </resources>

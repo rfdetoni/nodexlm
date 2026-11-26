@@ -721,6 +721,10 @@ class MainActivity : Activity() {
             text = getString(R.string.rpc_weight_cache)
             isChecked = prefs.getBoolean("rpc_weight_cache", false)
         }
+        val adaptiveWifi = CheckBox(this).apply {
+            text = getString(R.string.rpc_adaptive_wifi)
+            isChecked = prefs.getBoolean("rpc_adaptive_wifi", false)
+        }
         val dedicatedGuest = CheckBox(this).apply {
             text = getString(R.string.rpc_dedicated_guest)
             isChecked = prefs.getBoolean("rpc_dedicated_guest", false)
@@ -732,6 +736,7 @@ class MainActivity : Activity() {
         settings.addView(rpcCompression)
         settings.addView(cpuAffinity)
         settings.addView(weightCache)
+        settings.addView(adaptiveWifi)
         settings.addView(dedicatedGuest)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
@@ -757,6 +762,7 @@ class MainActivity : Activity() {
                     .putBoolean("rpc_compression", rpcCompression.isChecked)
                     .putBoolean("rpc_cpu_affinity", cpuAffinity.isChecked)
                     .putBoolean("rpc_weight_cache", weightCache.isChecked)
+                    .putBoolean("rpc_adaptive_wifi", adaptiveWifi.isChecked)
                     .putBoolean("rpc_dedicated_guest", dedicatedGuest.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }
