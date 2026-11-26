@@ -1,6 +1,12 @@
 name: Native RPC loader PR checks
 
 on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'internal/llamaruntime/patches/parallel-rpc-loader.patch'
+      - 'internal/llamaruntime/revision.json'
+      - '.github/workflows/rpc-native-pr-checks.yml'
   workflow_dispatch:
 
 permissions:
@@ -12,6 +18,7 @@ concurrency:
 
 jobs:
   native-rpc:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
@@ -46,4 +53,4 @@ jobs:
           cmake --build build --parallel 2 --target llama-server ggml-rpc-server
           test -x build/bin/llama-server
           if test -x build/bin/ggml-rpc-server; then test -x build/bin/ggml-rpc-server; else test -x build/bin/rpc-server; fi
-          strings build/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled' >/dev/null
+          strings build/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled (model-wide, max 8 workers)' >/dev/null

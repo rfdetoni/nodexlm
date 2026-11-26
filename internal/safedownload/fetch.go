@@ -143,15 +143,6 @@ func fetch(ctx context.Context, client *http.Client, source, target string, limi
 	if meta.Total > limit {
 		return 0, errors.New("model exceeds download limit")
 	}
-	if meta.Total >= 0 {
-		free, err := FreeBytes(filepath.Dir(target))
-		if err != nil {
-			return 0, err
-		}
-		if uint64(max(0, meta.Total-offset)) > free {
-			return 0, errors.New("insufficient free disk space for model")
-		}
-	}
 	if parallel && offset == 0 && resp.StatusCode == http.StatusOK && meta.Total >= minParallelSize && meta.SHA256 != "" && strongETag(meta.Validator) && downloadWorkers() > 1 {
 		resp.Body.Close()
 		file.Close()
@@ -160,6 +151,15 @@ func fetch(ctx context.Context, client *http.Client, source, target string, limi
 			return fetch(ctx, client, source, target, limit, progress, false)
 		}
 		return n, err
+	}
+	if meta.Total >= 0 {
+		free, err := FreeBytes(filepath.Dir(target))
+		if err != nil {
+			return 0, err
+		}
+		if uint64(max(0, meta.Total-offset)) > free {
+			return 0, errors.New("insufficient free disk space for model")
+		}
 	}
 	raw, err := json.Marshal(meta)
 	if err != nil {

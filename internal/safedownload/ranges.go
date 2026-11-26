@@ -25,9 +25,9 @@ const rangeBuffer = 128 << 10
 var errRangesUnsupported = errors.New("server does not support verified byte ranges")
 
 func downloadWorkers() int {
-	n := 4
+	n := 8
 	if runtime.GOOS == "android" {
-		n = 2
+		n = 4
 	}
 	if v, err := strconv.Atoi(os.Getenv("NODEXLM_DOWNLOAD_CONNECTIONS")); err == nil && v >= 1 {
 		n = min(v, 16)
@@ -37,6 +37,102 @@ func downloadWorkers() int {
 
 func strongETag(s string) bool {
 	return len(s) >= 2 && strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"") && !strings.HasPrefix(s, "W/")
+}
+
+// A small adaptive admission window shares retry cooldown across all workers.
+// It grows only after completed work and shrinks on server congestion or
+// persistent storage backpressure. No additional probing requests.
+type rangeWindow struct {
+	mu                            sync.Mutex
+	limit, max, active, completed int
+	until                         time.Time
+	changed                       chan struct{}
+}
+
+func newRangeWindow(maximum int) *rangeWindow {
+	initial := 4
+	if runtime.GOOS == "android" {
+		initial = 2
+	}
+	return &rangeWindow{limit: min(initial, maximum), max: maximum, changed: make(chan struct{})}
+}
+
+func (w *rangeWindow) acquire(ctx context.Context) error {
+	for {
+		w.mu.Lock()
+		delay := time.Until(w.until)
+		if delay <= 0 && w.active < w.limit {
+			w.active++
+			w.mu.Unlock()
+			return nil
+		}
+		changed := w.changed
+		w.mu.Unlock()
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-changed:
+				timer.Stop()
+			case <-timer.C:
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-changed:
+			}
+		}
+	}
+}
+
+type rangeThrottle struct {
+	status int
+	delay  time.Duration
+}
+
+func (e *rangeThrottle) Error() string { return fmt.Sprintf("download throttled (HTTP %d)", e.status) }
+
+func retryAfter(value string) time.Duration {
+	if n, err := strconv.Atoi(value); err == nil && n >= 0 {
+		return time.Duration(min(n, 300)) * time.Second
+	}
+	if date, err := http.ParseTime(value); err == nil {
+		return max(time.Second, min(5*time.Minute, time.Until(date)))
+	}
+	return 2 * time.Second
+}
+
+func (w *rangeWindow) release(err error, slowDisk bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.active--
+	var throttle *rangeThrottle
+	if errors.As(err, &throttle) {
+		w.limit = max(1, w.limit/2)
+		w.until = maxTime(w.until, time.Now().Add(throttle.delay))
+		w.completed = 0
+	} else if slowDisk {
+		w.limit = max(1, w.limit-1)
+		w.completed = 0
+	} else if err == nil {
+		w.completed++
+		if w.completed >= 8 && w.limit < w.max {
+			w.limit++
+			w.completed = 0
+		}
+	}
+	close(w.changed)
+	w.changed = make(chan struct{})
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 type rangeJournal struct {
@@ -56,6 +152,11 @@ func requestRange(ctx context.Context, client *http.Client, source string, meta 
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == 429 || resp.StatusCode == 503 {
+		delay := retryAfter(resp.Header.Get("Retry-After"))
+		resp.Body.Close()
+		return nil, &rangeThrottle{status: resp.StatusCode, delay: delay}
 	}
 	want := fmt.Sprintf("bytes %d-%d/%d", start, end-1, meta.Total)
 	if resp.StatusCode == 200 || resp.StatusCode == 416 {
@@ -185,7 +286,8 @@ func fetchRanges(ctx context.Context, client *http.Client, source, target string
 			cancel()
 		}
 	}
-	for range min(downloadWorkers(), count) {
+	window := newRangeWindow(min(downloadWorkers(), count))
+	for range window.max {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -205,7 +307,12 @@ func fetchRanges(ctx context.Context, client *http.Client, source, target string
 				end := min(start+rangeSize, meta.Total)
 				var err error
 				for attempt := 0; attempt < 4; attempt++ {
-					err = writeRange(workCtx, client, source, meta, file, buf, start, end)
+					if err = window.acquire(workCtx); err != nil {
+						break
+					}
+					var slowDisk bool
+					err = writeRange(workCtx, client, source, meta, file, buf, start, end, &slowDisk)
+					window.release(err, slowDisk)
 					if err == nil || errors.Is(err, errRangesUnsupported) || workCtx.Err() != nil {
 						break
 					}
@@ -277,17 +384,22 @@ func fetchRanges(ctx context.Context, client *http.Client, source, target string
 	return received, nil
 }
 
-func writeRange(ctx context.Context, client *http.Client, source string, meta partial, file *os.File, buf []byte, start, end int64) error {
+func writeRange(ctx context.Context, client *http.Client, source string, meta partial, file *os.File, buf []byte, start, end int64, slowDisk *bool) error {
 	resp, err := requestRange(ctx, client, source, meta, start, end)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	pos := start
+	var writeTime time.Duration
+	started := time.Now()
+	defer func() { *slowDisk = writeTime >= 250*time.Millisecond && writeTime > time.Since(started)/2 }()
 	for pos < end {
 		n, err := io.ReadFull(resp.Body, buf[:min(int64(len(buf)), end-pos)])
 		if n > 0 {
+			before := time.Now()
 			written, writeErr := file.WriteAt(buf[:n], pos)
+			writeTime += time.Since(before)
 			if writeErr != nil {
 				return writeErr
 			}

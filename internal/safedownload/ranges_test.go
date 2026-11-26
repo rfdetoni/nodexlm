@@ -49,3 +49,24 @@ func TestSegmentedDownloadOverlapsRequests(t *testing.T) {
 		t.Fatal("assembled data differ", err)
 	}
 }
+
+func TestRangeWindowCongestionAndRecovery(t *testing.T) {
+	w := newRangeWindow(8)
+	if err := w.acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w.release(&rangeThrottle{status: 429, delay: 0}, false)
+	if w.limit != 2 && w.limit != 1 {
+		t.Fatal("congestion must reduce concurrency", w.limit)
+	}
+	before := w.limit
+	for range 8 {
+		if err := w.acquire(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		w.release(nil, false)
+	}
+	if w.limit != before+1 {
+		t.Fatal("successful transfers should cautiously recover capacity", w.limit)
+	}
+}
