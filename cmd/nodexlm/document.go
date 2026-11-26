@@ -14,10 +14,17 @@ import (
 
 const maxChatDocument = 64 << 10
 
-// Only explicit local files are accepted. DOCX extraction is bounded; no external URLs or parsing subprocesses.
+// Only explicit local files are accepted. DOCX and optional PDF extraction are bounded.
 func documentPrompt(prompt, path string) (string, error) {
 	if path == "" {
 		return prompt, nil
+	}
+	if strings.EqualFold(filepath.Ext(path), ".pdf") {
+		text, err := readPDF(path)
+		if err != nil {
+			return "", err
+		}
+		return formatDocumentPrompt(prompt, text), nil
 	}
 	if strings.EqualFold(filepath.Ext(path), ".docx") {
 		text, err := readDOCX(path)
@@ -29,7 +36,7 @@ func documentPrompt(prompt, path string) (string, error) {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".txt", ".md", ".csv", ".json", ".log":
 	default:
-		return "", errors.New("document must be DOCX or UTF-8 text (.txt, .md, .csv, .json, .log)")
+		return "", errors.New("document must be PDF, DOCX or UTF-8 text (.txt, .md, .csv, .json, .log)")
 	}
 	info, err := os.Stat(path)
 	if err != nil {

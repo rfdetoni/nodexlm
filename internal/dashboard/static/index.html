@@ -82,7 +82,7 @@
     <div class="pairing-time"><span class="pairing-caption">Tempo restante</span><output id="pairCountdown" role="timer" aria-live="off">10:00</output></div>
   </div>
   <progress id="pairProgress" class="pairing-progress" max="600" value="600" aria-label="Tempo restante do código de pareamento"></progress>
-  <p id="pairStatus" class="muted pairing-status" role="status" aria-live="polite"></p>
+  <p id="pairStatus" class="muted pairing-status" role="status" aria-live="polite"></p><label>Endereço HTTPS do Host na rede local<input id="pairQRHost" placeholder="https://192.168.1.5:8443"></label><button id="pairQR" type="button" class="secondary">Exibir QR Code</button><img id="pairQRImage" alt="Código QR temporário de pareamento" width="240" height="240" hidden>
 </div><div class="sectionhead telemetry-heading"><div><h3>Recursos por dispositivo</h3><p class="muted">Amostras recebidas do Host e dos Guests. Atualização automática aproximada.</p></div><small id="resourceRefresh" class="muted" role="status" aria-live="polite">Aguardando medições…</small></div>
 <div id="nodeResourceCards" class="resource-cards" aria-label="Uso de recursos dos nós"><p class="muted">Conecte dispositivos para acompanhar o uso de CPU, RAM e GPU.</p></div>
 <div class="sectionhead telemetry-heading"><h3>Detalhes e gerenciamento dos Guests</h3></div>

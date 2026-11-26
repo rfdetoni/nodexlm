@@ -853,7 +853,7 @@ func chat(args []string) error {
 	ca := f.String("ca", "", "certificate")
 	model := f.String("model", "", "model")
 	prompt := f.String("prompt", "", "prompt")
-	document := f.String("document", "", "optional local UTF-8 text or DOCX (max 64 KiB extracted text)")
+	document := f.String("document", "", "optional local UTF-8 text, DOCX or PDF (max 64 KiB extracted text)")
 	target := f.String("node", "", "optional target node id")
 	fallbackURL := f.String("fallback-url", "", "explicit HTTPS provider base URL; sends prompt/document externally on local 404/503")
 	fallbackModel := f.String("fallback-model", "", "external provider model")

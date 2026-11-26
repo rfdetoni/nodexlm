@@ -171,7 +171,7 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		b, err := static.ReadFile("static/index.html")
 		if err != nil {
 			http.Error(w, "UI unavailable", 500)
@@ -191,6 +191,7 @@ func (d *Dashboard) Handler() http.Handler {
 		b, _ := static.ReadFile("static/styles.css")
 		_, _ = w.Write(b)
 	})
+	mux.HandleFunc("POST /api/pairing/qr", d.api(d.pairingQR))
 	mux.HandleFunc("GET /api/plan", d.api(func(w http.ResponseWriter, r *http.Request) {
 		plan, err := d.Manager.Plan()
 		if err != nil {

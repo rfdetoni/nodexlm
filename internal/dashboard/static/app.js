@@ -668,7 +668,9 @@ function pairingTTL(payload) {
 function pairingSecondsLeft(){
  return pairingSession ? Math.max(0,Math.ceil((pairingSession.expiresAt-pairingNow())/1000)) : 0;
 }
+function clearPairingQR(){const image=$('pairQRImage');image.hidden=true;image.src='';}
 function clearPairingSession(){
+ clearPairingQR();
  pairingSession=null;pairingAutoRenew=false;pairingRetryAt=0;
  $('pairAutoRenew').checked=false;
  $('pairingSession').hidden=true;
@@ -679,6 +681,7 @@ function clearPairingSession(){
 async function generatePairingCode(automatic=false){
  if(pairingRequestBusy || !token || $('app').hidden || (automatic && document.hidden))return;
  pairingRequestBusy=true;
+ clearPairingQR();
  $('pair').disabled=true;
  if(pairingSession) $('pairStatus').textContent=automatic?'Renovando código automaticamente…':'Gerando novo código…';
  const startingToken=token;
@@ -713,6 +716,7 @@ function renderPairingSession(){
  if(!pairingSession){area.hidden=true;return;}
  area.hidden=false;
  const seconds=pairingSecondsLeft(),remainingMs=Math.max(0,pairingSession.expiresAt-pairingNow());
+ if(seconds===0&&!$('pairQRImage').hidden)clearPairingQR();
  $('pairCode').textContent=seconds>0?pairingSession.code:'Código expirado';
  $('pairCountdown').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
  $('pairProgress').max=pairingSession.ttl;
@@ -731,6 +735,18 @@ function pairingTick(){
   return guard(()=>generatePairingCode(true));
  }
 }
+$('pairQR').addEventListener('click',()=>guard(async()=>{
+ if(!pairingSession||!pairingSecondsLeft())throw Error('Gere um código ativo antes do QR.');
+ const session=pairingSession, startingToken=token, button=$('pairQR');
+ button.disabled=true;
+ try{
+  const result=await api('/api/pairing/qr','POST',{host:$('pairQRHost').value.trim(),code:session.code});
+  if(token!==startingToken||pairingSession!==session||!pairingSecondsLeft())return;
+  if(!result.png||result.png.length>350000||!/^[A-Za-z0-9+/=]+$/.test(result.png))throw Error('QR inválido.');
+  $('pairQRImage').src='data:image/png;base64,'+result.png;$('pairQRImage').hidden=false;
+ }finally{button.disabled=false}
+}));
+$('pairQRHost').addEventListener('input',clearPairingQR);
 $('pair').addEventListener('click',()=>guard(()=>generatePairingCode(false)));
 $('pairAutoRenew').addEventListener('change',()=>{
  pairingAutoRenew=$('pairAutoRenew').checked;
