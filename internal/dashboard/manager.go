@@ -58,11 +58,16 @@ type Settings struct {
 	SpeculativeTokens int     `json:"speculative_tokens,omitempty"`
 	SpeculativeMode   string  `json:"speculative_mode,omitempty"`
 	DraftModel        string  `json:"draft_model,omitempty"`
+	VisionProjector   string  `json:"vision_projector,omitempty"`
 }
 
 // managedFromSettings keeps native options identical for loads and benchmarks.
 // RPC placement remains a caller-specific override.
 func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string) *local.Managed {
+	var projector string
+	if s.VisionProjector != "" {
+		projector = filepath.Join(filepath.Dir(modelPath), s.VisionProjector)
+	}
 	return &local.Managed{
 		Backend: s.Backend, Binary: binary, ModelPath: modelPath, Alias: alias,
 		Threads: s.Threads, ThreadsBatch: s.ThreadsBatch, ParallelSlots: s.ParallelSlots, ContextTokens: s.ContextTokens, GPULayers: s.GPULayers,
@@ -73,6 +78,7 @@ func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string)
 		BatchSize: s.BatchSize, UBatchSize: s.UBatchSize, CacheReuseTokens: s.CacheReuseTokens,
 		SpeculativeTokens: s.SpeculativeTokens,
 		SpeculativeMode:   s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
+		VisionProjectorPath: projector,
 	}
 }
 
@@ -238,6 +244,26 @@ func (m *Manager) DownloadState() *Download {
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
+	if s.VisionProjector != "" {
+		if s.Distributed || local.EffectiveBackend(s.Backend) != local.BackendLlama ||
+			s.SpeculativeMode == "draft" || s.SpeculativeMode == "ngram" || s.ParallelSlots > 1 {
+			return errors.New("vision requires local llama.cpp, one slot and no speculative decoding")
+		}
+		if s.Model == "" || s.VisionProjector == s.Model {
+			return errors.New("select a language model and a separate vision projector")
+		}
+		model, err := modelPath(m.modelDir, s.Model)
+		if err != nil {
+			return err
+		}
+		projector, err := modelPath(m.modelDir, s.VisionProjector)
+		if err != nil {
+			return err
+		}
+		if err := local.ValidateVisionProjector(projector, model); err != nil {
+			return err
+		}
+	}
 	if explicitPrimary(s.PrimaryNode) && s.PrimaryNode != "host" && !s.Distributed {
 		return errors.New("Guest principal exige distribuição RPC habilitada")
 	}
@@ -330,7 +356,7 @@ func (m *Manager) Update(s Settings) error {
 		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
 		old.BatchSize != s.BatchSize || old.UBatchSize != s.UBatchSize ||
 		old.CacheReuseTokens != s.CacheReuseTokens || old.SpeculativeTokens != s.SpeculativeTokens ||
-		old.SpeculativeMode != s.SpeculativeMode || old.DraftModel != s.DraftModel {
+		old.SpeculativeMode != s.SpeculativeMode || old.DraftModel != s.DraftModel || old.VisionProjector != s.VisionProjector {
 		m.samples = make(map[string]InferenceSample)
 	}
 	m.settings = s

@@ -117,6 +117,9 @@ func (m *Manager) benchmarkSeries(ctx context.Context, model, nodeID string, ext
 }
 
 func (m *Manager) measureInference(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest, frozen ...*benchmarkPlacement) (InferenceSample, error) {
+	if settings.VisionProjector != "" {
+		return InferenceSample{}, errors.New("text inference benchmarks require vision projector disabled")
+	}
 	settings.Model = model
 	path, err := modelPath(m.modelDir, model)
 	if err != nil {

@@ -54,7 +54,7 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 			if len(m.RPCServers) != 0 {
 				return backendLaunchSpec{}, errors.New("vision projector requires a local Host")
 			}
-			if err := validateVisionProjector(m.VisionProjectorPath, m.ModelPath); err != nil {
+			if err := ValidateVisionProjector(m.VisionProjectorPath, m.ModelPath); err != nil {
 				return backendLaunchSpec{}, err
 			}
 			// Keep projector weights on the Host CPU, avoiding unplanned GPU allocation.

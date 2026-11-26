@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-func validateVisionProjector(projector, model string) error {
+// ValidateVisionProjector checks a local CLIP projector without loading weights.
+func ValidateVisionProjector(projector, model string) error {
 	if !strings.EqualFold(filepath.Ext(projector), ".gguf") {
 		return errors.New("vision projector must be a GGUF file")
 	}

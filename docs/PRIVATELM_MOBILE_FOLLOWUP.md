@@ -22,6 +22,8 @@ This change is an independent implementation, not a port of third-party Flutter 
 - Android hardware advice now uses actual process bitness and the OS-aware Guest reserve; 32-bit processes remain capped even on 64-bit-capable phones. Chipset identification and advisory quantization guidance do not promise GPU compatibility or replace benchmarks.
 - Dashboard chat accepts local UTF-8 text attachments up to 64 KiB; only the explicit message includes the document contents. Browser history does not retain raw attachment contents (model responses can still contain derived data).
 
+- Dashboard local vision is opt-in with a separately selected CLIP GGUF projector. Host admission reserves twice projector weights plus 512 MiB as an estimate. Only a single inline JPEG/PNG (4 MiB, 16 MP) is accepted by chat completions; no remote URLs or file URLs. Web image contents are not saved to browser history. Distributed vision, Android vision and real model validation remain pending.
+
 ## Acceptance before enabling broader mobile changes
 - Build both Android ABIs; CPU-only device must not initialize Vulkan in the RPC process; Auto/GPU/Hybrid must retain device discovery and fallback.
 - Compare greedy output with cold cache for extended conversations, changed system prompts, identical requests, stop/cancel and model reload. Measure TTFT, PSS, tokens/s, thermal and energy on real devices. Prefix caching is scoped to the loaded embedded context; do not share it across unrelated trust domains.
