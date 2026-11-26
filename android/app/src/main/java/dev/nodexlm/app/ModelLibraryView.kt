@@ -24,6 +24,7 @@ import kotlin.concurrent.thread
 internal class ModelLibraryView(
     private val activity: Activity,
     private val importPicker: () -> Unit,
+    private val importDirectoryPicker: () -> Unit,
     private val onSelected: (File) -> Unit
 ) : LinearLayout(activity) {
     private val hub = HuggingFaceHub(activity)
@@ -99,6 +100,7 @@ internal class ModelLibraryView(
         label(activity.getString(R.string.ui_308b5f1f24ae),19,true)
         val importButton = action(activity.getString(R.string.ui_18911140a84b)) { importPicker() }
         addView(importButton)
+        addView(action(activity.getString(R.string.import_directory)) { importDirectoryPicker() })
         library.orientation = VERTICAL
         addView(library)
         refreshLibrary()
@@ -120,6 +122,24 @@ internal class ModelLibraryView(
                 }
             } catch (e:Exception) {
                 activity.runOnUiThread {status.text=activity.getString(R.string.import_failed,e.message)}
+            }
+        }
+    }
+
+    fun importDirectory(uri: Uri) {
+        status.text = activity.getString(R.string.ui_a8843f6c285c)
+        thread(name = "nodexlm-import-directory") {
+            try {
+                val count = ModelFiles.importDirectory(activity, uri)
+                activity.runOnUiThread {
+                    status.text = activity.getString(R.string.import_directory_done, count)
+                    refreshLibrary()
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    status.text = activity.getString(R.string.import_failed, e.message)
+                    refreshLibrary()
+                }
             }
         }
     }

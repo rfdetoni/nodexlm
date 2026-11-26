@@ -264,4 +264,19 @@
     <string name="mobile_advice_32">Processo de 32 bits: prefira modelos quantizados pequenos ou contribua com memória para um cluster. A GPU exige uma sondagem nativa bem-sucedida.</string>
     <string name="mobile_advice_low">RAM disponível limitada: prefira modelos Q4 pequenos e contextos curtos. Confira a capacidade antes de carregar.</string>
     <string name="mobile_advice_bench">Comece com Q4 ou Q5 e backend automático. Compare CPU e Vulkan por velocidade medida e comportamento térmico; o chipset sozinho não garante suporte à GPU.</string>
+    <string name="probe_gpu">Testar GPU Vulkan (opcional)</string>
+    <string name="litert_title">LiteRT-LM local (experimental)</string>
+    <string name="litert_help">Inferência de texto ARM64 independente. Pare os demais workers antes de carregar. Cada solicitação libera o modelo após concluir.</string>
+    <string name="litert_import">Importar modelo .litertlm</string>
+    <string name="litert_gpu">Usar GPU (experimental)</string>
+    <string name="litert_prompt">Mensagem de texto</string>
+    <string name="litert_run">Gerar (até 256 tokens)</string>
+    <string name="litert_cancel">Cancelar</string>
+    <string name="litert_busy">Processando…</string>
+    <string name="litert_ready">Modelo disponível</string>
+    <string name="litert_missing">Importe um modelo .litertlm primeiro</string>
+    <string name="litert_error">Falha na operação LiteRT-LM: %1$s</string>
+    <string name="litert_disabled">LiteRT-LM não está incluído nesta compilação</string>
+    <string name="import_directory">Importar diretório GGUF</string>
+    <string name="import_directory_done">%1$d novos modelos importados</string>
 </resources>
