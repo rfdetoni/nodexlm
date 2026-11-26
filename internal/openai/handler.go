@@ -23,6 +23,7 @@ type Handler struct {
 	Models   func() []string
 	Observe  func(string, []byte, time.Duration)
 	Timeout  func(string) time.Duration
+	Vision   func(string) bool
 	store    responseStore
 }
 
@@ -111,7 +112,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := normalize(input, path); err != nil {
+	if err := normalize(input, path, h.Vision != nil && h.Vision(model)); err != nil {
 		var api *APIError
 		if errors.As(err, &api) {
 			Error(w, api.Status, api.Message, api.Param, api.Code)

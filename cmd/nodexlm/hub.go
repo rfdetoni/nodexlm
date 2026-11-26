@@ -20,7 +20,7 @@ import (
 // dashboard and optional desktop UI. The model still runs locally via llama.cpp.
 func hub(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: nodexlm hub search|download|import")
+		return errors.New("usage: nodexlm hub search|download|import|import-directory")
 	}
 	switch args[0] {
 	case "search":
@@ -106,6 +106,24 @@ func hub(args []string) error {
 		}
 		fmt.Println(dest)
 		return nil
+	case "import-directory":
+		f := fs("hub import-directory")
+		source := f.String("source", "", "existing directory of GGUF models")
+		dir := f.String("dir", "./models", "destination model directory")
+		link := f.Bool("link", false, "hardlink trusted immutable files (no copying; same filesystem)")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *source == "" {
+			return errors.New("--source required")
+		}
+		c, cancel := ctx()
+		defer cancel()
+		items, err := catalog.ImportDirectory(c, *source, *dir, *link)
+		for _, path := range items {
+			fmt.Println(path)
+		}
+		return err
 	case "import":
 		f := fs("hub import")
 		source := f.String("file", "", "existing local GGUF file")

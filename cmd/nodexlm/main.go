@@ -95,6 +95,8 @@ func run(args []string) error {
 		return chat(args[1:])
 	case "local":
 		return localChat(args[1:])
+	case "image":
+		return generateImage(args[1:])
 	case "models":
 		return models(args[1:])
 	case "hub":
@@ -126,6 +128,7 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm guest --rejoin --server https://host:8443 --code ABCD2345 # renew stale node credentials
   nodexlm join --code ABCD2345 --name worker-1
   nodexlm pairing # issue a fresh 8-character code
+  nodexlm pairing --qr-host https://192.168.1.5:8443 # terminal QR (qrencode)
   nodexlm join --server https://host:8443 --name worker-1 --model model.gguf --ca ./server.crt
   nodexlm node --backend http://127.0.0.1:8080 --model model.gguf --ca ./server.crt
   nodexlm rpc-node                   # shares CPU/GPU for ONE distributed GGUF
@@ -137,6 +140,9 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm hub download --repo owner/repo --file model.Q4_K_M.gguf --dir ./models
   nodexlm hub import --file /path/to/manual.gguf --dir ./models
   nodexlm local --model ./models/model.gguf --prompt "hello"
+  nodexlm local --engine litertlm --model registry-id --prompt "hello" # prestarted loopback LiteRT-LM
+  nodexlm local --model model.gguf --mmproj projector.gguf --image photo.png --prompt "Describe"
+  nodexlm image --model model.safetensors --prompt "A landscape" --output landscape.png # optional sd-cli
   nodexlm local --model ./models/moe.gguf --moe-cpu --prompt "hello"
   nodexlm node --model moe.gguf --model-path ./models/moe.gguf --moe-cpu --ca ./server.crt
 
@@ -659,6 +665,7 @@ func newPairing(args []string) error {
 	server := f.String("server", "http://127.0.0.1:8787", "loopback management API")
 	ca := f.String("ca", "", "trusted certificate (optional)")
 	dir := f.String("dir", config.DefaultDir(), "local coordinator configuration directory")
+	qrHost := f.String("qr-host", "", "optional HTTPS LAN endpoint for terminal QR (requires qrencode)")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -693,12 +700,16 @@ func newPairing(args []string) error {
 		return err
 	}
 	fmt.Printf("NODEXLM PAIRING CODE: %s (valid %s)\n", result.Code, result.Expires)
+	if *qrHost != "" {
+		return printPairingQR(c, *qrHost, result.Code)
+	}
 	return nil
 }
 
 func node(args []string) error {
 	f := fs("node")
-	backend := f.String("backend", "", "existing localhost llama-server (optional)")
+	backend := f.String("backend", "", "existing localhost inference server (optional)")
+	liteRT := f.Bool("litert", false, "verify a local LiteRT-LM registry model before joining as a standalone worker")
 	path := f.String("model-path", "", "GGUF file for lazy auto-managed llama-server")
 	bin := f.String("llama-bin", "llama-server", "llama-server executable")
 	idle := f.Duration("idle", 2*time.Minute, "unload model after idle; 0 for per-job unload")
@@ -745,11 +756,26 @@ func node(args []string) error {
 			return err
 		}
 	}
+	if *liteRT && (*backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 ||
+		*moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
+		return errors.New("--litert requires --backend and --model; configure runtime options in LiteRT-LM")
+	}
 	var engine worker.Generator
 	var managed *local.Managed
 	if *model != "" {
 		if *backend != "" {
-			engine, err = local.New(*backend)
+			if *liteRT {
+				checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				liteEngine, checkErr := local.NewLiteRT(checkCtx, *backend, *model)
+				cancel()
+				if checkErr != nil {
+					return checkErr
+				}
+				defer liteEngine.HTTP.CloseIdleConnections()
+				engine = liteEngine
+			} else {
+				engine, err = local.New(*backend)
+			}
 			if err != nil {
 				return err
 			}
@@ -827,18 +853,28 @@ func chat(args []string) error {
 	ca := f.String("ca", "", "certificate")
 	model := f.String("model", "", "model")
 	prompt := f.String("prompt", "", "prompt")
+	document := f.String("document", "", "optional local UTF-8 text, DOCX or PDF (max 64 KiB extracted text)")
 	target := f.String("node", "", "optional target node id")
+	fallbackURL := f.String("fallback-url", "", "explicit HTTPS provider base URL; sends prompt/document externally on local 404/503")
+	fallbackModel := f.String("fallback-model", "", "external provider model")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
 	if *model == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
 	}
+	if (*fallbackURL == "") != (*fallbackModel == "") || (*fallbackURL != "" && *target != "") {
+		return errors.New("fallback requires URL and model together, and cannot target a Guest")
+	}
+	content, err := documentPrompt(*prompt, *document)
+	if err != nil {
+		return err
+	}
 	cli, err := admin(*server, *ca)
 	if err != nil {
 		return err
 	}
-	request := protocol.ChatRequest{Model: *model, Messages: []protocol.Message{{Role: "user", Content: *prompt}}, MaxTokens: 512, TargetNode: *target}
+	request := protocol.ChatRequest{Model: *model, Messages: []protocol.Message{{Role: "user", Content: content}}, MaxTokens: 512, TargetNode: *target}
 	c, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	var out struct {
@@ -846,8 +882,17 @@ func chat(args []string) error {
 			Message protocol.Message `json:"message"`
 		} `json:"choices"`
 	}
-	_, err = cli.Request(c, "POST", "/v1/chat/completions", request, &out)
+	status, err := cli.Request(c, "POST", "/v1/chat/completions", request, &out)
 	if err != nil {
+		if *fallbackURL != "" && (status == 404 || status == 503) {
+			fmt.Fprintln(os.Stderr, "Local model unavailable; using explicitly configured external provider.")
+			answer, fallbackErr := externalFallback(c, *fallbackURL, *fallbackModel, request.Messages)
+			if fallbackErr != nil {
+				return fallbackErr
+			}
+			fmt.Println(answer)
+			return nil
+		}
 		return err
 	}
 	if len(out.Choices) == 0 {
@@ -886,10 +931,13 @@ func models(args []string) error {
 
 func localChat(args []string) error {
 	f := fs("local")
-	path := f.String("model", "", "local GGUF file path")
+	path := f.String("model", "", "local GGUF file path or LiteRT-LM registry model ID")
 	prompt := f.String("prompt", "", "prompt")
+	imagePath := f.String("image", "", "local JPEG/PNG image for vision inference")
+	projector := f.String("mmproj", "", "local GGUF vision projector matching the model")
 	bin := f.String("llama-bin", "llama-server", "llama-server binary")
-	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp or experimental mistralrs")
+	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp, experimental mistralrs or litertlm")
+	liteEndpoint := f.String("litert-endpoint", "http://127.0.0.1:9379", "already-running local LiteRT-LM server")
 	mistralBin := f.String("mistralrs-bin", "", "mistral.rs executable; requires NODEXLM_EXPERIMENTAL_MISTRALRS=1")
 	threads := f.Int("threads", 0, "CPU threads")
 	gpu := f.String("gpu-layers", "auto", "GPU layers")
@@ -902,6 +950,39 @@ func localChat(args []string) error {
 	}
 	if *path == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
+	}
+	if *engineName == "litertlm" {
+		if *imagePath != "" || *projector != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 ||
+			*threads != 0 || *gpu != "auto" || *contextTokens != 2048 {
+			return errors.New("LiteRT-LM uses its own registry/backend configuration; llama.cpp options are unsupported")
+		}
+		c, cancel := ctx()
+		defer cancel()
+		engine, err := local.NewLiteRT(c, *liteEndpoint, *path)
+		if err != nil {
+			return err
+		}
+		defer engine.HTTP.CloseIdleConnections()
+		result, err := engine.Generate(c, protocol.ChatRequest{Model: *path, Messages: []protocol.Message{{Role: "user", Content: *prompt}}, MaxTokens: 512})
+		if err != nil {
+			return err
+		}
+		fmt.Println(result)
+		return nil
+	}
+	if (*imagePath == "") != (*projector == "") {
+		return errors.New("--image and --mmproj must be supplied together")
+	}
+	var dataURL string
+	if *imagePath != "" {
+		if local.EffectiveBackend(*engineName) != local.BackendLlama {
+			return errors.New("vision requires llama.cpp")
+		}
+		var err error
+		dataURL, err = visionDataURL(*imagePath)
+		if err != nil {
+			return err
+		}
 	}
 	cpu := *threads
 	if cpu <= 0 {
@@ -923,10 +1004,18 @@ func localChat(args []string) error {
 	default:
 		return fmt.Errorf("unknown inference engine: %s", *engineName)
 	}
-	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, VisionProjectorPath: *projector, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 	defer engine.Close()
 	c, cancel := ctx()
 	defer cancel()
+	if dataURL != "" {
+		result, err := generateVision(c, engine, filepath.Base(*path), *prompt, dataURL)
+		if err != nil {
+			return err
+		}
+		fmt.Println(result)
+		return nil
+	}
 	result, err := engine.Generate(c, protocol.ChatRequest{Model: filepath.Base(*path), Messages: []protocol.Message{{Role: "user", Content: *prompt}}, MaxTokens: 512})
 	if err != nil {
 		return err

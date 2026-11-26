@@ -26,6 +26,10 @@ func (m *Manager) LoadModel(ctx context.Context, name string) error {
 	defer func() { m.mu.Lock(); m.poolCancel = nil; m.mu.Unlock() }()
 	m.mu.Lock()
 	settings := m.settings
+	if settings.VisionProjector != "" {
+		m.mu.Unlock()
+		return errors.New("additional residents cannot inherit a vision projector; clear the projector setting first")
+	}
 	// Pinned GGML RPC serves one client per Guest. Additional resident models
 	// run on the Host rather than blocking on an already-owned native backend.
 	settings.Distributed = false

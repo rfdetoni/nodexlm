@@ -142,9 +142,34 @@ class MainActivity : Activity() {
             onSelected={ file -> setStatus(getString(R.string.model_selected,file.name)) }
         )
         showTab(0)
+        acceptPairingLink(intent)
         RuntimeLogs.append(this, RuntimeRole.APP, RuntimeLevel.INFO, RuntimeEvent.APP_OPEN)
         updateManager.onStateChanged = { if (tab == 4) refreshUpdatesStatus() }
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        acceptPairingLink(intent)
+    }
+
+    private fun acceptPairingLink(incoming: Intent?) {
+        if (incoming?.action != Intent.ACTION_VIEW) return
+        val link = incoming.data ?: return
+        if (link.scheme != "nodexlm" || link.host != "pair") return
+        val parsed = runCatching { parsePairingLink(link.toString()) }.getOrNull()
+        // Strip the ephemeral code from the Activity's retained intent.
+        incoming.data = null
+        if (parsed == null) {
+            setStatus(getString(R.string.pair_qr_invalid))
+            return
+        }
+        coordinatorDraft = parsed.first
+        pairingCodeDraft = parsed.second
+        showTab(1)
+        // Existing Join button is the explicit confirmation; PairingClient
+        // still validates the temporary proof, enrolled certificate and TLS.
+        setStatus(getString(R.string.pair_qr_confirm))
     }
 
     private fun showTab(index: Int) {
@@ -211,7 +236,16 @@ class MainActivity : Activity() {
         overview.addView(label(getString(R.string.ui_6fc9111417fd),14,false))
         overview.addView(label(getString(R.string.model_optional,selected?.name ?: getString(R.string.none)),12,false))
         overview.addView(label(getString(R.string.system,Build.VERSION.RELEASE,Build.SUPPORTED_ABIS.firstOrNull() ?: "?"),12,false))
-        overview.addView(label(getString(R.string.memory_budget,"%.2f".format(java.util.Locale.US,HuggingFaceHub(this).localBudgetBytes().toDouble()/(1L shl 30))),12,false))
+        val modelBudget = HuggingFaceHub(this).localBudgetBytes()
+        overview.addView(label(getString(R.string.memory_budget,"%.2f".format(java.util.Locale.US,modelBudget.toDouble()/(1L shl 30))),12,false))
+        val chipset = if (Build.VERSION.SDK_INT >= 31) {
+            listOf(Build.SOC_MANUFACTURER, Build.SOC_MODEL).filter { it.isNotBlank() && it != "unknown" }.joinToString(" ")
+        } else Build.HARDWARE
+        overview.addView(label(getString(R.string.mobile_chipset, chipset.ifBlank { "?" }),12,false))
+        val advice = if (!android.os.Process.is64Bit()) R.string.mobile_advice_32
+            else if (modelBudget < 2L * 1024 * 1024 * 1024) R.string.mobile_advice_low
+            else R.string.mobile_advice_bench
+        overview.addView(label(getString(advice),12,false))
         overview.addView(action(getString(R.string.ui_87125eeb01cb)) {showTab(3)})
         overview.addView(label(
             if (prefs.getString("node_id", "").isNullOrBlank())
@@ -696,6 +730,10 @@ class MainActivity : Activity() {
             text = getString(R.string.rpc_weight_cache)
             isChecked = prefs.getBoolean("rpc_weight_cache", false)
         }
+        val adaptiveWifi = CheckBox(this).apply {
+            text = getString(R.string.rpc_adaptive_wifi)
+            isChecked = prefs.getBoolean("rpc_adaptive_wifi", false)
+        }
         val dedicatedGuest = CheckBox(this).apply {
             text = getString(R.string.rpc_dedicated_guest)
             isChecked = prefs.getBoolean("rpc_dedicated_guest", false)
@@ -707,6 +745,7 @@ class MainActivity : Activity() {
         settings.addView(rpcCompression)
         settings.addView(cpuAffinity)
         settings.addView(weightCache)
+        settings.addView(adaptiveWifi)
         settings.addView(dedicatedGuest)
         listOf(minimum,startHour,endHour,memoryCap,memoryReserve,cpuThreads).forEach {
             it.inputType = android.text.InputType.TYPE_CLASS_NUMBER
@@ -732,6 +771,7 @@ class MainActivity : Activity() {
                     .putBoolean("rpc_compression", rpcCompression.isChecked)
                     .putBoolean("rpc_cpu_affinity", cpuAffinity.isChecked)
                     .putBoolean("rpc_weight_cache", weightCache.isChecked)
+                    .putBoolean("rpc_adaptive_wifi", adaptiveWifi.isChecked)
                     .putBoolean("rpc_dedicated_guest", dedicatedGuest.isChecked).apply()
                 setStatus(getString(R.string.ui_a0f818d41fea))
             }

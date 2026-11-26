@@ -10,7 +10,7 @@ package dev.nodexlm.app
 internal object NativeRpc {
     val VERSION = BuildConfig.LLAMA_VERSION
     init { System.loadLibrary("nodexlm") }
-    /** Register dynamic ARM64 CPU/Vulkan backend shared libraries from nativeLibraryDir or APK namespace. */
+    /** Set the optional native library directory; start/inspect load only required backends. */
     external fun initBackends(nativeLibDir: String)
     /** Count faster CPU cores within the current Android cpuset, with safe fallback. */
     external fun recommendedThreads(logical: Int): Int
