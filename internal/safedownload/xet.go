@@ -47,7 +47,7 @@ func parseXetLocation(source string) (xetLocation, error) {
 	for _, part := range append([]string{raw[0], raw[1]}, raw[4:]...) {
 		value, err := url.PathUnescape(part)
 		if err != nil || value == "" || value == "." || value == ".." || len(value) > 180 ||
-			strings.ContainsAny(value, "/\\:%?#") {
+			strings.HasPrefix(value, "-") || strings.ContainsAny(value, "/\\:%?#@") {
 			return xetLocation{}, errors.New("unsafe Xet path segment")
 		}
 		parts = append(parts, value)
