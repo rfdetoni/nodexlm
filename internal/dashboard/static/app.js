@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let token = sessionStorage.getItem('nodexlm-admin') || '';
+let sessionEpoch=0;
 let settingsInitialized = false;
 let catalogModels = [];
 let localModels = [];
@@ -17,10 +18,11 @@ let modelFolderPath='';
 const fmt = bytes => bytes > 0 ? (bytes / 1073741824).toFixed(2) + ' GiB' : '—';
 function notice(message) { $('toast').textContent=message; $('toast').style.display='block'; clearTimeout(notice.timer); notice.timer=setTimeout(() => $('toast').style.display='none', 4800); }
 async function api(path, method='GET', body, signal) {
-  const session=token;
+  const session=token,epoch=sessionEpoch;
   const headers={Authorization:'Bearer '+token}; if (body!==undefined) headers['Content-Type']='application/json';
   const response=await fetch(path,{method,headers,body: body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal});
   const text=await response.text(); let data;try{data=JSON.parse(text)}catch{data={error:text}}
+  if(epoch!==sessionEpoch||token!==session)throw Error('Sessão alterada.');
   if (!response.ok) {if(response.status===401 && token===session) endSession();throw Error(data.error||'HTTP '+response.status)}
   return data;
 }
@@ -358,8 +360,9 @@ function renderLoadStatus(status){
 }
 async function updateLoadingPlan(status){
  if(!status.runtime?.loading || !status.settings?.model || loadingPlanModel===status.settings.model)return;
- loadingPlanModel=status.settings.model;loadingPlan=null;
- try{loadingPlan=await api('/api/plan')}catch(e){console.warn('Placement estimate unavailable during load',e.message)}
+ const session=sessionEpoch,model=status.settings.model;
+ loadingPlanModel=model;loadingPlan=null;
+ try{const plan=await api('/api/plan');if(session!==sessionEpoch||loadingPlanModel!==model)return;loadingPlan=plan}catch(e){if(session!==sessionEpoch)return;console.warn('Placement estimate unavailable during load',e.message)}
  if(latestStatus?.runtime?.loading)renderLoadStatus(latestStatus);
 }
 let localModelStructure='';
@@ -528,6 +531,7 @@ async function refresh(background=false){
  try{return await task}finally{if(refreshInFlight===task)refreshInFlight=null}
 }
 async function refreshSnapshot(){
+ if(!token)return;
  const epoch=++refreshEpoch,session=token;
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
  if(epoch!==refreshEpoch||session!==token)return;
@@ -535,6 +539,7 @@ async function refreshSnapshot(){
  $('residentCount').textContent=resident.length;
  latestStatus=status;localModels=models;
  if(activityVisible())await refreshTopology();else stopActivity();
+ if(epoch!==refreshEpoch||session!==token)return;
  renderLoadStatus(status);
  await updateLoadingPlan(status);
  if(epoch!==refreshEpoch||session!==token)return;
@@ -620,7 +625,9 @@ function renderChat(){
  followChat(true);
 }
 function confirmAction(text,label){
- const dialog=$('confirmation');$('confirmationText').textContent=text;$('confirmAction').textContent=label;
+ const dialog=$('confirmation');
+ if(dialog.open)return Promise.resolve(false);
+ $('confirmationText').textContent=text;$('confirmAction').textContent=label;
  return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.returnValue='cancel';dialog.showModal()});
 }
 async function readChatDocument(file,signal) {
@@ -649,7 +656,7 @@ function readChatImage(file){
 async function sendChat(){
  if(chatController)return;
  const prompt=$('prompt').value.trim();if(!prompt)return;
- const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];
+ const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];const chatSession=sessionEpoch;
  const allowFallback=$('allowExternalFallback').checked;$('allowExternalFallback').checked=false;
  const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
@@ -677,6 +684,8 @@ async function sendChat(){
   if(effort!=='auto')payload.reasoning_effort=effort;
   if(thinkingBudget>0)payload.reasoning_budget_tokens=thinkingBudget;
   const response=await fetch(imageURL?'/v1/chat/completions':'/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify(payload)});
+  if(controller.signal.aborted||chatSession!==sessionEpoch)return;
+  if(response.status===401){endSession();return}
   if(!response.ok&&allowFallback&&!imageURL&&[404,409,503].includes(response.status)){
    await response.body?.cancel();
    reply.textContent='Enviando ao provedor externo autorizado…';
@@ -710,8 +719,8 @@ async function sendChat(){
    if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
   }
   }
-  if(controller.signal.aborted)return;
-  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();$('prompt').value='';$('chatDocument').value='';$('chatImage').value='';
+  if(controller.signal.aborted||chatSession!==sessionEpoch)return;
+  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();if($('prompt').value.trim()===prompt)$('prompt').value='';if($('chatDocument').files?.[0]===documentFile)$('chatDocument').value='';if($('chatImage').files?.[0]===imageFile)$('chatImage').value='';
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
   const tokens=Number(usage?.completion_tokens)||0;
@@ -727,6 +736,7 @@ async function sendChat(){
   if(rpcTraffic?.nodes?.length)metrics+=' · RPC nesta resposta: '+rpcTraffic.nodes.map(n=>n.name+': '+fmt(n.bytes)).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
   $('chatMetrics').textContent=(reader?'':'Provedor externo · ')+metrics;
  }catch(error){
+  if(chatSession!==sessionEpoch)return;
   const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;
   if(!answer)reply.textContent=message;if(!controller.signal.aborted)notice(message);
  }finally{
@@ -739,7 +749,7 @@ $('toggleSecret').addEventListener('click',()=>{
  field.type=visible?'password':'text';button.textContent=visible?'Mostrar':'Ocultar';
  button.setAttribute('aria-pressed',String(!visible));button.setAttribute('aria-label',visible?'Mostrar credencial':'Ocultar credencial');
 });
-bindForm('login','loginSubmit',async()=>{token=$('secret').value.trim();await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')});
+bindForm('login','loginSubmit',async()=>{sessionEpoch++;token=$('secret').value.trim();await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')});
 bindForm('decisionForm','runDecision',async()=>{
   let questions;
   try{questions=JSON.parse($('decisionQuestions').value)}catch{throw Error('Perguntas devem ser um objeto JSON válido.')}
@@ -755,10 +765,11 @@ bindForm('decisionForm','runDecision',async()=>{
   }
 });
 function endSession(){
- sessionStorage.removeItem('nodexlm-admin');token='';refreshEpoch++;stopActivity();
+ sessionStorage.removeItem('nodexlm-admin');token='';sessionEpoch++;refreshEpoch++;stopActivity();
  catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;
  $('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();
- clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;
+ clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
+ nodePage=0;renderNodeTable([]);$('secret').type='password';$('toggleSecret').textContent='Mostrar';$('toggleSecret').setAttribute('aria-pressed','false');$('toggleSecret').setAttribute('aria-label','Mostrar credencial');
  $('prompt').value='';$('overviewPrompt').value='';$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;
  $('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();$('chatMetrics').textContent='';
  $('confirmation').close?.();setupAuth();$('secret').focus();
@@ -874,15 +885,12 @@ function pairingTick(){
 }
 bindAction('pairQR',async()=>{
  if(!pairingSession||!pairingSecondsLeft())throw Error('Gere um código ativo antes do QR.');
- const session=pairingSession, startingToken=token, button=$('pairQR');
- button.disabled=true;
- try{
+ const session=pairingSession, startingToken=token;
   const host=$('pairQRHost').value.trim();
   const result=await api('/api/pairing/qr','POST',{host,code:session.code});
   if(token!==startingToken||pairingSession!==session||!pairingSecondsLeft()||$('pairQRHost').value.trim()!==host)return;
   if(!result.png||result.png.length>350000||!/^[A-Za-z0-9+/=]+$/.test(result.png))throw Error('QR inválido.');
   $('pairQRImage').src='data:image/png;base64,'+result.png;$('pairQRImage').hidden=false;
- }finally{button.disabled=false}
 });
 $('pairQRHost').addEventListener('input',clearPairingQR);
 $('pair').addEventListener('click',()=>guard(()=>generatePairingCode(false)));

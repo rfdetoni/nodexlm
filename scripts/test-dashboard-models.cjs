@@ -143,6 +143,7 @@ async function main(){
   get('secret').type='password';get('toggleSecret').handlers.click();
   assert.equal(get('secret').type,'text');
   get('toggleSecret').handlers.click();assert.equal(get('secret').type,'password');
+  await vm.runInContext("(async()=>{let calls=0,resolve;const b=$('inferenceBench');const first=withBusy(b,()=>{calls++;return new Promise(r=>resolve=r)});await withBusy(b,()=>{calls++});resolve();await first;if(calls!==1||b.disabled)throw Error('busy guard regression')})()",sandbox);
 
   assert.match(chat,/<label class="check-field"><input id="allowExternalFallback" type="checkbox"><span>/);
   assert.match(chat,/<div class="chat-actions">[\s\S]*?<div class="buttons"><button id="stopChat"/);

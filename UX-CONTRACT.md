@@ -88,3 +88,5 @@ also retain controls and focus. Tests assert identity during a progress tick.
 - Inference settings are separate from runtime/benchmark operations; the latter
   retains actual backend state. Native validation and native select popup
   geometry remain the explicit project contract. No backend/API changes.
+
+- External fallback explicitly discloses that prior conversation messages may also be sent. During a generation, new drafts and newly selected attachments are not discarded on completion.
