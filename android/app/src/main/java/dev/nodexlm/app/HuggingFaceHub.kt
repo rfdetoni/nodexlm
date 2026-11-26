@@ -5,7 +5,7 @@ package dev.nodexlm.app
 import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
-import android.os.Build
+import android.os.Process
 import org.json.JSONArray
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -114,7 +114,7 @@ internal class HuggingFaceHub(private val context: Context) {
                     if (segments.size > 20 || segments.any { !safeSegment(it) }) continue
                     val url = "https://huggingface.co/${Uri.encode(parts[0])}/${Uri.encode(parts[1])}/resolve/main/" +
                         segments.joinToString("/") { Uri.encode(it) }
-                    val fit = size <= budget && size <= Long.MAX_VALUE / 115 && size * 115 / 100 <= budget
+                    val fit = MobileModelAdvice.fits(size, budget)
                     results.add(Model(repository,filename,size,url,
                         if (fit) "single-node-candidate" else "unknown",
                         if (fit) "Estimated fit on this phone" else "Not confirmed for this phone; pair with the Host to check cluster capacity",
@@ -129,11 +129,8 @@ internal class HuggingFaceHub(private val context: Context) {
     fun localBudgetBytes(): Long {
         val info = ActivityManager.MemoryInfo()
         (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(info)
-        val headroom = 1L shl 30
-        val available = (info.availMem - headroom).coerceAtLeast(0)
-        // A 32-bit userspace cannot map multi-GiB GGUF files reliably.
-        val limit = if (Build.SUPPORTED_64_BIT_ABIS.isEmpty()) 896L shl 20 else Long.MAX_VALUE
-        return (available * 80 / 100).coerceAtMost(limit)
+        val reserve = GuestResourceBudget.reserveBytes(0, info.totalMem, info.threshold)
+        return MobileModelAdvice.budget(info.availMem, reserve, Process.is64Bit())
     }
 
     private fun safeSegment(s: String): Boolean = s.isNotBlank() && s != "." && s != ".." && s.length < 160 &&

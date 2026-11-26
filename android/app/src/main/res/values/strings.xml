@@ -260,4 +260,8 @@
     <string name="pair_qr_invalid">Invalid pairing link</string>
     <string name="pair_qr_confirm">Review the host address and select Join to confirm pairing.</string>
     <string name="rpc_adaptive_wifi">Experimental: release Wi-Fi performance lock after idle (may increase first-request latency)</string>
+    <string name="mobile_chipset">Chipset: %1$s</string>
+    <string name="mobile_advice_32">32-bit process: prefer small quantized models, or contribute memory to a cluster. GPU support requires a successful native probe.</string>
+    <string name="mobile_advice_low">Limited available RAM: prefer small Q4 models and short contexts. Check available capacity before loading.</string>
+    <string name="mobile_advice_bench">Start with Q4 or Q5 and automatic backend selection. Compare CPU and Vulkan using measured throughput and thermal behavior; chipset alone does not guarantee GPU support.</string>
 </resources>

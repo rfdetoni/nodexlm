@@ -19,6 +19,9 @@ This change is an independent implementation, not a port of third-party Flutter 
 - Android optional adaptive Wi-Fi performance lock uses the existing supervisor and authenticated claim count; releases after 30 seconds without claims. Defaults off, requires worker restart to apply. A long-lived claim can outlive generation; actual RTT/energy improvements are not established, and first-request latency may increase.
 - CLI DOCX text extraction reads only word/document.xml (16 MiB archive, 2 MiB XML, 64 KiB output); does not execute macros, resolve external relationships or extract filesystem entries. PDF and document UI remain pending.
 
+- Android hardware advice now uses actual process bitness and the OS-aware Guest reserve; 32-bit processes remain capped even on 64-bit-capable phones. Chipset identification and advisory quantization guidance do not promise GPU compatibility or replace benchmarks.
+- Dashboard chat accepts local UTF-8 text attachments up to 64 KiB; only the explicit message includes the document contents. Browser history does not retain raw attachment contents (model responses can still contain derived data).
+
 ## Acceptance before enabling broader mobile changes
 - Build both Android ABIs; CPU-only device must not initialize Vulkan in the RPC process; Auto/GPU/Hybrid must retain device discovery and fallback.
 - Compare greedy output with cold cache for extended conversations, changed system prompts, identical requests, stop/cancel and model reload. Measure TTFT, PSS, tokens/s, thermal and energy on real devices. Prefix caching is scoped to the loaded embedded context; do not share it across unrelated trust domains.

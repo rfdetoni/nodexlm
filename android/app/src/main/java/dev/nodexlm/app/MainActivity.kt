@@ -237,6 +237,14 @@ class MainActivity : Activity() {
         overview.addView(label(getString(R.string.model_optional,selected?.name ?: getString(R.string.none)),12,false))
         overview.addView(label(getString(R.string.system,Build.VERSION.RELEASE,Build.SUPPORTED_ABIS.firstOrNull() ?: "?"),12,false))
         overview.addView(label(getString(R.string.memory_budget,"%.2f".format(java.util.Locale.US,HuggingFaceHub(this).localBudgetBytes().toDouble()/(1L shl 30))),12,false))
+        val chipset = if (Build.VERSION.SDK_INT >= 31) {
+            listOf(Build.SOC_MANUFACTURER, Build.SOC_MODEL).filter { it.isNotBlank() && it != "unknown" }.joinToString(" ")
+        } else Build.HARDWARE
+        overview.addView(label(getString(R.string.mobile_chipset, chipset.ifBlank { "?" }),12,false))
+        val advice = if (!android.os.Process.is64Bit()) R.string.mobile_advice_32
+            else if (HuggingFaceHub(this).localBudgetBytes() < 2L * 1024 * 1024 * 1024) R.string.mobile_advice_low
+            else R.string.mobile_advice_bench
+        overview.addView(label(getString(advice),12,false))
         overview.addView(action(getString(R.string.ui_87125eeb01cb)) {showTab(3)})
         overview.addView(label(
             if (prefs.getString("node_id", "").isNullOrBlank())

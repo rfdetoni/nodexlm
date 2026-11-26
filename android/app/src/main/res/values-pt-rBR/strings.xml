@@ -260,4 +260,8 @@
     <string name="pair_qr_invalid">Link de pareamento inválido</string>
     <string name="pair_qr_confirm">Confira o endereço do Host e selecione Conectar para confirmar o pareamento.</string>
     <string name="rpc_adaptive_wifi">Experimental: liberar o bloqueio de desempenho Wi-Fi quando ocioso (pode aumentar a latência inicial)</string>
+    <string name="mobile_chipset">Chipset: %1$s</string>
+    <string name="mobile_advice_32">Processo de 32 bits: prefira modelos quantizados pequenos ou contribua com memória para um cluster. A GPU exige uma sondagem nativa bem-sucedida.</string>
+    <string name="mobile_advice_low">RAM disponível limitada: prefira modelos Q4 pequenos e contextos curtos. Confira a capacidade antes de carregar.</string>
+    <string name="mobile_advice_bench">Comece com Q4 ou Q5 e backend automático. Compare CPU e Vulkan por velocidade medida e comportamento térmico; o chipset sozinho não garante suporte à GPU.</string>
 </resources>
