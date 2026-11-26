@@ -10,7 +10,7 @@ import (
 )
 
 func TestFixedBenchmarkWaitsForIdleGuestWithoutReplanning(t *testing.T) {
-	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"CPU"}}
+	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"cpu"}, RAMBudgetBytes: 2 << 30, CapacityBytes: 2 << 30}
 	placement := benchmarkPlacement{
 		ready:     true,
 		guests:    []RPCGuest{guest},
@@ -36,7 +36,7 @@ func TestFixedBenchmarkWaitsForIdleGuestWithoutReplanning(t *testing.T) {
 }
 
 func TestFixedBenchmarkRejectsChangedGuestTopology(t *testing.T) {
-	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"CPU"}}
+	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"cpu"}, RAMBudgetBytes: 2 << 30, CapacityBytes: 2 << 30}
 	placement := benchmarkPlacement{
 		ready:     true,
 		guests:    []RPCGuest{guest},
@@ -51,7 +51,7 @@ func TestFixedBenchmarkRejectsChangedGuestTopology(t *testing.T) {
 }
 
 func TestFixedBenchmarkWaitRespectsCancellation(t *testing.T) {
-	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"CPU"}}
+	guest := RPCGuest{ID: "node-1", Endpoint: "127.0.0.1:12555", RPCDeviceKinds: []string{"cpu"}, RAMBudgetBytes: 2 << 30, CapacityBytes: 2 << 30}
 	placement := benchmarkPlacement{
 		ready:     true,
 		guests:    []RPCGuest{guest},
