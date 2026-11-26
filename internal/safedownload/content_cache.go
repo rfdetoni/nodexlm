@@ -75,7 +75,11 @@ func RememberPublished(ctx context.Context, stage, published string) {
 	_, err = temp.WriteString(filepath.Base(published))
 	closeErr := temp.Close()
 	if err == nil && closeErr == nil {
-		_ = os.Rename(temp.Name(), index)
+		if os.Rename(temp.Name(), index) == nil {
+			// Fetch has already validated these published bytes; cache their
+			// stable identity to avoid a second complete local disk read.
+			rememberVerified(published, meta.SHA256, info)
+		}
 	}
 }
 
