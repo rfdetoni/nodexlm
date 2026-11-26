@@ -70,9 +70,10 @@ fn open_journal(destination: &str, checksum: &str, size: u64) -> Result<(File, J
     let journal_path = format!("{destination}.ranges");
     let identity = format!("nodexlm-ranges-v1 {checksum} {size} {RANGE_BYTES}");
     let count = chunks(size);
+    let original = fs::metadata(destination).ok().filter(|meta| meta.is_file() && meta.len() == size);
     let previous = fs::metadata(&journal_path)
         .ok()
-        .filter(|meta| meta.is_file() && meta.len() <= MAX_JOURNAL_BYTES)
+        .filter(|meta| original.is_some() && meta.is_file() && meta.len() <= MAX_JOURNAL_BYTES)
         .and_then(|_| fs::read_to_string(&journal_path).ok())
         .and_then(|v| valid_journal(&v, &identity, count));
     let file = OpenOptions::new().read(true).write(true).create(true)
