@@ -85,8 +85,17 @@ func (m *Manager) benchmarkSeries(ctx context.Context, model, nodeID string, ext
 		return stats()
 	}
 	for range rounds {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if fixed != nil && fixed.ready {
+			// Native llama-server closes its RPC connections at the end of each
+			// round. The Guest may need a moment to replenish idle tunnels.
+			// Preserve the exact authenticated device identity and placement;
+			// do not misclassify a transient busy tunnel as topology drift.
+			if err := fixed.waitForRPCIdle(ctx, provider); err != nil {
+				return nil, err
+			}
 		}
 		row := benchmarkRound{RPCStatsBefore: snapshot()}
 		sample, err := m.measureInference(ctx, settings, model, nodeID, extended, provider, fixed)

@@ -3,11 +3,11 @@ name: Real RPC end-to-end
 # Explicit dispatch and targeted E2E changes keep native tests out of routine PR builds.
 on:
   pull_request:
-    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/e2e-rpc.py', 'scripts/test-console.cjs']
+    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/e2e-rpc.py', 'scripts/test-console.cjs', 'internal/dashboard/benchmark.go', 'internal/dashboard/benchmark_placement.go', 'internal/dashboard/benchmark_placement_test.go']
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/llamaruntime/revision.json', 'internal/local/managed.go', 'internal/pairing/**', 'scripts/hardware-acceptance.py', 'internal/openai/**', 'internal/dashboard/openai.go', 'internal/dashboard/handler.go', 'internal/local/openai.go', 'scripts/test-openai-sdk.py']
+    paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/llamaruntime/revision.json', 'internal/local/managed.go', 'internal/pairing/**', 'scripts/hardware-acceptance.py', 'internal/openai/**', 'internal/dashboard/openai.go', 'internal/dashboard/handler.go', 'internal/dashboard/benchmark.go', 'internal/dashboard/benchmark_placement.go', 'internal/local/openai.go', 'scripts/test-openai-sdk.py']
 permissions:
   contents: read
 concurrency:
