@@ -73,3 +73,20 @@ inference verification remain necessary beyond automated layout checks.
 Transfer updates retain the progress control and catalog row DOM identity until the
 model, status, filter, or actions actually change. Unchanged local model lists
 also retain controls and focus. Tests assert identity during a progress tick.
+
+## Continued Web consistency migration
+
+- Shared async controls: `bindAction`, `bindForm`, `withBusy`; prevent
+  repeated submission without changing button width. Dynamic collections use
+  `collectionRow` and native controls, not screen-local variants.
+- Guest management: one card per authenticated Guest, native “⋯” menu for
+  actions, no redundant table, and stable menu identity during telemetry
+  refreshes. Revoked nodes disappear from the cards without stale controls.
+- Background refresh skips if an existing refresh is active; requested refreshes
+  serialize. Logout and unauthorized responses use one session reset path.
+- Credentials stay masked by default with a reversible, keyboard-operable reveal.
+- Inference settings are separate from runtime/benchmark operations; the latter
+  retains actual backend state. Native validation and native select popup
+  geometry remain the explicit project contract. No backend/API changes.
+
+- External fallback explicitly discloses that prior conversation messages may also be sent. During a generation, new drafts and newly selected attachments are not discarded on completion.

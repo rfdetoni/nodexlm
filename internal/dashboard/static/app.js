@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let token = sessionStorage.getItem('nodexlm-admin') || '';
+let sessionEpoch=0;
 let settingsInitialized = false;
 let catalogModels = [];
 let localModels = [];
@@ -13,15 +14,18 @@ let downloadPollBusy = false;
 let residentModelNames=[];
 let loadingPlan=null;
 let loadingPlanModel='';
+let deviceNames=new Map();
+const displayNodeName=(id,name)=>name&&name!==id?name:deviceNames.get(id)||(id==='host'?'Host':'Guest sem nome');
 let modelFolderPath='';
 const fmt = bytes => bytes > 0 ? (bytes / 1073741824).toFixed(2) + ' GiB' : '—';
 function notice(message) { $('toast').textContent=message; $('toast').style.display='block'; clearTimeout(notice.timer); notice.timer=setTimeout(() => $('toast').style.display='none', 4800); }
 async function api(path, method='GET', body, signal) {
-  const session=token;
+  const session=token,epoch=sessionEpoch;
   const headers={Authorization:'Bearer '+token}; if (body!==undefined) headers['Content-Type']='application/json';
   const response=await fetch(path,{method,headers,body: body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal});
   const text=await response.text(); let data;try{data=JSON.parse(text)}catch{data={error:text}}
-  if (!response.ok) {if(response.status===401 && token===session) {sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();$('auth').hidden=false;$('app').hidden=true;}throw Error(data.error||'HTTP '+response.status)}
+  if(epoch!==sessionEpoch||token!==session)throw Error('Sessão alterada.');
+  if (!response.ok) {if(response.status===401 && token===session) endSession();throw Error(data.error||'HTTP '+response.status)}
   return data;
 }
 const consoleViews=[
@@ -51,8 +55,8 @@ function renderTopology(activity=null){
   const live=activity?.nodes?.find(n=>n.node_id===node.node_id);
   const active=node.node_id==='host'?activity?.host_inferred:live?.active;
   const range=node.first_block>=0?'blk.'+node.first_block+'–'+node.last_block:'sem blocos';
-  const text=node.name+' · '+range+' · '+node.layers+' camadas · '+node.mode+(node.devices?.length?' ('+node.devices.join(', ')+')':'')+' · '+fmt(node.weight_bytes)+' de pesos ('+node.weight_method+')'+(node.estimated_kv_bytes!=null?' · KV ~'+fmt(node.estimated_kv_bytes):'')+' · RAM/VRAM: '+fmt(node.ram_budget_bytes)+' / '+fmt(node.vram_budget_bytes);
-  area.append(el('p',active?'topology-active':'muted',text+(active?(node.node_id==='host'?' · Host (inferido)':' · tráfego recente'):'')));
+  const text=displayNodeName(node.node_id,node.name)+' · '+range+' · '+node.layers+' camadas · '+node.mode+(node.devices?.length?' ('+node.devices.join(', ')+')':'')+' · '+fmt(node.weight_bytes)+' de pesos ('+node.weight_method+')'+(node.estimated_kv_bytes!=null?' · KV ~'+fmt(node.estimated_kv_bytes):'')+' · RAM/VRAM: '+fmt(node.ram_budget_bytes)+' / '+fmt(node.vram_budget_bytes);
+  area.append(el('p',active?'topology-active':'muted',text+(active?(node.node_id==='host'?' · Host (inferido)':' · tráfego recente'):'')+(live?.available?' · '+live.mib_per_second_window.toFixed(2)+' MiB/s':'')));
  }
  area.prepend(bar);
 }
@@ -64,16 +68,16 @@ function renderActivity(data){
  if(native.length){
   area.append(el('p','','Atividade nativa · últimos '+native.length+' tokens atribuíveis'));
   for(const item of native.slice(-5)){
-   const splits=(item.splits||[]).map(split=>{const node=topologySnapshot?.nodes?.find(n=>n.node_id===split.node_id);return (node?node.name+' / ':split.node_id?split.node_id+' / ':'')+split.backend+': '+split.count+' envio(s) de grafo';}).join(' · ');
+   const splits=(item.splits||[]).map(split=>{const node=topologySnapshot?.nodes?.find(n=>n.node_id===split.node_id);return (split.node_id?displayNodeName(split.node_id,node?.name)+' / ':'')+split.backend+': '+split.count+' envio(s) de grafo';}).join(' · ');
    area.append(el('p','muted','Token '+item.ordinal+' · lote '+item.batch+' · '+splits));
   }
   area.append(el('p','muted','Submissões nativas, não utilização, latência ou tempo de GPU. Nomes de backend reportados pelo runtime.'));
  }
  const active=[];
  for(const node of data.nodes||[]){
-  const name=topologySnapshot?.nodes?.find(n=>n.node_id===node.node_id)?.name||node.node_id;
+  const name=displayNodeName(node.node_id,topologySnapshot?.nodes?.find(n=>n.node_id===node.node_id)?.name);
   if(node.active)active.push(name);
-  area.append(el('p','muted',name+': '+(node.available?node.mib_per_second_window.toFixed(2)+' MiB/s · '+node.share_percent_window.toFixed(1)+'% dos bytes RPC na janela':'sem delta comparável')));
+
  }
  if(data.host_inferred)active.push('Host (inferido)');
  activityHistory.push(active.length?active.join(' + '):'sem amostra comparável');activityHistory=activityHistory.slice(-10);
@@ -112,8 +116,10 @@ function activateConsoleView(view){
   $('view-'+item.id).hidden=!active;
   $('nav-'+item.id).setAttribute('aria-current',active?'page':'false');
  }
+ document.title=chosen.name+' · NodexLM';
  $('workspaceTitle').textContent=chosen.name;
  $('workspaceDescription').textContent=chosen.description;
+ $('consoleMain').setAttribute('data-view',chosen.id);
  $('consoleMain').scrollTop=0;
  try{sessionStorage.setItem('nodexlm-console-view',chosen.id)}catch{}
  if(chosen.id==='inference' && token)guard(refresh);else stopActivity();
@@ -186,15 +192,51 @@ function setSelect(items,chosen){
 function setDraftModels(items,chosen){
  setOptions('draftModelSelect',[['','Sem draft'],...items.map(m=>[m.name,m.name])],chosen);
 }
-function settingsFromForm(model) {
- return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, threads_batch:+$('threadsBatch').value, parallel_slots:+$('parallelSlots').value, prompt_cache_mib:+$('promptCacheMiB').value, load_mode:$('loadMode').value, lazy_mode:$('lazyMode').value, numa:$('numaPolicy').value, context_tokens:+$('contextTokens').value,
-  gpu_layers:$('gpuLayers').value, host_gpu:$('hostGpu').value, moe_cpu:$('moeCPU').checked,
-  distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, primary_node:$('primaryNode').value, moe_cpu_layers:+$('moeCPULayers').value,
-  moe_cache_mib:+$('moeCache').value, moe_cache_cpu_share:+$('moeCacheCPUShare').value, flash_attention:$('flashAttention').value,
-   kv_cache_type:$('kvCacheType').value, batch_size:+$('batchSize').value,
-   ubatch_size:+$('ubatchSize').value, cache_reuse_tokens:+$('cacheReuseTokens').value,
-  speculative_mode:$('speculativeMode').value, speculative_tokens:+$('speculativeTokens').value, draft_model:$('draftModelSelect').value,vision_projector:$('visionProjector').value.trim()};
+// One field map owns both the form-to-API serialization and API-to-form
+// hydration. Dynamic model/node selects remain owned by setOptions.
+const inferenceFields=[
+ ['runtimeBackend','backend','llama.cpp'],
+ ['threads','threads',1,'number'],
+ ['threadsBatch','threads_batch',0,'number'],
+ ['parallelSlots','parallel_slots',1,'number'],
+ ['promptCacheMiB','prompt_cache_mib',0,'number'],
+ ['loadMode','load_mode','auto'],
+ ['lazyMode','lazy_mode','auto'],
+ ['numaPolicy','numa',''],
+ ['contextTokens','context_tokens',2048,'number'],
+ ['gpuLayers','gpu_layers','auto'],
+ ['hostGpu','host_gpu','auto'],
+ ['moeCPU','moe_cpu',false,'checkbox'],
+ ['distributed','distributed',false,'checkbox'],
+ ['placementStrategy','placement_strategy','speed'],
+ ['moeCPULayers','moe_cpu_layers',0,'number'],
+ ['moeCache','moe_cache_mib',0,'number'],
+ ['moeCacheCPUShare','moe_cache_cpu_share',0,'number'],
+ ['flashAttention','flash_attention','auto'],
+ ['kvCacheType','kv_cache_type','f16'],
+ ['batchSize','batch_size',0,'number'],
+ ['ubatchSize','ubatch_size',0,'number'],
+ ['cacheReuseTokens','cache_reuse_tokens',0,'number'],
+ ['speculativeMode','speculative_mode','off'],
+ ['speculativeTokens','speculative_tokens',0,'number'],
+ ['visionProjector','vision_projector','','trim']
+];
+function settingsFromForm(model){
+ const result={model,primary_node:$('primaryNode').value,draft_model:$('draftModelSelect').value};
+ for(const [id,key,,kind] of inferenceFields){
+  const input=$(id);
+  result[key]=kind==='checkbox'?input.checked:kind==='number'?Number(input.value):kind==='trim'?input.value.trim():input.value;
+ }
+ return result;
 }
+function hydrateSettings(settings){
+ for(const [id,key,fallback,kind] of inferenceFields){
+  const input=$(id),value=settings[key]??fallback;
+  if(kind==='checkbox')input.checked=!!value;
+  else input.value=value===''&&fallback!==''?fallback:value;
+ }
+}
+
 function modelFile(candidate) {
  // Hub paths may contain directories; the Host only stores a safe GGUF basename.
  const base=String(candidate.filename || '').split('/').pop();
@@ -219,6 +261,18 @@ function action(label,className,handler,disabled=false){
 function bindForm(formId,buttonId,handler){
  $(formId).addEventListener('submit',event=>{event.preventDefault();return guard(()=>withBusy($(buttonId),handler))});
 }
+function bindAction(id,handler){
+ $(id).addEventListener('click',()=>guard(()=>withBusy($(id),handler)));
+}
+function setText(node,value){const text=String(value);if(node.textContent!==text)node.textContent=text}
+function emptyState(text){return el('div','empty-state',text)}
+function collectionRow(title,meta,kind='model-item'){
+ const row=el('article',kind),info=el('div','model-info'),controls=el('div','model-actions');
+ info.append(el('strong','model-title',title));
+ if(meta)info.append(el('div','model-meta',meta));
+ row.append(info,controls);
+ return {row,info,controls};
+}
 function updateProgress(bar,received,total){
  bar.max=total>0?total:1;
  if(total>0)bar.value=received;
@@ -232,25 +286,41 @@ function renderProgress(label,received,total){
 function transferLabel(received,total){
  return fmt(received)+(total>0?' / '+fmt(total)+' · '+Math.min(100,Math.floor(received*100/total))+'%':' · Tamanho desconhecido');
 }
-let downloadStructure='',downloadMeter=null,downloadText=null;
+let downloadStructure='',downloadMeter=null,downloadText=null,downloadDetails=null,downloadRows=new Map();
 function renderDownload(download){
  const area=$('downloadProgress'),key=JSON.stringify(download?[download.name,download.status,download.error]:null);
  if(key!==downloadStructure){
-  downloadStructure=key;downloadMeter=null;downloadText=null;area.replaceChildren();
+  downloadStructure=key;downloadMeter=null;downloadText=null;downloadDetails=null;downloadRows.clear();area.replaceChildren();
   if(download){
    const label=download.status==='downloading'?'Baixando':download.status==='completed'?'Concluído':download.status==='cancelled'?'Interrompido':'Falhou';
    area.append(el('div','download-label',label+' · '+download.name));
    if(download.status==='downloading'){
     downloadMeter=renderProgress('Progresso do download de '+download.name,download.received,download.total);
     downloadText=el('small','muted');
-    area.append(downloadMeter,downloadText,action('Interromper download','secondary',()=>api('/api/download','DELETE')));
+    downloadDetails=el('details','disclosure');downloadDetails.append(el('summary','','Conexões de transferência'));
+    area.append(downloadMeter,downloadText,action('Interromper download','secondary',()=>api('/api/download','DELETE')),downloadDetails);
    }else if(download.error)area.append(el('small','muted',download.error));
   }
  }
  if(downloadMeter&&download){
   updateProgress(downloadMeter,download.received,download.total);
-  const text=transferLabel(download.received,download.total);
+  const speed=Number(download.speed_bps)||0,connections=download.connections||[];
+  let text=transferLabel(download.received,download.total);
+  if(speed>0)text+=' · '+fmt(speed)+'/s';
+  if(speed>0&&download.total>download.received)text+=' · ETA ~'+Math.ceil((download.total-download.received)/speed)+' s';
   if(downloadText.textContent!==text)downloadText.textContent=text;
+  if(downloadDetails){
+   downloadDetails.hidden=!connections.length;
+   downloadDetails.children[0].textContent='Conexões ativas: '+connections.length;
+   const ids=new Set(connections.map(c=>c.id));
+   for(const [id,row] of downloadRows){if(!ids.has(id)){row.remove();downloadRows.delete(id)}}
+   for(const c of connections){
+    let row=downloadRows.get(c.id);
+    if(!row){row=el('div','model-meta');row.append(el('small',''),renderProgress('Conexão '+c.id,0,Math.max(0,c.end-c.start)));downloadDetails.append(row);downloadRows.set(c.id,row)}
+    row.children[0].textContent='Conexão '+c.id+' · '+c.file+' · '+transferLabel(c.received,c.end>c.start?c.end-c.start:0);
+    updateProgress(row.children[1],c.received,c.end>c.start?c.end-c.start:0);
+   }
+  }
  }
 }
 async function applyModel(name) {
@@ -302,51 +372,45 @@ async function loadModelFolder() {
  } catch(e) {$('modelFolder').textContent='Indisponível';}
 }
 function renderLoadStatus(status){
- const box=$('loadingStatus'), runtime=status.runtime||{};
+ const box=$('loadingStatus'),runtime=status.runtime||{};
+ $('loadedTopology').hidden=!!runtime.loading;$('inferenceActivity').hidden=!!runtime.loading;
  if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled';if(!box.hidden)box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));return;}
- box.hidden=false;box.replaceChildren(el('strong','', 'Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
+ box.hidden=false;box.replaceChildren(el('strong','','Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
  box.append(action(runtime.phase==='cancelling'?'Cancelando…':'Cancelar carregamento','secondary',async()=>{const state=await api('/api/inference/cancel-load','POST',{});notice(state.phase==='ready'?'O modelo já terminou de carregar.':'Cancelamento solicitado; aguardando encerramento do runtime.');await refresh()},runtime.phase==='cancelling'));
- const activity=el('progress','download-bar');
- activity.setAttribute('aria-label','Carregamento em andamento: progresso real indisponível');
- box.append(activity,el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s · progresso real não informado pelo llama.cpp'));
- const transfer=runtime.rpc_transfer||{};
- const channels=Object.entries(transfer);
+ box.append(el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s'));
+ const transfer=runtime.rpc_transfer||{},channels=Object.entries(transfer);
+ const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
  if(channels.length){
   const sent=channels.reduce((sum,[,node])=>sum+(Number(node.to_guest_bytes)||0),0);
   const last=Math.max(0,...channels.map(([,node])=>Number(node.last_activity_ms)||0));
   const idleFor=last>0?Math.max(0,Math.floor((Date.now()-last)/1000)):null;
-  const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
-  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados aos Guests selecionados durante este carregamento · média '+(sent/1048576/seconds).toFixed(2)+' MiB/s.'));
-  for(const [id,node] of channels){
-   const bytes=Number(node.to_guest_bytes)||0;
-    box.append(el('p','rpc-node-transfer',id.slice(0,12)+'… · '+fmt(bytes)+' enviados · '+(bytes/1048576/seconds).toFixed(2)+' MiB/s médios · '+(Number(node.connected)||0)+' túneis, '+(Number(node.idle)||0)+' livres'));
-  }
-  if(runtime.phase==='loading_model' && Number(runtime.phase_elapsed_seconds)>120 && (last===0 || idleFor>120)){
-   box.append(el('p','rpc-stall-warning','Sem transferência RPC recente há mais de 2 min. Verifique os túneis e logs nativos do Host/Guest; cancele se estiver travado.'));
-  } else if(runtime.phase==='loading_model' && last>0){
-   box.append(el('p','muted','Última atividade RPC há '+idleFor+' s. Bytes transmitidos não equivalem a camadas confirmadas.'));
-  } else {
-   box.append(el('p','muted','Aguardando o início da transferência real aos Guests.'));
-  }
+  box.append(el('p','muted','RPC real: '+fmt(sent)+' enviados · média '+(sent/1048576/seconds).toFixed(2)+' MiB/s.'));
+  if(runtime.phase==='loading_model' && seconds>120 && (last===0 || idleFor>120))box.append(el('p','rpc-stall-warning','Sem transferência RPC recente há mais de 2 min. Verifique os túneis e logs nativos.'));
  }
- if(!loadingPlan || loadingPlanModel!==status.settings.model){
-  box.append(el('p','muted','Calculando distribuição estimada das camadas…'));return;
- }
- box.append(el('p','muted','Distribuição planejada (não é porcentagem carregada):'));
- for(const node of loadingPlan.nodes){
-  const name=node.name||node.endpoint, line=el('div','layer-allocation');
-  line.append(el('strong','',name+' · ~'+node.layers+' de '+loadingPlan.blocks+' camadas'));
-  line.append(el('small','muted',fmt(node.estimated_weight_bytes)+' de pesos estimados / '+fmt(node.budget_bytes)+' disponíveis'));
+ const planned=runtime.upload_plan?.nodes||((loadingPlanModel===status.settings?.model)?loadingPlan?.nodes:[])||[];
+ const rows=new Map(planned.map(n=>[n.node_id||'host',n]));
+ for(const [id] of channels)if(!rows.has(id))rows.set(id,{node_id:id});
+ if(!rows.size){box.append(el('p','muted','Calculando distribuição das camadas…'));return}
+ for(const [id,node] of rows){
+  const wire=transfer[id],name=displayNodeName(id,node.name||wire?.name),line=el('div','layer-allocation');
+  const bytes=Number(wire?.to_guest_bytes)||0,total=Number(node.weight_bytes||node.estimated_weight_bytes)||0;
+  line.append(el('strong','',name+(Number.isInteger(node.layers)?' · '+node.layers+' camadas':'')));
+  if(id==='host'){line.append(el('small','muted',fmt(total)+' de pesos locais estimados'));box.append(line);continue}
   const bar=el('progress','download-bar');
-  bar.max=Math.max(1,loadingPlan.blocks);bar.value=node.layers;
-  bar.setAttribute('aria-label',name+': participação estimada de '+node.layers+' camadas em '+loadingPlan.blocks);
-  line.append(bar);box.append(line);
+  // The denominator is a placement estimate, not an acknowledged upload total.
+  // Cache hits, protocol overhead and retries prevent an exact percentage.
+  if(total>0){bar.max=total;bar.value=Math.min(bytes,total)}
+  bar.setAttribute('aria-label',name+': bytes RPC enviados sobre pesos estimados');
+  line.append(el('small','muted',fmt(bytes)+' enviados'+(total>0?' / ~'+fmt(total)+' estimados':' · total desconhecido')+' · '+(bytes/1048576/seconds).toFixed(2)+' MiB/s'),bar);
+  box.append(line);
  }
+ box.append(el('p','muted','Barras aproximadas: bytes RPC incluem protocolo e retries; cache pode evitar o envio de pesos. Conclusão confirmada somente pelo runtime.'));
 }
 async function updateLoadingPlan(status){
- if(!status.runtime?.loading || !status.settings?.model || loadingPlanModel===status.settings.model)return;
- loadingPlanModel=status.settings.model;loadingPlan=null;
- try{loadingPlan=await api('/api/plan')}catch(e){console.warn('Placement estimate unavailable during load',e.message)}
+ if(!status.runtime?.loading || status.runtime.upload_plan || !status.settings?.model || loadingPlanModel===status.settings.model)return;
+ const session=sessionEpoch,model=status.settings.model;
+ loadingPlanModel=model;loadingPlan=null;
+ try{const plan=await api('/api/plan');if(session!==sessionEpoch||loadingPlanModel!==model)return;loadingPlan=plan}catch(e){if(session!==sessionEpoch)return;console.warn('Placement estimate unavailable during load',e.message)}
  if(latestStatus?.runtime?.loading)renderLoadStatus(latestStatus);
 }
 let localModelStructure='';
@@ -356,10 +420,7 @@ function renderLocalModels(models,status) {
  localModelStructure=key;list.replaceChildren();
  if(!models.length){list.append(el('div','empty-state','Nenhum GGUF salvo. Pesquise no catálogo abaixo para baixar.'));return;}
  for(const m of models) {
-  const row=el('article','model-item');
-  const info=el('div','model-info');info.append(el('strong','model-title',m.name));
-  info.append(el('div','model-meta',fmt(m.size_bytes)+(m.moe?' · MoE ('+m.expert_count+' experts)':'')));
-  const controls=el('div','model-actions');
+  const {row,controls}=collectionRow(m.name,fmt(m.size_bytes)+(m.moe?' · MoE ('+m.expert_count+' experts)':''));
   const loaded=residentModelNames.includes(m.name) || (status.runtime.loaded && status.runtime.model===m.name);
   const blocked=loaded || status.runtime.loading || actionBusy;
   if(loaded)controls.append(el('span','model-tag active','Em uso'));
@@ -369,7 +430,7 @@ function renderLocalModels(models,status) {
    await api('/api/models/'+encodeURIComponent(m.name),'DELETE');
    notice('Modelo excluído: '+m.name);settingsInitialized=false;await refresh();
   },blocked));
-  row.append(info,controls);list.append(row);
+  list.append(row);
  }
 }
 function placement(model) {
@@ -407,10 +468,7 @@ function renderCatalog(){
  if(!filtered.length){dest.append(el('div','empty-state',!catalogSearched?'Use a busca acima para explorar modelos GGUF.':catalogModels.length?'Nenhum resultado para este filtro.':'Nenhum resultado. Experimente outra pesquisa.'));return;}
  for(const m of filtered) {
   const name=modelFile(m);const installed=installedNames.has(name);
-  const row=el('article','catalog-item');
-  const info=el('div','model-info');
-  info.append(el('strong','model-title',m.filename));
-  info.append(el('div','model-meta',m.repository+' · '+fmt(m.size_bytes)));
+  const {row,info,controls:actions}=collectionRow(m.filename,m.repository+' · '+fmt(m.size_bytes),'catalog-item');
   if(m.decision_model)info.append(el('span','model-tag','Candidato System One'));
   const tier=placement(m);
   const tags=el('div','model-tags');tags.append(el('span','model-tag '+tier.kind,tier.name));
@@ -421,13 +479,12 @@ function renderCatalog(){
    const bar=renderProgress('Baixando '+name,transfer.received,transfer.total),label=el('div','model-meta',transferLabel(transfer.received,transfer.total));
    catalogProgress.push({bar,label});info.append(bar,label);
   }
-  const actions=el('div','model-actions');
   if(installed)actions.append(action('Aplicar','',()=>applyModel(name),actionBusy));
   else if(name && m.url) {
    actions.append(action('Baixar','secondary',()=>downloadCandidate(m,false),busy||actionBusy));
    actions.append(action('Baixar e aplicar','',()=>downloadCandidate(m,true),busy||actionBusy));
   } else actions.append(el('span','muted','Arquivo indisponível'));
-  row.append(info,actions);dest.append(row);
+  dest.append(row);
  }
 }
 // Never infer 0% from absent hardware counters. A nil metric is unavailable.
@@ -447,75 +504,101 @@ function metricRow(name,value,suffix,used,total) {
   line.append(el('small','muted',fmt(used)+' utilizados de '+fmt(total)));
  return line;
 }
-function renderNodeResources(devices) {
- const area=$('nodeResourceCards');area.replaceChildren();
- const nodes=Array.isArray(devices)?devices:[];
- if(!nodes.length) {area.append(el('p','muted','Nenhum dispositivo disponível.'));return;}
- for(const n of nodes) {
-  const card=el('article','resource-node');
-  const head=el('div','resource-node-head');
-  const identity=el('div','');
-  identity.append(el('strong','',String(n.name||'Dispositivo sem nome')),el('small','muted',
-    (n.id?'Guest · ':'Host · ')+String(n.platform||'desconhecido')));
-  const live=n.status==='online';
-  const state=el('span','resource-state',live?'Online':'Offline');
-  head.append(identity,state);card.append(head);
+const deviceCards=new Map();
+function renderNodeResources(devices,registered=[]){
+ const area=$('nodeResourceCards'),nodes=new Map();
+ for(const n of registered)nodes.set(n.id,n);
+ for(const n of Array.isArray(devices)?devices:[])nodes.set(n.id||'host',{...nodes.get(n.id||'host'),...n});
+ for(const id of deviceCards.keys())if(!nodes.has(id)){deviceCards.get(id).card.remove?.();deviceCards.delete(id)}
+ if(!nodes.size){area.replaceChildren(el('p','muted','Nenhum dispositivo disponível.'));return}
+ if(!deviceCards.size)area.replaceChildren();
+ for(const [id,n] of nodes){
+  const live=n.status==='online',name=displayNodeName(id,n.name);
+  let view=deviceCards.get(id);
+  if(!view){
+   const card=el('article','resource-node'),head=el('div','resource-node-head'),identity=el('div',''),state=el('span','resource-state'),metrics=el('div','resource-body'),tools=el('details','device-tools');
+   const summary=el('summary','','⋯');summary.setAttribute('aria-label','Ferramentas do dispositivo');
+   const menu=el('div','device-menu');tools.append(summary,menu);head.append(identity,state,tools);card.append(head,metrics);
+   view={card,identity,state,metrics,tools,menu,signature:''};deviceCards.set(id,view);area.append(card);
+  }
+  const {card,identity,state,metrics,tools,menu}=view;
+  identity.replaceChildren(el('strong','',name),el('small','muted',(id==='host'?'Host · ':'Guest · ')+(n.platform||'desconhecido')+(n.architecture?' / '+n.architecture:'')));
+  state.textContent=(live?'Online':'Offline')+(n.busy?' · ocupado':'');
+  tools.hidden=id==='host';
+  const signature=JSON.stringify([name,live,!!n.runtime?.benchmark,!!n.runtime?.rpc_ready]);
+  if(id!=='host'&&view.signature!==signature){
+   view.signature=signature;menu.replaceChildren();
+   const add=(label,kind,fn)=>menu.append(action(label,kind,async()=>{tools.open=false;await fn()}));
+   if(live&&n.runtime?.benchmark)add('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(id),'POST',{});await refreshObservations();notice('Medição de rede concluída')});
+   if(live&&n.runtime?.rpc_ready)add('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))});
+   add('Revogar acesso','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(id),'DELETE');notice('Nó revogado');await refresh()});
+  }
+  metrics.replaceChildren();
+  if(id!=='host')metrics.append(el('p','muted',live?(n.runtime?.rpc_ready?'RPC conectado':'RPC desconectado'):'Dispositivo offline'));
+  if(n.models?.length)metrics.append(el('p','muted','Modelos: '+n.models.join(', ')));
   const seen=n.last_seen?Date.parse(n.last_seen):NaN;
   const age=Number.isFinite(seen)?Math.max(0,Math.round((Date.now()-seen)/1000)):null;
-  card.append(el('p','resource-seen',
+  metrics.append(el('p','resource-seen',
     !live?'Última medição indisponível (dispositivo offline)':age===null?'Horário da medição desconhecido':'Última comunicação há '+age+' s'));
-  if (!live) {card.append(el('p','muted','Sem amostras atuais de recursos.'));area.append(card);continue;}
+  if (!live) {metrics.append(el('p','muted','Sem amostras atuais de recursos.'));continue;}
   const cpu=percent(n.cpu_usage_percent);
   const ramTotal=measuredBytes(n.ram_bytes),ramUsed=measuredBytes(n.ram_used_bytes);
   const ram=ramTotal>0 && ramUsed!==null && ramUsed<=ramTotal?ramUsed/ramTotal*100:null;
-  card.append(metricRow('CPU',cpu,'%',null,null));
-  card.append(metricRow('RAM',ram,'%',ramUsed,ramTotal));
+  metrics.append(metricRow('CPU',cpu,'%',null,null));
+  metrics.append(metricRow('RAM',ram,'%',ramUsed,ramTotal));
   const gpus=Array.isArray(n.gpus)?n.gpus:[];
-  if(!gpus.length) card.append(el('p','resource-empty','GPU não informada para este dispositivo'));
+  if(!gpus.length) metrics.append(el('p','resource-empty','GPU não informada para este dispositivo'));
   for (const g of gpus) {
    const gpuName=String(g.name||'GPU');
    const gpuUsage=percent(g.usage_percent);
    const vramTotal=measuredBytes(g.vram_bytes),vramUsed=measuredBytes(g.vram_used_bytes);
    const vram=vramTotal>0&&vramUsed!==null&&vramUsed<=vramTotal?vramUsed/vramTotal*100:null;
-   card.append(el('div','resource-gpu-title',gpuName));
-   card.append(metricRow('GPU',gpuUsage,'%',null,null));
-   card.append(metricRow('VRAM',vram,'%',vramUsed,vramTotal));
+   metrics.append(el('div','resource-gpu-title',gpuName));
+   metrics.append(metricRow('GPU',gpuUsage,'%',null,null));
+   metrics.append(metricRow('VRAM',vram,'%',vramUsed,vramTotal));
   }
-  area.append(card);
  }
 }
-let refreshEpoch=0;
-async function refresh(){
+let refreshEpoch=0,refreshInFlight=null;
+async function refresh(background=false){
+ if(background&&refreshInFlight)return refreshInFlight;
+ if(refreshInFlight){await refreshInFlight.catch(()=>{});if(!token)return;return refresh(background)}
+ const task=refreshSnapshot();refreshInFlight=task;
+ try{return await task}finally{if(refreshInFlight===task)refreshInFlight=null}
+}
+async function refreshSnapshot(){
+ if(!token)return;
  const epoch=++refreshEpoch,session=token;
  const [status,models,nodes,cluster,resident]=await Promise.all([api('/api/status'),api('/api/models'),api('/v1/nodes'),api('/api/cluster'),api('/api/resident-models')]);
  if(epoch!==refreshEpoch||session!==token)return;
  renderResidentModels(resident);
  $('residentCount').textContent=resident.length;
  latestStatus=status;localModels=models;
+ deviceNames=new Map([...nodes,...(cluster.devices||[])].filter(n=>n.name).map(n=>[n.id||'host',n.name]));
  if(activityVisible())await refreshTopology();else stopActivity();
+ if(epoch!==refreshEpoch||session!==token)return;
  renderLoadStatus(status);
  await updateLoadingPlan(status);
  if(epoch!==refreshEpoch||session!==token)return;
- renderNodeResources(cluster.devices);
+ renderNodeResources(cluster.devices,nodes);
  $('resourceRefresh').textContent='Atualizado agora · heartbeats dos Guests a cada 15 s';
  const c=cluster.resources;const names=Object.keys(cluster.rpc_guests||{}).length;$('capacity').textContent=c.online+' nós online · '+fmt(c.aggregate_budget_bytes)+' orçamento agregado estimado · '+names+' Guests RPC conectados';
  $('nodeCount').textContent=nodes.length;$('onlineCount').textContent=nodes.filter(n=>n.status==='online').length;
  $('overviewCapacity').textContent=fmt(c.aggregate_budget_bytes);
+ const activeModels=[...new Set([...(status.runtime.loaded&&status.runtime.model?[status.runtime.model]:[]),...resident])];
+ $('overviewActiveModel').textContent=activeModels.join(' · ')||'Nenhum modelo carregado';
  $('modelState').textContent=status.runtime.loading
   ? 'Carregando · '+String(status.runtime.phase||'preparando').replace(/_/g,' ')
   : status.runtime.phase==='cancelled'?'Carregamento cancelado'
   : status.runtime.error ? 'Falha · '+status.runtime.error
-  : status.runtime.loaded?'Carregado':'Descarregado';
+  : activeModels.length?'Carregado':'Descarregado';
  const s=status.settings;
  const prior=$('modelSelect').value;
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
   $('primaryNode').dataset.initialized='no';
-  for(const [id,v] of Object.entries({threads:s.threads,threadsBatch:s.threads_batch||0,parallelSlots:s.parallel_slots||1,promptCacheMiB:s.prompt_cache_mib||0,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
-  $('runtimeBackend').value=s.backend||'llama.cpp';$('visionProjector').value=s.vision_projector||'';
-  $('hostGpu').value=s.host_gpu||'auto';
-  $('loadMode').value=s.load_mode||'auto'; $('lazyMode').value=s.lazy_mode||'auto'; $('numaPolicy').value=s.numa||''; $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'speed'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
+  hydrateSettings(s);settingsInitialized=true;
   configureBackendUI();
  }
  renderLocalModels(models,status);renderCatalog();
@@ -528,11 +611,6 @@ async function refresh(){
  if(guests.length)benchOptions.push(['cluster','Cluster (planejamento atual)']);
  benchOptions.push(...guests.map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)]));
  setOptions('inferenceBenchTarget',benchOptions,$('inferenceBenchTarget').value);
- const tbody=$('nodes');tbody.replaceChildren();for(const n of nodes){
- const gpus=Array.isArray(n.gpus)?n.gpus:[];
- const gpuLine=gpus.map(g=>g.name+': '+(g.free_vram_bytes>0?fmt(g.free_vram_bytes)+' livres / '+fmt(g.vram_bytes):g.vram_bytes>0?fmt(g.vram_bytes)+' total (livre desconhecido)':'VRAM compartilhada / desconhecida')).join(' · ');
- const memoryLine='RAM: '+(n.ram_bytes>0?fmt(n.available_ram_bytes)+' livres / '+fmt(n.ram_bytes):'não informada')+(gpuLine?' · VRAM: '+gpuLine:'');
- const tr=document.createElement('tr');for(const v of [n.name,n.platform+' / '+n.architecture,n.status+(n.busy?' · ocupado':'')+(n.status==='online'?(n.runtime?.rpc_ready?' · RPC conectado':' · RPC desconectado'):''),memoryLine,(n.models||[]).join(', ')||'—']){const td=document.createElement('td');td.textContent=v;tr.append(td);}const td=document.createElement('td');td.append(action('Revogar','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+n.name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(n.id),'DELETE');notice('Nó revogado');await refresh()}));if(n.runtime?.benchmark && n.status==='online')td.append(action('Medir rede','secondary',async()=>{await api('/v1/bench/'+encodeURIComponent(n.id),'POST',{});await refreshObservations()}));if(n.runtime?.rpc_ready && n.status==='online')td.append(action('Medir dispositivos RPC','secondary',async()=>{const result=await api('/api/bench/rpc-device/'+encodeURIComponent(n.id),'POST',{});notice(result.devices.map(d=>'RPC'+d.device+' '+(d.bytes/1048576)+' MiB: '+d.upload_mib_per_second.toFixed(1)+' / '+d.readback_mib_per_second.toFixed(1)+' MiB/s').join(' · '))}));tr.append(td);tbody.append(tr)}
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -582,7 +660,9 @@ function renderChat(){
  followChat(true);
 }
 function confirmAction(text,label){
- const dialog=$('confirmation');$('confirmationText').textContent=text;$('confirmAction').textContent=label;
+ const dialog=$('confirmation');
+ if(dialog.open)return Promise.resolve(false);
+ $('confirmationText').textContent=text;$('confirmAction').textContent=label;
  return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.returnValue='cancel';dialog.showModal()});
 }
 async function readChatDocument(file,signal) {
@@ -608,21 +688,62 @@ function readChatImage(file){
  if(file.size>4*1048576||!['image/jpeg','image/png'].includes(file.type))return Promise.reject(Error('Selecione JPEG ou PNG de até 4 MiB.'));
  return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file);});
 }
+// The backend owns token accounting. SSE chunks and characters are not tokens.
+// Missing or inconsistent reasoning counts must never become a fabricated zero.
+function chatRunMetrics({usage,timings,elapsed,firstOutput,firstText,firstReasoning,lastReasoning,hasReasoning,external}){
+ const count=v=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0?v:null;
+ const positive=v=>typeof v==='number'&&Number.isFinite(v)&&v>0?v:null;
+ const duration=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null;
+ const completion=count(usage?.completion_tokens),native=count(timings?.predicted_n);
+ const reportedReasoning=count(usage?.completion_tokens_details?.reasoning_tokens);
+ const reasoning=completion!==null&&reportedReasoning!==null&&reportedReasoning<=completion?reportedReasoning:null;
+ const nativeMs=positive(timings?.predicted_ms),promptMs=positive(timings?.prompt_ms);
+ const nativeRate=native!==null&&native>0&&nativeMs!==null?native*1000/nativeMs:null;
+ const wall=positive(elapsed),generated=completion??native;
+ const totalRate=generated!==null&&generated>0&&wall!==null?generated/wall:null;
+ const first=duration(firstOutput),visible=duration(firstText),thinking=duration(firstReasoning),lastThinking=duration(lastReasoning);
+ const parts=[];
+ if(external)parts.push('Provedor externo');
+ if(wall!==null)parts.push('Tempo total: '+wall.toFixed(2)+' s');
+ if(first!==null)parts.push('Primeiro evento gerado (TTFT observado): '+first.toFixed(2)+' s');
+ if(visible!==null)parts.push('Primeiro texto: '+visible.toFixed(2)+' s');
+ if(promptMs!==null)parts.push('Prefill nativo: '+(promptMs/1000).toFixed(2)+' s');
+ if(totalRate!==null)parts.push('Média total (inclui prompt): '+totalRate.toFixed(1)+' t/s');
+ if(nativeRate!==null)parts.push('Decode nativo (inclui reasoning): '+nativeRate.toFixed(1)+' t/s');
+ if(completion!==null)parts.push('Tokens de saída: '+completion);
+ else if(native!==null)parts.push('Tokens decodificados (runtime): '+native);
+ if(reasoning!==null){
+  parts.push('Reasoning: '+reasoning+' tokens');
+  parts.push('Saída sem reasoning: '+(completion-reasoning)+' tokens');
+ }else if(hasReasoning||reportedReasoning!==null)parts.push('Tokens de reasoning e resposta: contagem separada indisponível');
+ if(thinking!==null&&lastThinking!==null&&lastThinking>=thinking)parts.push('Janela de reasoning observada: '+(lastThinking-thinking).toFixed(2)+' s');
+ if(hasReasoning||reasoning>0)parts.push('Velocidade por fase: não informada pelo runtime');
+ const summary=nativeRate!==null?'Decode '+nativeRate.toFixed(1)+' t/s (total)':totalRate!==null?'Média '+totalRate.toFixed(1)+' t/s (total)':wall!==null?'Tempo '+wall.toFixed(2)+' s':'Métricas da geração';
+ return {summary,text:parts.join(' · ')};
+}
+function setChatMetrics(text,summary='Métricas da geração'){
+ $('chatMetrics').textContent=text;
+ $('chatMetricsSummary').textContent=summary;
+ const panel=$('chatMetricsPanel');panel.open=false;panel.hidden=!text;
+}
 async function sendChat(){
  if(chatController)return;
  const prompt=$('prompt').value.trim();if(!prompt)return;
- const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];
+ const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];const chatSession=sessionEpoch;
  const allowFallback=$('allowExternalFallback').checked;$('allowExternalFallback').checked=false;
  const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
- const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let rpcTraffic=null;let done=false;let reader;
+ const start=performance.now();let first=null,firstGenerated=null,firstReasoning=null,lastReasoning=null,timings=null;let answer='',reasoning='',usage=null,rpcTraffic=null,done=false,reader;
  renderChat();const output=$('chatOutput');
  if(!chatHistory.length)output.replaceChildren();
  const userMessage=chatMessage('user',prompt),assistantMessage=el('article','chat-message assistant');
  const reply=el('p','','Gerando resposta…'),details=el('details','reasoning-details'),summary=el('summary','','Raciocínio do modelo'),thoughts=el('p','reasoning-content');
  details.append(summary,thoughts);details.hidden=true;
  assistantMessage.append(el('strong','','NodexLM'),details,reply);
- output.append(userMessage,assistantMessage);followChat(true);
+ output.append(userMessage,assistantMessage);
+ $('prompt').value='';$('chatDocument').value='';$('chatImage').value='';setChatMetrics('');
+ for(const disclosure of document.querySelectorAll?.('.chat-tools details')||[])disclosure.open=false;
+ followChat(true);
  try{
   const effort=$('chatEffort').value;
   if(!effortLevels.has(effort))throw Error('Esforço de raciocínio inválido.');
@@ -632,13 +753,15 @@ async function sendChat(){
   if(effort==='none'&&thinkingBudget>0)throw Error('Desative o orçamento de tokens quando o thinking estiver desligado.');
   const documentText=await readChatDocument(documentFile,controller.signal);
   const imageURL=await readChatImage(imageFile);
-  if(controller.signal.aborted)return;
+  if(controller.signal.aborted)throw Error('Geração interrompida.');
   if(new TextEncoder().encode(prompt+documentText).length>65536)throw Error('Mensagem com documento excede 64 KiB.');
   const content=imageURL?[{type:'text',text:prompt+documentText},{type:'image_url',image_url:{url:imageURL}}]:prompt+documentText;
   const payload={model,messages:[...chatHistory.slice(-62),{role:'user',content}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
   if(effort!=='auto')payload.reasoning_effort=effort;
   if(thinkingBudget>0)payload.reasoning_budget_tokens=thinkingBudget;
   const response=await fetch(imageURL?'/v1/chat/completions':'/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify(payload)});
+  if(controller.signal.aborted||chatSession!==sessionEpoch)return;
+  if(response.status===401){endSession();return}
   if(!response.ok&&allowFallback&&!imageURL&&[404,409,503].includes(response.status)){
    await response.body?.cancel();
    reply.textContent='Enviando ao provedor externo autorizado…';
@@ -660,51 +783,44 @@ async function sendChat(){
     const event=JSON.parse(data);if(event.error)throw Error(event.error.message||event.error);
     if(event.usage)usage=event.usage;
     if(event.nodexlm_rpc_traffic)rpcTraffic=event.nodexlm_rpc_traffic;
-    const timing=event.timings;
-    if(Number(timing?.predicted_ms)>0&&Number(timing?.predicted_n)>0){
-     nativeDecode=1000*Number(timing.predicted_n)/Number(timing.predicted_ms);
-    }
+    if(event.timings&&typeof event.timings==='object')timings={...timings,...event.timings};
     const thinking=event.choices?.[0]?.delta?.reasoning_content||'';
-    if(thinking){if(firstGenerated===null)firstGenerated=performance.now();reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning;followChat()}
+    if(thinking){const now=performance.now();if(firstGenerated===null)firstGenerated=now;if(firstReasoning===null)firstReasoning=now;lastReasoning=now;reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning;followChat()}
     const text=event.choices?.[0]?.delta?.content||'';
     if(text){if(firstGenerated===null)firstGenerated=performance.now();if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer;followChat()}
    }
    if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
   }
   }
-  if(controller.signal.aborted)return;
-  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();$('prompt').value='';$('chatDocument').value='';$('chatImage').value='';
+  if(controller.signal.aborted||chatSession!==sessionEpoch)return;
+  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();if($('prompt').value.trim()===prompt)$('prompt').value='';if($('chatDocument').files?.[0]===documentFile)$('chatDocument').value='';if($('chatImage').files?.[0]===imageFile)$('chatImage').value='';
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
-  const tokens=Number(usage?.completion_tokens)||0;
-  const totalRate=tokens>0?tokens/elapsed:0;
-  const activeSec=firstGenerated===null?0:(performance.now()-firstGenerated)/1000;
-  const estimatedRate=tokens>3&&activeSec>0.15?tokens/activeSec:0;
-  let metrics='Tempo total: '+elapsed.toFixed(2)+' s';
-  if(first!==null)metrics+=' · Primeiro texto: '+((first-start)/1000).toFixed(2)+' s';
-  if(totalRate>0)metrics+=' · Média total (inclui prompt): '+totalRate.toFixed(1)+' t/s';
-  if(nativeDecode!==null)metrics+=' · Decode nativo: '+nativeDecode.toFixed(1)+' t/s';
-  else if(estimatedRate>0)metrics+=' · Geração após 1º evento (estimativa): '+estimatedRate.toFixed(1)+' t/s';
-  if(usage?.completion_tokens_details?.reasoning_tokens)metrics+=' · Thinking: '+usage.completion_tokens_details.reasoning_tokens+' tokens';
-  if(rpcTraffic?.nodes?.length)metrics+=' · RPC nesta resposta: '+rpcTraffic.nodes.map(n=>n.name+': '+fmt(n.bytes)).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
-  $('chatMetrics').textContent=(reader?'':'Provedor externo · ')+metrics;
+  const relative=stamp=>stamp===null?null:(stamp-start)/1000;
+  const metrics=chatRunMetrics({usage,timings,elapsed,firstOutput:relative(firstGenerated),firstText:relative(first),firstReasoning:relative(firstReasoning),lastReasoning:relative(lastReasoning),hasReasoning:!!reasoning,external:!reader});
+  if(rpcTraffic?.nodes?.length)metrics.text+=' · RPC nesta resposta: '+rpcTraffic.nodes.map(n=>displayNodeName(n.node_id,n.name)+': '+fmt(n.bytes)).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
+  setChatMetrics(metrics.text,metrics.summary);
  }catch(error){
-  const message=controller.signal.aborted?'Geração interrompida.':error.message;$('chatMetrics').textContent=message;
+  if(chatSession!==sessionEpoch)return;
+  const message=controller.signal.aborted?'Geração interrompida.':error.message;setChatMetrics(message,message);
   if(!answer)reply.textContent=message;if(!controller.signal.aborted)notice(message);
+  // A failed message can be retried without overwriting a new draft.
+  if(!$('prompt').value&&!answer&&!controller.signal.aborted)$('prompt').value=prompt;
  }finally{
   if(reader)await reader.cancel().catch(()=>{});
   if(chatController===controller)chatController=null;$('sendChat').disabled=false;$('stopChat').disabled=true;
  }
 }
-bindForm('login','loginSubmit',async()=>{token=$('secret').value.trim();await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')});
-$('decisionForm').addEventListener('submit',event=>{
- event.preventDefault();
- guard(async()=>{
+$('toggleSecret').addEventListener('click',()=>{
+ const field=$('secret'),visible=field.type==='text',button=$('toggleSecret');
+ field.type=visible?'password':'text';button.textContent=visible?'Mostrar':'Ocultar';
+ button.setAttribute('aria-pressed',String(!visible));button.setAttribute('aria-label',visible?'Mostrar credencial':'Ocultar credencial');
+});
+bindForm('login','loginSubmit',async()=>{sessionEpoch++;token=$('secret').value.trim();await api('/api/status');sessionStorage.setItem('nodexlm-admin',token);$('secret').value='';settingsInitialized=false;setupAuth();renderChat();await Promise.all([refresh(),loadModelFolder()]);notice('Conectado')});
+bindForm('decisionForm','runDecision',async()=>{
   let questions;
   try{questions=JSON.parse($('decisionQuestions').value)}catch{throw Error('Perguntas devem ser um objeto JSON válido.')}
   if(!questions || typeof questions!=='object' || Array.isArray(questions))throw Error('Perguntas devem ser um objeto JSON.');
-  const button=$('runDecision');
-  button.disabled=true;
   $('decisionOutput').textContent='Avaliando…';
   try{
    const result=await api('/v1/systemone','POST',{model:$('decisionModel').value.trim(),state:$('decisionState').value,questions});
@@ -713,10 +829,19 @@ $('decisionForm').addEventListener('submit',event=>{
   }catch(error){
    $('decisionOutput').textContent=error.message;
    throw error;
-  }finally{button.disabled=false}
- });
+  }
 });
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;$('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();setupAuth()});
+function endSession(){
+ sessionStorage.removeItem('nodexlm-admin');token='';sessionEpoch++;refreshEpoch++;stopActivity();
+ catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;
+ $('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();
+ clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
+ $('secret').type='password';$('toggleSecret').textContent='Mostrar';$('toggleSecret').setAttribute('aria-pressed','false');$('toggleSecret').setAttribute('aria-label','Mostrar credencial');
+ $('prompt').value='';$('overviewPrompt').value='';$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;
+ $('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();$('chatMetrics').textContent='';
+ $('confirmation').close?.();setupAuth();$('secret').focus();
+}
+$('logout').addEventListener('click',endSession);
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
 bindForm('importDirectoryForm','importDirectoryButton',async()=>{
  try{const result=await api('/api/models/import-directory','POST',{source:$('importDirectoryPath').value.trim(),link:$('importDirectoryLink').checked});notice(result.imported+' modelos importados');}finally{await refresh()}
@@ -733,8 +858,8 @@ function configureBackendUI(){
 }
 $('runtimeBackend').addEventListener('change',configureBackendUI);
 bindForm('settingsForm','saveSettings',async()=>{await api('/api/settings','PUT',settingsFromForm($('modelSelect').value));notice('Configuração salva');settingsInitialized=false;await refresh()});
-$('load').addEventListener('click',()=>guard(async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()}));
-$('unload').addEventListener('click',()=>guard(async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()}));
+bindAction('load',async()=>{loadingPlan=null;loadingPlanModel='';await api('/api/load','POST',{});notice('Carregamento iniciado; acompanhe o estado no painel.');await refresh()});
+bindAction('unload',async()=>{await api('/api/unload','POST',{});notice('Modelo descarregado');await refresh()});
 // The 8-character code is a short-lived *pairing* credential, not the
 // admin bearer token nor an already-enrolled node's long-lived credential.
 let pairingSession = null;
@@ -825,18 +950,15 @@ function pairingTick(){
   return guard(()=>generatePairingCode(true));
  }
 }
-$('pairQR').addEventListener('click',()=>guard(async()=>{
+bindAction('pairQR',async()=>{
  if(!pairingSession||!pairingSecondsLeft())throw Error('Gere um código ativo antes do QR.');
- const session=pairingSession, startingToken=token, button=$('pairQR');
- button.disabled=true;
- try{
+ const session=pairingSession, startingToken=token;
   const host=$('pairQRHost').value.trim();
   const result=await api('/api/pairing/qr','POST',{host,code:session.code});
   if(token!==startingToken||pairingSession!==session||!pairingSecondsLeft()||$('pairQRHost').value.trim()!==host)return;
   if(!result.png||result.png.length>350000||!/^[A-Za-z0-9+/=]+$/.test(result.png))throw Error('QR inválido.');
   $('pairQRImage').src='data:image/png;base64,'+result.png;$('pairQRImage').hidden=false;
- }finally{button.disabled=false}
-}));
+});
 $('pairQRHost').addEventListener('input',clearPairingQR);
 $('pair').addEventListener('click',()=>guard(()=>generatePairingCode(false)));
 $('pairAutoRenew').addEventListener('change',()=>{
@@ -845,7 +967,7 @@ $('pairAutoRenew').addEventListener('change',()=>{
 });
 setInterval(pairingTick,1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)return pairingTick()});
-$('previewPlan').addEventListener('click',()=>guard(async()=>{
+bindAction('previewPlan',async()=>{
  const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.strategy||'capacity'))); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
  for(const suggestion of plan.suggestions||[])if(suggestion.kind==='speculative_ngram')area.append(el('p','muted',suggestion.reason+' RTT: '+suggestion.round_trip_ms.toFixed(1)+' ms.'));else if(suggestion.kind==='kv_q8_0')area.append(el('p','muted',suggestion.reason));
  for(const node of plan.nodes) {
@@ -857,7 +979,7 @@ $('previewPlan').addEventListener('click',()=>guard(async()=>{
  for(const node of plan.nodes){if(node.network)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.network.round_trip_ms.toFixed(2)+' ms RTT · '+node.network.mib_per_second.toFixed(1)+' MiB/s de eco'));}
  for(const node of plan.nodes){if(node.tokens_per_second)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.tokens_per_second.toFixed(1)+' tokens/s observados'));}
  area.append(el('p','muted','Camadas e KV F16 são estimativas; a alocação final depende do runtime. Aviso de rede: RTT acima de 10 ms ou eco abaixo de 50 MiB/s. Tokens/s são medidos, sem previsão pela banda; mudar a configuração ou os nós pode invalidar a comparação.'));
-}));
+});
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
 $('chatForm').addEventListener('invalid',e=>{const details=e.target.closest?.('details');if(details)details.open=true},true);
 $('chatOutput').addEventListener('scroll',()=>{const output=$('chatOutput');chatFollow=output.scrollHeight-output.scrollTop-output.clientHeight<80});
@@ -880,13 +1002,13 @@ $('chatEffort').addEventListener('change',()=>{
 });
 $('chatThinkingBudget').addEventListener('change',saveReasoningPreference);
 $('stopChat').addEventListener('click',()=>chatController?.abort());
-$('clearChat').addEventListener('click',()=>guard(async()=>{
+bindAction('clearChat',async()=>{
  if(!await confirmAction('Apagar o histórico de conversas salvo neste navegador?','Apagar histórico'))return;
- chatController?.abort();chatHistory=[];saveChat();renderChat();$('chatMetrics').textContent='Histórico apagado.';
-}));
+ chatController?.abort();chatHistory=[];saveChat();renderChat();setChatMetrics('Histórico apagado.','Histórico apagado.');
+});
 
 
-setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(refresh)},10000);
+setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(()=>refresh(true))},10000);
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
  if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;
@@ -934,29 +1056,27 @@ function renderResidentModels(models){
  setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
  if(!changed)return;
  list.replaceChildren();
+ if(!models.length){list.append(emptyState('Nenhum modelo residente. Carregue um GGUF para começar.'));return;}
  for(const model of models){
-  const row=el('div','model-item'),info=el('div','model-info'),controls=el('div','model-actions');
-  info.append(el('strong','model-title',model));controls.append(action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));
-  row.append(info,controls);list.append(row);
+  const {row,controls}=collectionRow(model,'');
+  controls.append(action('Descarregar','secondary',async()=>{await api('/api/resident-models/'+encodeURIComponent(model),'DELETE');await refresh()}));
+  list.append(row);
  }
 }
-$('loadAdditional').addEventListener('click',()=>guard(async()=>{
- const button=$('loadAdditional');button.disabled=true;
- try{await api('/api/resident-models','POST',{model:$('modelSelect').value});await refresh();notice('Modelo adicional carregado')}finally{button.disabled=false}
-}));
-$('inferenceBench').addEventListener('click',()=>guard(async()=>{
- const button=$('inferenceBench');button.disabled=true;
- try{
+bindAction('loadAdditional',async()=>{
+await api('/api/resident-models','POST',{model:$('modelSelect').value});await refresh();notice('Modelo adicional carregado')
+});
+bindAction('inferenceBench',async()=>{
+
    const target=$('inferenceBenchTarget').value;
    const sample=await api('/api/bench/inference','POST',{model:$('modelSelect').value,node_id:target,extended:$('extendedBench').checked});
    const basis=sample.rate_basis==='native_decode'?'decode nativo':'média com prefill';
    notice((target?'Guest':'Host')+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+basis);
    await refreshObservations();
-  }finally{button.disabled=false}
-}));
-$('autotuneBench').addEventListener('click',()=>guard(async()=>{
- const button=$('autotuneBench');button.disabled=true;
- try{
+  
+});
+bindAction('autotuneBench',async()=>{
+
   const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value,node_id:$('inferenceBenchTarget').value});
   const area=$('autotuneResults');area.replaceChildren();
   if(report.placement_fixed)area.append(el('p','muted','Placement fixado do baseline; candidatos com memória insuficiente são rejeitados.'));
@@ -964,16 +1084,16 @@ $('autotuneBench').addEventListener('click',()=>guard(async()=>{
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')+' · '+(s.speculative_tokens||0)+' tokens (0 = nativo)'));
    const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
   }else area.append(el('p','muted','Nenhum ganho comparável de decode ou prefill dentro dos limites.'));
- }finally{button.disabled=false}
-}));
-$('refreshObservations').addEventListener('click',()=>guard(refreshObservations));
+ 
+});
+bindAction('refreshObservations',refreshObservations);
 async function refreshObservations(){
  const data=await api('/api/observability');const area=$('observations');area.replaceChildren();
  for(const sample of data.inference)area.append(el('p','',
    sample.model+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+
    (sample.kind==='benchmark'?'benchmark controlado':'medição ao vivo')+' · '+
    (sample.rate_basis==='native_decode'?'decode nativo':'inclui prefill/TTFT')+
-   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro texto '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
+   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro evento '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.first_text_ms!=null?' · primeiro texto '+(sample.first_text_ms/1000).toFixed(2)+'s':'')+(sample.reasoning_tokens!=null?' · reasoning '+sample.reasoning_tokens+' tokens · restante '+sample.non_reasoning_tokens+' tokens':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
  for(const sample of data.inference)if(sample.suspect){const note=el('p','muted');note.append(el('strong','','Medição suspeita: '),document.createTextNode(sample.model+' — descarregue o modelo e repita o benchmark controlado. '));const button=el('button','','Ir para re-medição');button.addEventListener('click',()=>activateConsoleView('inference'));note.append(button);area.append(note);}
  for(const sample of data.inference)if(sample.native_system_info)area.append(el('p','muted',sample.native_system_info));
  for(const sample of data.inference)for(const workload of sample.workloads||[]){const s=workload.sample;area.append(el('p','muted',workload.profile+': '+(s? s.prompt_tokens+' tokens de prompt · '+s.tokens_per_second.toFixed(1)+' t/s · prefill '+(s.prefill_tokens_per_second||0).toFixed(1)+' t/s · primeiro output '+(s.first_output_ms||0).toFixed(0)+' ms':workload.status)));}
@@ -990,14 +1110,14 @@ async function refreshObservations(){
  if(!data.inference.length&&!data.nodes.length)area.append(el('p','muted','Nenhuma medição disponível.'));
 }
 
-$('copyModelFolder').addEventListener('click',()=>guard(async()=>{
+bindAction('copyModelFolder',async()=>{
  if(!modelFolderPath)throw Error('Caminho da pasta indisponível');
  if(!navigator.clipboard?.writeText)throw Error('Cópia automática indisponível neste navegador');
  await navigator.clipboard.writeText(modelFolderPath);notice('Caminho copiado');
-}));
-$('openModelFolder').addEventListener('click',()=>guard(async()=>{
+});
+bindAction('openModelFolder',async()=>{
  await api('/api/models/folder/open','POST',{});
  notice('Solicitada abertura da pasta no computador Host.');
-}));
+});
 setupConsoleNavigation();
 setupAuth();if(token){renderChat();guard(refresh);guard(loadModelFolder);}

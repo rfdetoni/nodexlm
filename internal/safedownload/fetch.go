@@ -43,6 +43,10 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 		return 0, ctx.Err()
 	}
 	defer func() { <-transfers }()
+	return fetch(ensureBandwidth(ctx), client, source, target, limit, progress, true)
+}
+
+func fetch(ctx context.Context, client *http.Client, source, target string, limit int64, progress func(int64, int64), parallel bool) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -51,6 +55,14 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 	}
 	if limit < 4 {
 		return 0, errors.New("invalid download limit")
+	}
+	// Prefer the official Xet CAS client only when explicitly enabled and the
+	// URL identifies an immutable Hugging Face revision. All Xet output is
+	// verified against Hub SHA-256 metadata before entering the staging path.
+	if parallel {
+		if n, handled, err := TryXet(ctx, client, source, target, limit, progress); handled || err != nil {
+			return n, err
+		}
 	}
 	for _, path := range []string{target, target + ".json"} {
 		if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
@@ -139,6 +151,15 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 	if meta.Total > limit {
 		return 0, errors.New("model exceeds download limit")
 	}
+	if parallel && offset == 0 && resp.StatusCode == http.StatusOK && meta.Total >= minParallelSize && meta.SHA256 != "" && strongETag(meta.Validator) && workersFor(ctx) > 1 {
+		resp.Body.Close()
+		file.Close()
+		n, err := fetchRanges(ctx, client, source, target, meta, progress)
+		if errors.Is(err, errRangesUnsupported) {
+			return fetch(ctx, client, source, target, limit, progress, false)
+		}
+		return n, err
+	}
 	if meta.Total >= 0 {
 		free, err := FreeBytes(filepath.Dir(target))
 		if err != nil {
@@ -159,22 +180,34 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 		return 0, err
 	}
 	received := offset
+	digest := sha256.New()
+	// Hash a fresh linear transfer as it arrives instead of rereading all weights.
+	inlineHash := offset == 0 && meta.SHA256 != ""
 	if progress != nil {
 		progress(received, meta.Total)
 	}
 	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		measure, done := measureConnection(ctx, target, offset, meta.Total)
+		defer done()
 		buf := make([]byte, 256<<10)
 		for {
 			if err := ctx.Err(); err != nil {
 				return received, err
 			}
 			n, readErr := resp.Body.Read(buf)
+			measure(n)
 			if int64(n) > limit-received {
 				return received, errors.New("model exceeds download limit")
 			}
 			if n > 0 {
+				if err := paceDownload(ctx, n); err != nil {
+					return received, err
+				}
 				if _, err := file.Write(buf[:n]); err != nil {
 					return received, err
+				}
+				if inlineHash {
+					_, _ = digest.Write(buf[:n])
 				}
 				received += int64(n)
 				if progress != nil {
@@ -188,16 +221,19 @@ func Fetch(ctx context.Context, client *http.Client, source, target string, limi
 				return received, readErr
 			}
 		}
+		resp.Body.Close()
+		done()
 	}
 	if meta.Total >= 0 && received != meta.Total {
 		return received, errors.New("incomplete model download")
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return received, err
-	}
-	digest := sha256.New()
-	if _, err := io.Copy(digest, &contextReader{ctx: ctx, reader: file}); err != nil {
-		return received, err
+	if !inlineHash && meta.SHA256 != "" {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return received, err
+		}
+		if _, err := io.Copy(digest, &contextReader{ctx: ctx, reader: file}); err != nil {
+			return received, err
+		}
 	}
 	if meta.SHA256 != "" && hex.EncodeToString(digest.Sum(nil)) != meta.SHA256 {
 		_ = file.Truncate(0)

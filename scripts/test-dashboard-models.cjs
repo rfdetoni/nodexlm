@@ -98,6 +98,9 @@ function checkResponsiveLayout(html,css){
           check(stop.width>=55&&stop.height<=75&&clear.height<=75,'chat actions must remain readable');
           check(send.top>=fallback.closest('label').getBoundingClientRect().bottom-1,'fallback must not share the action row');
           check(send.right<=view.getBoundingClientRect().right+2,'send action outside workspace');
+          d.querySelector('.chat-settings').open=false;d.querySelector('.chat-attachments').open=false;
+          check(id('consoleMain').scrollHeight<=id('consoleMain').clientHeight+2,'chat workspace must not scroll');
+          check(id('chatOutput').clientHeight>0,'history must occupy remaining space');
           check(w.getComputedStyle(id('sendChat')).overflowWrap!=='anywhere','button words may not break letter by letter');
         }
         if(view.id==='view-models'){
@@ -127,7 +130,38 @@ async function main(){
   const html=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/index.html'),'utf8');
   const css=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/styles.css'),'utf8');
   checkResponsiveLayout(html,css);
+  const metrics=vm.runInContext("chatRunMetrics({usage:{completion_tokens:100,completion_tokens_details:{reasoning_tokens:60}},timings:{predicted_n:100,predicted_ms:2000,prompt_ms:500},elapsed:3,firstOutput:0.6,firstText:2,firstReasoning:0.6,lastReasoning:1.8,hasReasoning:true})",sandbox);
+  assert.ok(metrics.text.includes('Decode nativo (inclui reasoning): 50.0 t/s'));
+  assert.ok(metrics.text.includes('Reasoning: 60 tokens'));
+  assert.ok(metrics.text.includes('Saída sem reasoning: 40 tokens'));
+  assert.ok(metrics.text.includes('Média total (inclui prompt): 33.3 t/s'));
+  const missing=vm.runInContext("chatRunMetrics({usage:{completion_tokens:100},elapsed:3,hasReasoning:true})",sandbox);
+  assert.ok(missing.text.includes('contagem separada indisponível'));
+  assert.ok(!missing.text.includes('Reasoning: 0 tokens'));
+  const invalid=vm.runInContext("chatRunMetrics({usage:{completion_tokens:10,completion_tokens_details:{reasoning_tokens:11}},elapsed:1,hasReasoning:true})",sandbox);
+  assert.ok(!invalid.text.includes('Saída sem reasoning: -1'));
+  assert.ok(!invalid.text.includes('Reasoning: 11 tokens'));
+  const noUsage=vm.runInContext("chatRunMetrics({timings:{predicted_n:20,predicted_ms:1000},elapsed:2,hasReasoning:true})",sandbox);
+  assert.ok(noUsage.text.includes('Tokens decodificados (runtime): 20'));
+  assert.ok(noUsage.text.includes('Decode nativo (inclui reasoning): 20.0 t/s'));
   const chat=html.slice(html.indexOf('id="view-chat"'),html.indexOf('id="view-images"'));
+  assert.ok(html.includes('id="nodeResourceCards"'),'device cards remain visible');
+  assert.match(html,/id="toggleSecret"/);
+  vm.runInContext("hydrateSettings({threads:6,context_tokens:4096,distributed:true,backend:'llama.cpp',vision_projector:'vision.gguf'})",sandbox);
+  const hydrated=vm.runInContext("settingsFromForm('test.gguf')",sandbox);
+  assert.equal(hydrated.threads,6);
+  assert.equal(hydrated.context_tokens,4096);
+  assert.equal(hydrated.distributed,true);
+  assert.equal(hydrated.vision_projector,'vision.gguf');
+  assert.equal(hydrated.parallel_slots,1);
+
+  assert.ok(!html.includes('id="nodes"'),'duplicate Guest table must not return');
+  assert.ok(script.includes("el('details','device-tools')"),'device tools menu remains on each Guest card');
+  get('secret').type='password';get('toggleSecret').handlers.click();
+  assert.equal(get('secret').type,'text');
+  get('toggleSecret').handlers.click();assert.equal(get('secret').type,'password');
+  await vm.runInContext("(async()=>{let calls=0,resolve;const b=$('inferenceBench');const first=withBusy(b,()=>{calls++;return new Promise(r=>resolve=r)});await withBusy(b,()=>{calls++});resolve();await first;if(calls!==1||b.disabled)throw Error('busy guard regression')})()",sandbox);
+
   assert.match(chat,/<label class="check-field"><input id="allowExternalFallback" type="checkbox"><span>/);
   assert.match(chat,/<div class="chat-actions">[\s\S]*?<div class="buttons"><button id="stopChat"/);
   assert.doesNotMatch(chat,/<div class="buttons"><label/);
@@ -160,6 +194,9 @@ async function main(){
   vm.runInContext('renderNodeResources('+JSON.stringify([offline])+')',sandbox);
   resourceCard=get('nodeResourceCards').children[0];
   assert.ok(resourceCard.textContent.includes('offline'),'offline nodes must not display old load as current');
+  assert.equal(get('nodeResourceCards').children.length,1,'one card per device');
+  assert.ok(resourceCard.textContent.includes('Revogar acesso'),'tools belong to the device card');
+  assert.ok(!html.includes('id="nodes"'),'device card is the single source for Guest actions');
   assert.ok(!resourceCard.textContent.includes('0.0%'),'offline CPU gauge is stale');
   // Alternate runtimes must never silently enable incompatible GGML RPC.
   get('runtimeBackend').value='mistralrs';
@@ -180,7 +217,10 @@ async function main(){
   const transferring=JSON.parse(JSON.stringify(stalledLoad));
   transferring.runtime.rpc_transfer['guest-123'].to_guest_bytes=1048576;
   transferring.runtime.rpc_transfer['guest-123'].last_activity_ms=Date.now();
+  transferring.runtime.upload_plan={nodes:[{node_id:'guest-123',name:'Android Lab',layers:12,weight_bytes:2097152}]};
   vm.runInContext('renderLoadStatus('+JSON.stringify(transferring)+')',sandbox);
+  assert.ok(get('loadingStatus').textContent.includes('Android Lab'),'use device name');
+  assert.ok(!get('loadingStatus').textContent.includes('guest-123'),'never display raw guest ID');
   assert.ok(get('loadingStatus').textContent.includes('RPC real'),
     'measured bytes must appear independently of planned layer count');
   assert.ok(get('loadingStatus').textContent.includes('MiB/s'),

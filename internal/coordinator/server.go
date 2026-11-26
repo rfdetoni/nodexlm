@@ -58,13 +58,15 @@ type Server struct {
 	rpcHub          *rpcmesh.Hub
 	rpcMicrobench   func(string)
 	rpcDrain        func(string)
+	modelCacheDir   string
+	modelCacheSlots chan struct{}
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
 	if len(adminToken) < 32 || len(enrollmentToken) < 32 || adminToken == enrollmentToken {
 		return nil, errors.New("admin and enrollment tokens must be distinct, at least 32 characters each")
 	}
-	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, decisionTimings: map[string][]time.Duration{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
+	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, decisionTimings: map[string][]time.Duration{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub(), modelCacheSlots: make(chan struct{}, 1)}, nil
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.
@@ -87,6 +89,7 @@ func (s *Server) handler(administrative bool) http.Handler {
 	mux.HandleFunc("POST /v1/pairing/enroll", s.pairingEnroll)
 	mux.HandleFunc("POST /v1/nodes/heartbeat", s.heartbeat)
 	mux.HandleFunc("GET /v1/nodes/catalog", s.modelCatalog)
+	mux.HandleFunc("GET /v1/nodes/cache/{sha256}", s.nodeModelCache)
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
 	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
 	mux.HandleFunc("POST /v1/nodes/result/{id}", s.result)

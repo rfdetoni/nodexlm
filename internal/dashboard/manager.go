@@ -83,12 +83,14 @@ func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string)
 }
 
 type Download struct {
-	ShardCount int    `json:"shard_count,omitempty"`
-	Name       string `json:"name"`
-	Received   int64  `json:"received"`
-	Total      int64  `json:"total"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
+	ShardCount  int                               `json:"shard_count,omitempty"`
+	Name        string                            `json:"name"`
+	Received    int64                             `json:"received"`
+	Total       int64                             `json:"total"`
+	Status      string                            `json:"status"`
+	Error       string                            `json:"error,omitempty"`
+	Connections []safedownload.ConnectionProgress `json:"connections,omitempty"`
+	SpeedBPS    int64                             `json:"speed_bps,omitempty"`
 }
 
 type Manager struct {
@@ -124,6 +126,7 @@ type Manager struct {
 	loadStartedAt         time.Time
 	phaseStartedAt        time.Time
 	loadRPCNodes          []string
+	loadUploadPlan        *inferenceTopology
 	loadRPCBaseline       map[string]rpcmesh.TunnelStats
 	rpcStatsProvider      func() map[string]rpcmesh.TunnelStats
 	loadCancel            context.CancelFunc
@@ -132,6 +135,7 @@ type Manager struct {
 	generations           map[uint64]context.CancelFunc
 	generationSequence    uint64
 	download              *Download
+	downloadMeter         *safedownload.TransferMeter
 	cancel                context.CancelFunc
 	downloadDone          chan struct{}
 	httpClient            *http.Client
@@ -208,6 +212,9 @@ func (m *Manager) State() map[string]any {
 		state["started_at"] = m.loadStartedAt.UTC().Format(time.RFC3339)
 		state["elapsed_seconds"] = int(time.Since(m.loadStartedAt).Seconds())
 		state["progress_known"] = false // GGML does not report per-Guest tensor transfer progress.
+		if m.loadUploadPlan != nil {
+			state["upload_plan"] = m.loadUploadPlan
+		}
 		state["phase_elapsed_seconds"] = int(time.Since(m.phaseStartedAt).Seconds())
 		if m.rpcStatsProvider != nil && len(m.loadRPCNodes) > 0 {
 			current := m.rpcStatsProvider()
@@ -241,6 +248,9 @@ func (m *Manager) DownloadState() *Download {
 		return nil
 	}
 	s := *m.download
+	if s.Status == "downloading" {
+		s.Connections, s.SpeedBPS = m.downloadMeter.Snapshot()
+	}
 	return &s
 }
 func (m *Manager) validate(s Settings) error {
@@ -446,6 +456,7 @@ func (m *Manager) beginLoad(cancel context.CancelFunc) error {
 	m.loadStartedAt = time.Now()
 	m.phaseStartedAt = m.loadStartedAt
 	m.loadRPCNodes = nil
+	m.loadUploadPlan = nil
 	m.loadRPCBaseline = nil
 	m.loadFingerprint = ""
 	m.microbenchDrift = 0
@@ -499,6 +510,7 @@ func (m *Manager) runLoad(ctx context.Context) error {
 	m.loadCancel = nil
 	cancelled := err != nil && (m.loadCancelRequested || errors.Is(ctx.Err(), context.Canceled))
 	m.loadCancelRequested = false
+	m.loadUploadPlan = nil
 	if cancelled {
 		m.loadPhase = "cancelled"
 		m.loadError = ""
@@ -695,6 +707,9 @@ func (m *Manager) load(ctx context.Context) error {
 			engine.GPULayers = "all"
 		}
 	}
+	m.mu.Lock()
+	m.loadUploadPlan = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
+	m.mu.Unlock()
 	loadFingerprint := m.benchmarkSignature(s, s.Model)
 	if err = engine.Load(ctx); err != nil {
 		engine.Close()
@@ -712,6 +727,7 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	m.engine = engine
 	m.loadedTopology = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
+	m.loadUploadPlan = nil
 	m.activityWindow = nil
 	m.loadFingerprint = loadFingerprint
 	m.nativeSystemInfo = systemInfo
@@ -823,9 +839,22 @@ func (m *Manager) StartDownload(urlText, name string) error {
 		return errors.New("another download is in progress")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = safedownload.WithBandwidthPolicy(ctx, func() int64 {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		// Keep WAN downloads from competing with loading and active decoding.
+		// Do not throttle merely because a resident model is idle.
+		if m.loading || len(m.generations) > 0 {
+			return 2 << 20
+		}
+		return 0
+	})
 	m.cancel = cancel
 	m.downloadDone = make(chan struct{})
 	m.download = &Download{Name: name, Status: "downloading", ShardCount: len(parts)}
+	m.downloadMeter = safedownload.NewTransferMeter()
+	ctx = safedownload.WithTransferMeter(ctx, m.downloadMeter)
+	ctx = safedownload.WithContentCache(ctx, m.modelDir)
 	go m.downloadModel(ctx, u.String(), path, name)
 	return nil
 }
@@ -842,6 +871,7 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 		}
 		m.download.Status = status
 		m.download.Error = errorText
+		m.downloadMeter = nil
 		m.cancel = nil
 		close(m.downloadDone)
 		m.downloadDone = nil
@@ -871,19 +901,43 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 	}
 	const limit int64 = 150 << 30
 	var received int64
+	files := make([]safedownload.BatchFile, 0, len(shards))
 	for _, shard := range shards {
 		partURL := *sourceURL
 		if len(shards) > 1 {
 			partURL.Path = urlpath.Join(urlpath.Dir(sourceURL.Path), shard)
 			partURL.RawPath = ""
 		}
-		out := filepath.Join(stage, shard)
-		n, err := m.fetchModelPart(ctx, partURL.String(), out, received, limit)
+		files = append(files, safedownload.BatchFile{Source: partURL.String(), Target: filepath.Join(stage, shard)})
+	}
+	batch, handled, err := safedownload.PlanHuggingFaceBatch(ctx, m.httpClient, files)
+	if err != nil {
+		errorText = err.Error()
+		return
+	}
+	if handled {
+		err = safedownload.FetchBatch(ctx, m.httpClient, batch, limit, func(n, total int64) {
+			m.mu.Lock()
+			m.download.Received = n
+			m.download.Total = total
+			m.mu.Unlock()
+		})
 		if err != nil {
-			errorText = fmt.Sprintf("GGUF shard %s: %v", shard, err)
+			errorText = err.Error()
 			return
 		}
-		received += n
+		for _, part := range batch {
+			received += part.Size
+		}
+	} else {
+		for _, part := range files {
+			n, err := m.fetchModelPart(ctx, part.Source, part.Target, received, limit)
+			if err != nil {
+				errorText = fmt.Sprintf("GGUF shard %s: %v", filepath.Base(part.Target), err)
+				return
+			}
+			received += n
+		}
 	}
 	// The first shard holds the architecture metadata; the other parts must
 	// be valid GGUF containers but may not repeat all of that metadata.
@@ -899,12 +953,13 @@ func (m *Manager) downloadModel(ctx context.Context, source, destination, name s
 			}
 		}
 	}()
-	for _, shard := range shards {
+	for i := len(shards) - 1; i >= 0; i-- {
+		shard := shards[i]
 		target := filepath.Join(m.modelDir, shard)
 		if len(shards) == 1 {
 			target = destination
 		}
-		if err = publishModelPart(filepath.Join(stage, shard), target); err != nil {
+		if err = catalog.PublishDownloaded(ctx, filepath.Join(stage, shard), target); err != nil {
 			errorText = fmt.Sprintf("publish GGUF shard %s: %v", shard, err)
 			return
 		}

@@ -36,9 +36,11 @@ h2{margin:0 0 8px;font-size:18px;letter-spacing:-.2px}h3{margin:16px 0 8px;font-
 p{margin:4px 0 12px;max-width:90ch;overflow-wrap:anywhere}.muted,label small{color:var(--muted)}
 code{background:var(--raised);padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}
 .card{min-width:0;padding:clamp(14px,2vw,22px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);overflow-wrap:break-word}
-.auth{max-width:460px;margin:clamp(24px,8vh,72px) auto}.auth form{margin:18px 0}
+ .auth{max-width:460px;margin:clamp(24px,8vh,72px) auto}.auth form{margin:18px 0}.secret-field{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch;margin:6px 0 14px}.secret-field input{margin:0}.secret-field button{min-width:84px}
 .grid{display:grid;gap:14px;min-width:0}.single-workspace{grid-template-columns:minmax(0,1fr)}
 .models-workspace{grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);align-items:start}
+.inference-workspace{grid-template-columns:minmax(0,1.25fr) minmax(0,.75fr);align-items:start}
+.inference-monitor .benchmark-section{margin:18px 0 0;padding:12px;border-top:1px solid var(--border)}
 .model-transfer{grid-column:1/-1}.model-transfer:empty{display:none}
 .sectionhead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
 .sectionhead>div{min-width:0;flex:1 1 200px}.sectionhead>button{flex:0 0 auto}.sectionhead h2,.sectionhead h3{margin:0}.sectionhead p{margin:4px 0}
@@ -57,7 +59,7 @@ label{display:block;font-size:13px;font-weight:500;line-height:1.45;margin:9px 0
 label small{display:block;margin-top:6px;font-size:11px;line-height:1.5;font-weight:400}
 input,select,textarea{min-width:0;max-width:100%;width:100%;color:var(--text);background:var(--inset);border:1px solid var(--border-control);border-radius:var(--radius-control);padding:10px 12px;margin-top:6px;line-height:1.45}
 input:not([type="checkbox"]):not([type="radio"]),select{min-height:var(--control)}
-textarea{display:block;resize:vertical;min-height:76px}
+textarea{display:block;resize:none;min-height:76px;field-sizing:content;max-height:36rem;overflow:auto}
 input[type="checkbox"],input[type="radio"]{flex:0 0 18px;inline-size:18px;block-size:18px;margin:2px 0 0;padding:0;accent-color:var(--accent);cursor:pointer}
 input[type="file"]{font-size:12px;padding:7px}input::file-selector-button{font:inherit;color:inherit;background:var(--raised);border:0;border-radius:5px;padding:7px 9px;margin-inline-end:8px;cursor:pointer}
 .check-field,.pairing-auto{display:flex;align-items:flex-start;gap:10px;padding:8px 0;cursor:pointer}
@@ -125,7 +127,7 @@ progress::-webkit-progress-bar{background:var(--raised)}progress::-webkit-progre
 .scroll{overflow:auto;max-width:100%;max-height:62dvh;scrollbar-gutter:stable}
 table{border-collapse:collapse;width:100%;min-width:620px;text-align:left}
 th,td{padding:12px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
-th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}td{overflow-wrap:anywhere}td:last-child{min-width:160px}td button{display:block;margin:4px 0}
+th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}td{overflow-wrap:anywhere}td:last-child{min-width:160px}.node-actions button{display:block;width:100%;margin:4px 0}.node-actions button:first-child{margin-top:0}.node-actions button:last-child{margin-bottom:0}
 .latency-chart{display:block;width:100%;max-width:600px;color:var(--accent)}
 .rpc-node-transfer{font-size:12px;color:var(--muted)}.rpc-stall-warning{padding:10px;background:var(--warning-bg);border:1px solid var(--warning-border);color:var(--warning);border-radius:var(--radius-control);font-size:12px}
 .loaded-split{display:block;width:100%;height:24px;margin:12px 0;border-radius:4px;overflow:hidden}.loaded-split rect{stroke:var(--border);stroke-width:2}
@@ -149,6 +151,7 @@ th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-size:
 .chat-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--border);padding-top:12px}
 .chat-actions>small{flex:1 1 190px;min-width:0;font-size:11px;overflow-wrap:anywhere}.chat-actions>.buttons{flex:0 1 auto;margin:0;justify-content:flex-end}
 #sendChat{min-width:150px}#stopChat{min-width:80px}#clearChat{min-width:140px}#generateImage{min-width:min(100%,164px)}
+@container (max-width:1000px){.inference-workspace{grid-template-columns:minmax(0,1fr)}}
 @container (max-width:780px){.models-workspace{grid-template-columns:minmax(0,1fr)}}
 @container (max-width:520px){
  .chat-actions>small,.chat-actions>.buttons{flex-basis:100%}
@@ -173,3 +176,56 @@ th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-size:
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media(forced-colors:active){*{scrollbar-color:auto}:focus-visible{outline-color:Highlight}}
+
+/* One device card per identity. The menu is a native disclosure and remains
+   attached to the same card across telemetry refreshes. */
+.resource-node{position:relative}
+.device-tools{position:relative;flex:none;margin-left:0}
+.device-tools summary{list-style:none;cursor:pointer;border:1px solid var(--border-control);border-radius:var(--radius-control);width:36px;height:32px;display:grid;place-items:center;font-size:22px;line-height:1}
+.device-tools summary::-webkit-details-marker{display:none}
+.device-menu{position:absolute;right:0;top:38px;z-index:20;background:var(--surface);border:1px solid var(--border-control);border-radius:var(--radius-control);padding:6px;min-width:185px;max-width:min(240px,80vw);box-shadow:0 8px 20px #0005;display:grid;gap:4px}
+.device-menu button{text-align:left;font-size:12px;min-height:36px;width:100%}
+.overview-model{grid-column:span 2}.overview-model strong{font-size:16px}.overview-model small{display:block;margin-top:5px}
+#loadingStatus>button{display:block;margin:10px 0}
+.layer-allocation progress{margin-bottom:4px}
+#consoleMain[data-view="chat"],#consoleMain:has(#view-chat:not([hidden])){display:flex;flex-direction:column;overflow:hidden}
+#view-chat:not([hidden]){display:flex;flex-direction:column;flex:1;min-height:0}
+#view-chat>.grid{display:flex;flex:1;min-height:0}
+.chat-card{flex:1;min-height:0;gap:8px}
+.chat-header{display:flex;align-items:end;justify-content:space-between;gap:10px}
+.chat-header .chat-model-row{flex:1;margin:0;min-width:0}
+#chatOutput{height:auto;flex:1;min-height:0;max-height:none}
+#chatForm{position:relative;flex:none}
+.chat-composer{position:relative;padding:10px}
+.chat-composer textarea{min-height:48px;height:64px;max-height:110px;margin-bottom:4px;resize:none}
+.chat-tools{display:flex;gap:14px;align-items:center}
+.chat-tools .disclosure{padding:0;border:0;position:static}
+.chat-tools .disclosure summary{font-size:12px;padding:4px;cursor:pointer}
+.chat-popover{position:absolute;bottom:100%;left:0;right:0;z-index:15;background:var(--surface);border:1px solid var(--border-control);border-radius:var(--radius-card);padding:12px;max-height:45dvh;overflow:auto;box-shadow:0 8px 24px #0005}
+.chat-composer>.check-field{padding:6px 0;font-size:12px}
+.chat-composer>.check-field small{font-size:10px}
+.chat-actions{padding-top:6px;gap:6px}
+/* Keep the result strip compact without clipping diagnostic text. */
+.chat-run-metrics{position:relative;flex:none;min-width:0}
+.chat-run-metrics summary{cursor:pointer;font-size:12px;color:var(--muted);padding:2px 0;overflow-wrap:anywhere}
+.chat-run-metrics[open] #chatMetrics{position:absolute;bottom:100%;left:0;right:0;z-index:12;background:var(--surface);border:1px solid var(--border-control);border-radius:var(--radius-control);padding:12px;max-height:40dvh;overflow:auto;box-shadow:0 8px 24px #0005}
+#chatMetrics{margin:0;overflow-wrap:anywhere}
+@media(max-width:800px){
+ .console-shell:has(#view-chat:not([hidden])){height:calc(100dvh - 88px)}
+ .console-shell:has(#view-chat:not([hidden])) .console-nav{flex:none;position:static}
+ #consoleMain:has(#view-chat:not([hidden])){flex:1;min-height:0;padding-bottom:0}
+ #consoleMain:has(#view-chat:not([hidden])) .topline{margin-bottom:8px}
+}
+@media(max-width:480px){
+ .chat-card{padding:8px}.chat-header{gap:6px}
+ #clearChat{min-width:0;font-size:11px;padding:6px}
+ .chat-actions>small{display:none}
+ .chat-composer>.check-field small{font-size:10px}
+ .chat-composer textarea{height:54px}
+ .chat-header select{font-size:12px}
+}
+@media(max-height:600px){
+ #consoleMain:has(#view-chat:not([hidden])) .topline{margin-bottom:4px}
+ #consoleMain:has(#view-chat:not([hidden])) .topline .workspace-eyebrow,#consoleMain:has(#view-chat:not([hidden])) #workspaceDescription{display:none}
+ .chat-composer>.check-field small{display:none}
+}

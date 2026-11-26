@@ -123,3 +123,23 @@ func TestClusterDriftRequiresLoadedFingerprintAndTopology(t *testing.T) {
 		t.Fatal("comparable divergent cluster samples did not trigger an advisory")
 	}
 }
+
+func TestReasoningUsageIsSubsetAndDecodeUsesNativeCount(t *testing.T) {
+	raw := []byte(`{"usage":{"completion_tokens":100,"completion_tokens_details":{"reasoning_tokens":60}},"timings":{"predicted_n":98,"predicted_ms":2000}}`)
+	got, ok := parseInferenceSample("reasoning.gguf", raw, 3*time.Second)
+	if !ok || got.Tokens != 100 || got.TokensPerSecond != 49 ||
+		got.ReasoningTokens == nil || *got.ReasoningTokens != 60 ||
+		got.NonReasoningTokens == nil || *got.NonReasoningTokens != 40 {
+		t.Fatalf("invalid reasoning breakdown: %+v", got)
+	}
+	for _, raw := range []string{
+		`{"usage":{"completion_tokens":100}}`,
+		`{"usage":{"completion_tokens":100,"completion_tokens_details":{"reasoning_tokens":101}}}`,
+		`{"usage":{"completion_tokens":100,"completion_tokens_details":{"reasoning_tokens":-1}}}`,
+	} {
+		got, ok := parseInferenceSample("reasoning.gguf", []byte(raw), time.Second)
+		if !ok || got.ReasoningTokens != nil || got.NonReasoningTokens != nil {
+			t.Fatalf("unknown reasoning count must stay unknown: %+v", got)
+		}
+	}
+}

@@ -105,6 +105,7 @@ jobs:
               digest=hashlib.sha256(p.read_bytes()).hexdigest()
               (p.parent/(p.name+'.sha256')).write_text(digest+'  '+p.name+'\n')
           PY
+          cat dist/*.sha256
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: {go-version-file: go.mod, cache: true}
       - name: Software Vulkan driver for CI

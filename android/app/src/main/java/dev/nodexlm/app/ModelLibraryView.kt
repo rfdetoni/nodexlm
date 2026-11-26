@@ -42,6 +42,16 @@ internal class ModelLibraryView(
     private lateinit var cancel: Button
     private var finding = false
     private var verifying = false
+    private var preparing = false
+    @Volatile private var cacheEpoch = 0L
+    @Volatile private var cacheCancelled = false
+    @Volatile private var cacheReceived = 0L
+    private var cacheExpected = 0L
+    private var cacheTransfer = false
+    private var sampledDownload = 0L
+    private var sampledAt = 0L
+    private var sampledBytes = 0L
+    private var bytesPerSecond = 0.0
     private val tick = object : Runnable {
         override fun run() {
             refreshProgress()
@@ -104,6 +114,8 @@ internal class ModelLibraryView(
         library.orientation = VERTICAL
         addView(library)
         refreshLibrary()
+        // An unowned Host-cache transfer cannot be resumed after Activity re-creation.
+        if (prefs.getLong("id", 0L) in listOf(-1L, -2L)) clearDownload()
     }
 
     override fun onAttachedToWindow() { super.onAttachedToWindow(); main.removeCallbacks(tick);main.post(tick) }
@@ -189,7 +201,7 @@ internal class ModelLibraryView(
     }
 
     private fun confirmDownload(model: HuggingFaceHub.Model) {
-        if(prefs.getLong("id",0L)>0L) {status.text=activity.getString(R.string.ui_c1234618156b);return}
+        if(preparing || prefs.getLong("id",0L)>0L) {status.text=activity.getString(R.string.ui_c1234618156b);return}
         if(!model.url.startsWith("https://huggingface.co/") || !model.url.contains("/resolve/main/")) {
             status.text=activity.getString(R.string.ui_e226da7e5057);return
         }
@@ -202,40 +214,190 @@ internal class ModelLibraryView(
     }
 
     private fun download(model: HuggingFaceHub.Model) {
-        try {
-            val fileName = ModelFiles.safeFilename(model.filename.substringAfterLast('/'))
-            val root=ModelFiles.directory(activity)
-            val target=File(root,fileName)
-            require(!target.exists()) { activity.getString(R.string.model_exists) }
-            require(root.usableSpace >= model.sizeBytes) { "Insufficient free storage" }
-            val parts=ModelFiles.shards(fileName)
-            prefs.edit().putString("parts",org.json.JSONArray(parts).toString()).putInt("part_index",0)
-                .putString("source",model.url).putString("first",fileName).putLong("size",model.sizeBytes).commit()
-            enqueuePart(model.url,parts.first(),model.repository)
-            return
-        } catch(e:Exception) {status.text=activity.getString(R.string.download_failed,e.message)}
-    }
-    private fun enqueuePart(source: String,fileName: String,repository: String) {
-        val root=ModelFiles.directory(activity)
-        val target=File(root,fileName)
-        val staging=File(root,".${fileName}.download")
-            require(!staging.exists()) { activity.getString(R.string.model_downloading) }
-            val request=DownloadManager.Request(Uri.parse(source))
-                .setTitle("NodexLM: $fileName")
-                .setDescription(activity.getString(R.string.model_source,repository))
-                .setMimeType("application/octet-stream")
-                .setDestinationUri(Uri.fromFile(staging))
-                .setAllowedOverRoaming(false)
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            val id=downloads.enqueue(request)
-            prefs.edit().putLong("id",id).putString("staging",staging.absolutePath)
-                .putString("target",target.absolutePath).putString("current_source",source).apply()
-            status.text=activity.getString(R.string.download_started,fileName)
-            refreshProgress()
+        if (preparing || prefs.getLong("id", 0L) > 0L) return
+        preparing = true
+        status.text = activity.getString(R.string.model_downloading)
+        thread(name = "nodexlm-verify-hf-metadata") {
+            try {
+                val fileName = ModelFiles.safeFilename(model.filename.substringAfterLast('/'))
+                val parts = ModelFiles.shards(fileName)
+                val plan = VerifiedHuggingFaceDownload.prepare(model.url, parts, model.sizeBytes)
+                activity.runOnUiThread {
+                    preparing = false
+                    if (!isAttachedToWindow) return@runOnUiThread
+                    try {
+                        val root = ModelFiles.directory(activity)
+                        require(prefs.getLong("id", 0L) == 0L) { activity.getString(R.string.model_downloading) }
+                        require(parts.none { File(root, it).exists() }) { activity.getString(R.string.model_exists) }
+                        require(root.usableSpace >= plan.totalBytes) { "Insufficient free storage" }
+                        val names = org.json.JSONArray()
+                        val urls = org.json.JSONArray()
+                        val digests = org.json.JSONArray()
+                        val sizes = org.json.JSONArray()
+                        plan.parts.forEach { part ->
+                            names.put(part.name)
+                            urls.put(part.url)
+                            digests.put(part.sha256)
+                            sizes.put(part.size)
+                        }
+                        check(prefs.edit().putString("parts", names.toString())
+                            .putString("urls", urls.toString())
+                            .putString("shas", digests.toString())
+                            .putString("sizes", sizes.toString())
+                            .putInt("part_index", 0)
+                            .putString("first", fileName)
+                            .putLong("size", plan.totalBytes).commit()) { "Cannot persist download metadata" }
+                        enqueuePart(plan.parts.first().url, parts.first(), model.repository)
+                    } catch (e: Exception) {
+                        clearDownload()
+                        status.text = activity.getString(R.string.download_failed, e.message)
+                    }
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    preparing = false
+                    if (isAttachedToWindow) status.text = activity.getString(R.string.download_failed, e.message)
+                }
+            }
+        }
     }
 
+
+    private fun enqueuePart(source: String, fileName: String, repository: String) {
+        val root = ModelFiles.directory(activity)
+        val target = File(root, fileName)
+        val staging = File(root, ".$fileName.download")
+        require(!staging.exists()) { activity.getString(R.string.model_downloading) }
+        val index = prefs.getInt("part_index", 0)
+        val checksum = org.json.JSONArray(prefs.getString("shas", "[]")).optString(index)
+        val expected = org.json.JSONArray(prefs.getString("sizes", "[]")).optLong(index, -1L)
+        if (!HostModelCache.available(activity) || expected <= 0L) {
+            enqueueNetworkPart(source, fileName, repository)
+            return
+        }
+        val epoch = ++cacheEpoch
+        cacheCancelled = false
+        cacheReceived = 0L
+        cacheExpected = expected
+        cacheTransfer = true
+        check(prefs.edit().putLong("id", -1L).putString("staging", staging.absolutePath)
+            .putString("target", target.absolutePath).putString("current_source", source).commit())
+        status.text = activity.getString(R.string.download_started, fileName)
+        val scratch = File(root, ".$fileName.p2p-$epoch")
+        thread(name = "nodexlm-host-content-cache") {
+            val available = HostModelCache.fetch(activity, checksum, expected, scratch,
+                { cacheCancelled || epoch != cacheEpoch }, { cacheReceived = it })
+            activity.runOnUiThread {
+                if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -1L) {
+                    scratch.delete()
+                    return@runOnUiThread
+                }
+                cacheTransfer = false
+                if (available && scratch.renameTo(staging)) {
+                    // Host cache has already verified the entire SHA-256.
+                    // Avoid reading multi-GB model weights a second time.
+                    finishDownload()
+                } else {
+                    scratch.delete()
+                    prefs.edit().putLong("id", 0L).commit()
+                    try {
+                        enqueueNetworkPart(source, fileName, repository)
+                    } catch (e: Exception) {
+                        clearDownload()
+                        status.text = activity.getString(R.string.download_failed, e.message)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun enqueueNetworkPart(source: String, fileName: String, repository: String) {
+        if (BuildConfig.RUST_RPC_ENABLED) {
+            val index = prefs.getInt("part_index", 0)
+            val checksum = org.json.JSONArray(prefs.getString("shas", "[]")).optString(index)
+            val expected = org.json.JSONArray(prefs.getString("sizes", "[]")).optLong(index, -1L)
+            if (checksum.matches(Regex("[0-9a-f]{64}")) && expected >= 8) {
+                enqueueRustPart(source, fileName, repository, checksum, expected)
+                return
+            }
+        }
+        enqueueDownloadManager(source, fileName, repository)
+    }
+
+    private fun enqueueRustPart(source: String, fileName: String, repository: String, checksum: String, expected: Long) {
+        val root = ModelFiles.directory(activity)
+        val staging = File(root, ".$fileName.download")
+        val target = File(root, fileName)
+        require(!staging.exists()) { activity.getString(R.string.model_downloading) }
+        val epoch = ++cacheEpoch
+        cacheCancelled = false
+        cacheReceived = 0
+        cacheExpected = expected
+        cacheTransfer = true
+        check(prefs.edit().putLong("id", -2L).putString("staging", staging.absolutePath)
+            .putString("target", target.absolutePath).putString("current_source", source).commit())
+        status.text = activity.getString(R.string.download_started, fileName)
+        val scratch = File(root, ".$fileName.native-$epoch")
+        thread(name = "nodexlm-rust-model-download") {
+            val error = runCatching {
+                NativeRustDownload.fetch(source, scratch.absolutePath, checksum, expected)
+            }.getOrElse { it.message ?: "Native download unavailable" }
+            activity.runOnUiThread {
+                if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -2L) {
+                    scratch.delete()
+                    return@runOnUiThread
+                }
+                cacheTransfer = false
+                if (error.isBlank() && scratch.renameTo(staging)) {
+                    // Rust streamed, hashed and fsynced the verified bytes.
+                    finishDownload()
+                } else {
+                    scratch.delete()
+                    prefs.edit().putLong("id", 0L).commit()
+                    try {
+                        enqueueDownloadManager(source, fileName, repository)
+                    } catch (e: Exception) {
+                        clearDownload()
+                        status.text = activity.getString(R.string.download_failed, e.message)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun enqueueDownloadManager(source: String, fileName: String, repository: String) {
+        val root = ModelFiles.directory(activity)
+        val target = File(root, fileName)
+        val staging = File(root, ".$fileName.download")
+        require(!staging.exists()) { activity.getString(R.string.model_downloading) }
+        val request = DownloadManager.Request(Uri.parse(source))
+            .setTitle("NodexLM: $fileName")
+            .setDescription(activity.getString(R.string.model_source, repository))
+            .setMimeType("application/octet-stream")
+            .setDestinationUri(Uri.fromFile(staging))
+            .setAllowedOverRoaming(false)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+        val id = downloads.enqueue(request)
+        if (!prefs.edit().putLong("id", id).putString("staging", staging.absolutePath)
+            .putString("target", target.absolutePath).putString("current_source", source).commit()) {
+            downloads.remove(id)
+            error("Cannot persist active download")
+        }
+        status.text = activity.getString(R.string.download_started, fileName)
+        refreshProgress()
+    }
     private fun refreshProgress() {
         val id=prefs.getLong("id",0L)
+        if ((id == -1L || id == -2L) && cacheTransfer) {
+            bar.visibility=VISIBLE;cancel.visibility=VISIBLE
+            val received=if(id == -2L)runCatching { NativeRustDownload.transferred() }.getOrDefault(0L) else cacheReceived
+            bar.isIndeterminate=cacheExpected<=0
+            if(cacheExpected>0)bar.progress=(received*1000/cacheExpected).toInt().coerceIn(0,1000)
+            val nativeSpeed=if(id == -2L)runCatching { NativeRustDownload.bytesPerSecond() }.getOrDefault(0L) else 0L
+            val rate=if(nativeSpeed>0) " · %.2f MiB/s".format(java.util.Locale.US,nativeSpeed.toDouble()/(1024*1024)) else ""
+            downloadProgress.text="${if(id == -2L) "Rust HTTPS" else "Host cache"} · ${gib(received)} / ${gib(cacheExpected)}$rate"
+            return
+        }
         if (id<=0L) {bar.visibility=GONE;cancel.visibility=GONE;return}
         bar.visibility=VISIBLE
         cancel.visibility=VISIBLE
@@ -248,7 +410,22 @@ internal class ModelLibraryView(
                 val total=c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
                 if(total>0) {bar.isIndeterminate=false;bar.progress=(bytes*1000/total).toInt().coerceIn(0,1000)}
                 else bar.isIndeterminate=true
-                downloadProgress.text="${gib(bytes)} / ${if(total>0)gib(total) else "?"}"
+                val now=android.os.SystemClock.elapsedRealtime()
+                if(id!=sampledDownload){
+                    sampledDownload=id;sampledAt=now;sampledBytes=bytes;bytesPerSecond=0.0
+                }else if(state==DownloadManager.STATUS_RUNNING && now-sampledAt>=1000){
+                    val elapsed=(now-sampledAt).coerceAtLeast(1)
+                    val instant=(bytes-sampledBytes).coerceAtLeast(0)*1000.0/elapsed
+                    bytesPerSecond=if(bytesPerSecond==0.0)instant else bytesPerSecond*0.7+instant*0.3
+                    sampledAt=now;sampledBytes=bytes
+                }else if(state!=DownloadManager.STATUS_RUNNING){
+                    bytesPerSecond=0.0;sampledAt=now;sampledBytes=bytes
+                }
+                val rate=if(bytesPerSecond>0 && state==DownloadManager.STATUS_RUNNING)
+                    " · %.2f MiB/s".format(java.util.Locale.US,bytesPerSecond/(1024*1024)) else ""
+                val eta=if(total>bytes && bytesPerSecond>0)
+                    " · ~%ds".format(java.util.Locale.US,((total-bytes)/bytesPerSecond).toLong()) else ""
+                downloadProgress.text="${gib(bytes)} / ${if(total>0)gib(total) else "?"}$rate$eta"
                 when(state) {
                     DownloadManager.STATUS_SUCCESSFUL -> completeDownload()
                     DownloadManager.STATUS_FAILED -> {status.text=activity.getString(R.string.ui_24184bb0704d);clearDownload()}
@@ -259,26 +436,47 @@ internal class ModelLibraryView(
     }
 
     private fun completeDownload() {
-        if(verifying)return
-        verifying=true
-        val downloadId=prefs.getLong("id",0L)
-        val file=File(prefs.getString("staging","")?:"")
-        val source=prefs.getString("current_source","")?:""
-        thread(name="nodexlm-verify-shard") {
+        if (verifying) return
+        verifying = true
+        val downloadId = prefs.getLong("id", 0L)
+        val file = File(prefs.getString("staging", "") ?: "")
+        val index = prefs.getInt("part_index", 0)
+        val digests = org.json.JSONArray(prefs.getString("shas", "[]"))
+        val sizes = org.json.JSONArray(prefs.getString("sizes", "[]"))
+        val expectedSha = digests.optString(index)
+        val expectedSize = sizes.optLong(index, -1L)
+        thread(name = "nodexlm-verify-shard") {
             try {
-                require(ModelFiles.validGGUF(file)) { "Invalid GGUF shard" }
-                val connection=java.net.URL(source).openConnection() as javax.net.ssl.HttpsURLConnection
-                connection.requestMethod="HEAD";connection.instanceFollowRedirects=false
-                connection.connectTimeout=8000;connection.readTimeout=15000
-                val expected=try {connection.connect();connection.getHeaderField("X-Linked-Etag")?.trim('"')} finally {connection.disconnect()}
-                if(expected!=null&&expected.matches(Regex("[0-9a-fA-F]{64}"))){
-                    val digest=java.security.MessageDigest.getInstance("SHA-256")
-                    file.inputStream().use {input -> val buffer=ByteArray(256*1024);while(true){val n=input.read(buffer);if(n<0)break;digest.update(buffer,0,n)}}
-                    val actual=digest.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
-                    require(actual.equals(expected,true)) { "GGUF SHA-256 mismatch" }
+                require(expectedSha.matches(Regex("[0-9a-f]{64}")) && expectedSize >= 8L) {
+                    "Missing immutable model checksum or size"
                 }
-                activity.runOnUiThread {verifying=false;if(isAttachedToWindow&&prefs.getLong("id",0L)==downloadId)finishDownload()}
-            }catch(e:Exception){activity.runOnUiThread {verifying=false;if(isAttachedToWindow&&prefs.getLong("id",0L)==downloadId){clearDownload();status.text=activity.getString(R.string.download_rejected,e.message)}}}
+                require(file.length() == expectedSize && ModelFiles.validGGUF(file)) {
+                    "Incomplete or invalid GGUF shard"
+                }
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                file.inputStream().use { input ->
+                    val buffer = ByteArray(256 * 1024)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        digest.update(buffer, 0, n)
+                    }
+                }
+                val actual = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+                require(actual == expectedSha) { "GGUF SHA-256 mismatch" }
+                activity.runOnUiThread {
+                    verifying = false
+                    if (isAttachedToWindow && prefs.getLong("id", 0L) == downloadId) finishDownload()
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    verifying = false
+                    if (isAttachedToWindow && prefs.getLong("id", 0L) == downloadId) {
+                        clearDownload()
+                        status.text = activity.getString(R.string.download_rejected, e.message)
+                    }
+                }
+            }
         }
     }
     private fun finishDownload() {
@@ -294,8 +492,8 @@ internal class ModelLibraryView(
             require(!ready.exists()&&staging.renameTo(ready)) { activity.getString(R.string.shard_prepare_failed) }
             if(index+1<parts.length()){
                 prefs.edit().putInt("part_index",index+1).commit()
-                val source=Uri.parse(prefs.getString("source","")).buildUpon().path(Uri.parse(prefs.getString("source","")).path!!.substringBeforeLast('/')+"/"+parts.getString(index+1)).build().toString()
-                enqueuePart(source,parts.getString(index+1),"GGUF shards")
+                val urls=org.json.JSONArray(prefs.getString("urls","[]"))
+                enqueuePart(urls.getString(index+1),parts.getString(index+1),"GGUF shards")
                 return
             }
             val total=(0 until parts.length()).sumOf {File(root,".${parts.getString(it)}.ready").length()}
@@ -314,12 +512,18 @@ internal class ModelLibraryView(
 
     private fun cancelDownload() {
         val id=prefs.getLong("id",0L)
+        if (id == -1L || id == -2L) {
+            cacheCancelled = true; cacheEpoch++; cacheTransfer = false
+            if (id == -2L) runCatching { NativeRustDownload.cancel() }
+        }
         if (id>0L) downloads.remove(id)
         File(prefs.getString("staging","") ?: "").takeIf { it.isFile }?.delete()
         status.text=activity.getString(R.string.ui_c48e80c1186c)
         clearDownload()
     }
     private fun clearDownload() {
+        cacheCancelled = true; cacheEpoch++; cacheTransfer = false
+        if (prefs.getLong("id", 0L) == -2L) runCatching { NativeRustDownload.cancel() }
         val root=ModelFiles.directory(activity).canonicalFile
         val parts=runCatching {org.json.JSONArray(prefs.getString("parts","[]"))}.getOrDefault(org.json.JSONArray())
         for(i in 0 until parts.length()){for(suffix in listOf("ready","download")){val file=File(root,".${parts.optString(i)}.$suffix");if(file.canonicalFile.parentFile==root)file.delete()}}
@@ -327,6 +531,7 @@ internal class ModelLibraryView(
         bar.visibility=GONE
         cancel.visibility=GONE
         downloadProgress.text=""
+        sampledDownload=0L;sampledAt=0L;sampledBytes=0L;bytesPerSecond=0.0
     }
     private fun refreshLibrary() {
         library.removeAllViews()

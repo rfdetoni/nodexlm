@@ -395,6 +395,9 @@ func SupportsRPC(ctx context.Context, server string) bool {
 // libraries and must not be reused after upgrading the CLI.
 func distributedDir(home, backend string) string {
 	dir := installDir(home, backend) + "-rpc"
+	if modelWideRPCBuild() {
+		return dir + "-model-wide-v1-" + revision.RPCRelease
+	}
 	if nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
 		dir += "-" + revision.RPCRelease
 		if nativeTraceBuild() {
@@ -438,7 +441,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 	// Prefer a ready-to-run, pinned RPC pair: ordinary Linux Guests should not
 	// need CMake, a compiler or root access just to join a trusted cluster.
 	var publishedErr error
-	if experimentalCUDASelected(backend) {
+	if !modelWideRPCBuild() && experimentalCUDASelected(backend) {
 		s, p, err := fetchPublishedRPC(ctx, home, backend, experimentalCUDABaseURL)
 		if err != nil {
 			return "", "", fmt.Errorf("verified experimental CUDA download: %w", err)
@@ -448,7 +451,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		}
 		return s, p, nil
 	}
-	if nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
+	if modelWideRPCBuild() || nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
 		slog.Info("Opt-in native optimization requires a separate pinned source build")
 	} else if publishedRPCSupported(backend) {
 		slog.Info("Checking verified RPC runtime download", "platform", runtime.GOOS+"/"+runtime.GOARCH, "backend", backend, "release", revision.RPCRelease)
@@ -464,7 +467,7 @@ func EnsureDistributed(ctx context.Context, home, requested string) (string, str
 		slog.Warn("Verified RPC runtime unavailable; trying alternate installation", "backend", backend, "error", publishedErr)
 	}
 	// Existing official archives may already include matching RPC binaries.
-	if _, ok := releases[runtime.GOOS+"/"+runtime.GOARCH+"/"+backend]; ok {
+	if _, ok := releases[runtime.GOOS+"/"+runtime.GOARCH+"/"+backend]; ok && !modelWideRPCBuild() {
 		server, rpc, err := Ensure(ctx, home, backend)
 		if err == nil && rpc != "" && SupportsRPC(ctx, server) && (!UnixRPCBundles() || SupportsUnixRPC(ctx, server)) {
 			return server, rpc, nil

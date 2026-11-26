@@ -9,8 +9,9 @@ import (
 // SSE events can contain multiple tokens: these are output-chunk metrics,
 // not fabricated exact per-token timing.
 type streamLatency struct {
-	start, first, last time.Time
-	gaps               []float64
+	start, first, last        time.Time
+	firstText, firstReasoning time.Time
+	gaps                      []float64
 }
 
 func (l *streamLatency) observe(payload []byte, now time.Time) {
@@ -31,6 +32,12 @@ func (l *streamLatency) observe(payload []byte, now time.Time) {
 		if d.Content == "" && d.Reasoning == "" && len(d.Tools) == 0 {
 			continue
 		}
+		if d.Content != "" && l.firstText.IsZero() {
+			l.firstText = now
+		}
+		if d.Reasoning != "" && l.firstReasoning.IsZero() {
+			l.firstReasoning = now
+		}
 		if l.first.IsZero() {
 			l.first = now
 		}
@@ -45,6 +52,16 @@ func (l *streamLatency) observe(payload []byte, now time.Time) {
 func (l streamLatency) apply(s *InferenceSample) {
 	if !l.first.IsZero() && !l.start.IsZero() {
 		s.FirstOutputMilliseconds = float64(l.first.Sub(l.start)) / float64(time.Millisecond)
+	}
+	if !l.start.IsZero() {
+		if !l.firstText.IsZero() {
+			ms := float64(l.firstText.Sub(l.start)) / float64(time.Millisecond)
+			s.FirstTextMilliseconds = &ms
+		}
+		if !l.firstReasoning.IsZero() {
+			ms := float64(l.firstReasoning.Sub(l.start)) / float64(time.Millisecond)
+			s.FirstReasoningMilliseconds = &ms
+		}
 	}
 	if len(l.gaps) > 0 {
 		sort.Float64s(l.gaps)

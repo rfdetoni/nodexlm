@@ -31,6 +31,10 @@ type InferenceSample struct {
 	DraftAcceptance            *float64             `json:"draft_acceptance,omitempty"`
 	LoadMilliseconds           float64              `json:"load_ms,omitempty"`
 	FirstOutputMilliseconds    float64              `json:"first_output_ms,omitempty"`
+	FirstTextMilliseconds      *float64             `json:"first_text_ms,omitempty"`
+	FirstReasoningMilliseconds *float64             `json:"first_reasoning_ms,omitempty"`
+	ReasoningTokens            *int                 `json:"reasoning_tokens,omitempty"`
+	NonReasoningTokens         *int                 `json:"non_reasoning_tokens,omitempty"`
 	OutputChunkP50Milliseconds float64              `json:"output_chunk_p50_ms,omitempty"`
 	OutputChunkP95Milliseconds float64              `json:"output_chunk_p95_ms,omitempty"`
 	Workloads                  []BenchmarkWorkload  `json:"workloads,omitempty"`
@@ -47,11 +51,17 @@ type InferenceSample struct {
 func parseInferenceSample(model string, raw []byte, elapsed time.Duration) (InferenceSample, bool) {
 	var out struct {
 		Usage struct {
-			Completion int `json:"completion_tokens"`
-			Output     int `json:"output_tokens"`
-			Input      int `json:"input_tokens"`
-			Prompt     int `json:"prompt_tokens"`
-			Details    struct {
+			Completion        int `json:"completion_tokens"`
+			Output            int `json:"output_tokens"`
+			Input             int `json:"input_tokens"`
+			Prompt            int `json:"prompt_tokens"`
+			CompletionDetails struct {
+				Reasoning *int `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
+			OutputDetails struct {
+				Reasoning *int `json:"reasoning_tokens"`
+			} `json:"output_tokens_details"`
+			Details struct {
 				Cached int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
@@ -83,10 +93,14 @@ func parseInferenceSample(model string, raw []byte, elapsed time.Duration) (Infe
 		prompt = out.Usage.Input
 	}
 	seconds := elapsed.Seconds()
+	rateTokens := tokens
 	basis := "end_to_end"
 	if out.Timings.Milliseconds > 0 {
 		seconds = out.Timings.Milliseconds / 1000
 		basis = "native_decode"
+		if out.Timings.Tokens > 0 && out.Timings.Tokens <= 1<<20 {
+			rateTokens = out.Timings.Tokens
+		}
 	}
 	if seconds <= 0 {
 		return InferenceSample{}, false
@@ -100,12 +114,23 @@ func parseInferenceSample(model string, raw []byte, elapsed time.Duration) (Infe
 		rate := float64(out.Timings.DraftAccepted) / float64(out.Timings.DraftN)
 		acceptance = &rate
 	}
+	// Reasoning is a subset of completion/output tokens, never an extra count.
+	var reasoning, nonReasoning *int
+	reported, reportedTotal := out.Usage.CompletionDetails.Reasoning, out.Usage.Completion
+	if reported == nil && out.Usage.Completion == 0 {
+		reported, reportedTotal = out.Usage.OutputDetails.Reasoning, out.Usage.Output
+	}
+	if reported != nil && reportedTotal > 0 && *reported >= 0 && *reported <= reportedTotal {
+		remaining := reportedTotal - *reported
+		reasoning, nonReasoning = reported, &remaining
+	}
 	return InferenceSample{
+		ReasoningTokens: reasoning, NonReasoningTokens: nonReasoning,
 		PrefillTokensPerSecond: prefill, DraftTokens: out.Timings.DraftN,
 		DraftAccepted: out.Timings.DraftAccepted, DraftAcceptance: acceptance,
 		Model: model, MeasuredAt: time.Now(), Tokens: tokens, PromptTokens: prompt,
 		CachedTokens: out.Usage.Details.Cached, Seconds: seconds,
-		TokensPerSecond: float64(tokens) / seconds,
+		TokensPerSecond: float64(rateTokens) / seconds,
 		Kind:            "live", RateBasis: basis, PromptMilliseconds: out.Timings.PromptMS,
 		ElapsedMilliseconds: elapsed.Seconds() * 1000,
 	}, true
