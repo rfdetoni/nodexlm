@@ -24,17 +24,24 @@ type InferenceSample struct {
 	// rate includes prefill and first-token latency (end_to_end).
 	RateBasis string `json:"rate_basis,omitempty"`
 	// PromptMilliseconds is the native prefill timing, not an invented TTFT.
-	PromptMilliseconds         float64              `json:"prompt_ms,omitempty"`
-	PrefillTokensPerSecond     float64              `json:"prefill_tokens_per_second,omitempty"`
-	DraftTokens                int                  `json:"draft_tokens,omitempty"`
-	DraftAccepted              int                  `json:"draft_accepted,omitempty"`
-	DraftAcceptance            *float64             `json:"draft_acceptance,omitempty"`
-	LoadMilliseconds           float64              `json:"load_ms,omitempty"`
-	FirstOutputMilliseconds    float64              `json:"first_output_ms,omitempty"`
-	FirstTextMilliseconds      *float64             `json:"first_text_ms,omitempty"`
-	FirstReasoningMilliseconds *float64             `json:"first_reasoning_ms,omitempty"`
-	ReasoningTokens            *int                 `json:"reasoning_tokens,omitempty"`
-	NonReasoningTokens         *int                 `json:"non_reasoning_tokens,omitempty"`
+	PromptMilliseconds         float64  `json:"prompt_ms,omitempty"`
+	PrefillTokensPerSecond     float64  `json:"prefill_tokens_per_second,omitempty"`
+	DraftTokens                int      `json:"draft_tokens,omitempty"`
+	DraftAccepted              int      `json:"draft_accepted,omitempty"`
+	DraftAcceptance            *float64 `json:"draft_acceptance,omitempty"`
+	LoadMilliseconds           float64  `json:"load_ms,omitempty"`
+	FirstOutputMilliseconds    float64  `json:"first_output_ms,omitempty"`
+	FirstTextMilliseconds      *float64 `json:"first_text_ms,omitempty"`
+	FirstReasoningMilliseconds *float64 `json:"first_reasoning_ms,omitempty"`
+
+	ReasoningTokens    *int `json:"reasoning_tokens,omitempty"`
+	NonReasoningTokens *int `json:"non_reasoning_tokens,omitempty"`
+	// SSE is not a per-token clock. These optional throughput values use
+	// server-reported token counts and observed reasoning/text event windows.
+	ObservedReasoningTokensPerSecond *float64 `json:"observed_reasoning_tokens_per_second,omitempty"`
+	ObservedAnswerTokensPerSecond    *float64 `json:"observed_answer_tokens_per_second,omitempty"`
+	PhaseRateBasis                   string   `json:"phase_rate_basis,omitempty"`
+
 	OutputChunkP50Milliseconds float64              `json:"output_chunk_p50_ms,omitempty"`
 	OutputChunkP95Milliseconds float64              `json:"output_chunk_p95_ms,omitempty"`
 	Workloads                  []BenchmarkWorkload  `json:"workloads,omitempty"`

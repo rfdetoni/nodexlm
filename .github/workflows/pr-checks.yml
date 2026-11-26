@@ -74,6 +74,7 @@ jobs:
       - run: node --check internal/dashboard/static/app.js && node scripts/test-dashboard-models.cjs
       - run: sh scripts/test-install.sh
       - run: python3 scripts/test-handoff-systemd.py
+      - run: python3 scripts/test-benchmark-cluster.py
       - run: go build -o nodexlm ./cmd/nodexlm && python3 scripts/smoke.py
       - run: go vet ./...
       - name: Verify pinned upstream and exact patch application

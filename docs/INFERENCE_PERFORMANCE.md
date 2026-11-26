@@ -96,3 +96,43 @@ Android: cache limitado e isolado por pareamento/revisão; desligar e reiniciar 
 ### Afinidade estrita dos workers Android (opt-in)
 
 Quando o Guest CPU-only encontra uma topologia heterogênea e consegue restringir o servidor aos núcleos rápidos permitidos pelo sistema, o backend CPU recebe um pool GGML próprio, com `strict_cpu`, máscara limitada ao cpuset e polling desativado. O pool pertence ao ciclo de vida do servidor e é liberado após os backends. Se os símbolos não estiverem disponíveis ou a máscara não comportar todas as threads, mantém-se a afinidade herdada do servidor. O modo GPU/híbrido não é alterado. Medição em aparelhos físicos continua necessária.
+
+## Benchmark A/B em hardware real (opt-in)
+
+O script `scripts/benchmark-cluster.py` coleta **Host isolado** e **cluster**
+no mesmo GGUF, com três execuções nativas internas por rodada e 2–10 rodadas
+distribuídas. Exige `fingerprint`, `rate_basis` e topologia congelada; rejeita
+mudança de runtime, contadores RPC reiniciados e diferenças de base de medição.
+Não altera configuração, não carrega pesos de sites externos e não executa
+comandos de sistema. É preciso descarregar os modelos antes do benchmark.
+
+```sh
+export NODEXLM_ADMIN_TOKEN='<token-do-host>'
+python3 scripts/benchmark-cluster.py \
+  --url http://127.0.0.1:8787 \
+  --model modelo.gguf --rounds 3 \
+  --output cluster-ab.json
+```
+
+Para um Host remoto com TLS privado, use `--url https://IP:8443` e
+`--ca-cert /caminho/para/server.crt`; HTTP não é permitido fora do loopback.
+`--guest <ID_SHA256>` mede Guests individualmente; `--cluster-only` registra
+o cluster quando o modelo não cabe inteiramente no Host, sem inventar a
+aceleração relativa. As credenciais são recebidas exclusivamente por variável
+de ambiente; o relatório JSON é gravado atomicamente com permissão 0600.
+
+O relatório contém medianas de **decode nativo ou ponta a ponta**, sempre
+rotuladas conforme o backend, e os deltas de bytes/escritas dos túneis por
+Guest em cada rodada. Esses deltas representam atividade de transporte,
+**não** tempo de cálculo GPU/CPU. Compare também temperatura, throttling,
+RAM/VRAM, consumo elétrico e carga concorrente dos dispositivos medidos;
+essas leituras não são inventadas ou coletadas pelo script.
+
+Com uso de reasoning, as contagens separadas só são reportadas quando a API
+nativa as fornecer. A taxa opcional `observed_reasoning_tokens_per_second`
+usa a janela entre os eventos de reasoning e primeiro texto, com as contagens
+reais de tokens da API. `observed_answer_tokens_per_second` usa o intervalo
+entre primeiro e último evento de texto. Ambas possuem
+`phase_rate_basis=sse_event_window`; são **taxas de janela observadas**,
+não tempo exato por token nativo. Quando as fases se intercalam ou falta
+contagem confiável, não são calculadas.

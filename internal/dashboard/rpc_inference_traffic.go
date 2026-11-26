@@ -12,16 +12,24 @@ type nodeInferenceTraffic struct {
 	NodeID string `json:"node_id"`
 	Name   string `json:"name"`
 	Bytes  uint64 `json:"bytes"`
+	// Bytes and writes are completed relay transfers, not native GPU work.
+	BytesToGuest            uint64  `json:"bytes_to_guest"`
+	BytesFromGuest          uint64  `json:"bytes_from_guest"`
+	WritesToGuest           uint64  `json:"writes_to_guest"`
+	WritesFromGuest         uint64  `json:"writes_from_guest"`
+	ToGuestBytesPerSecond   float64 `json:"to_guest_bytes_per_second,omitempty"`
+	FromGuestBytesPerSecond float64 `json:"from_guest_bytes_per_second,omitempty"`
 }
 
 type InferenceRPCTraffic struct {
-	Nodes           []nodeInferenceTraffic `json:"nodes,omitempty"`
-	HostLayers      int                    `json:"estimated_host_layers"`
-	BytesToGuest    uint64                 `json:"bytes_to_guest"`
-	BytesFromGuest  uint64                 `json:"bytes_from_guest"`
-	WritesToGuest   uint64                 `json:"writes_to_guest"`
-	WritesFromGuest uint64                 `json:"writes_from_guest"`
-	BytesPerOutput  float64                `json:"request_bytes_per_output_token"`
+	Nodes                []nodeInferenceTraffic `json:"nodes,omitempty"`
+	HostLayers           int                    `json:"estimated_host_layers"`
+	BytesToGuest         uint64                 `json:"bytes_to_guest"`
+	BytesFromGuest       uint64                 `json:"bytes_from_guest"`
+	WritesToGuest        uint64                 `json:"writes_to_guest"`
+	WritesFromGuest      uint64                 `json:"writes_from_guest"`
+	BytesPerOutput       float64                `json:"request_bytes_per_output_token"`
+	RequestWindowSeconds float64                `json:"request_window_seconds,omitempty"`
 }
 
 func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
@@ -37,11 +45,19 @@ func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelSta
 			b.WritesToGuest < a.WritesToGuest || b.WritesFromGuest < a.WritesFromGuest {
 			return nil
 		}
-		result.Nodes = append(result.Nodes, nodeInferenceTraffic{NodeID: id, Name: id, Bytes: b.BytesToGuest - a.BytesToGuest + b.BytesFromGuest - a.BytesFromGuest})
-		result.BytesToGuest += b.BytesToGuest - a.BytesToGuest
-		result.BytesFromGuest += b.BytesFromGuest - a.BytesFromGuest
-		result.WritesToGuest += b.WritesToGuest - a.WritesToGuest
-		result.WritesFromGuest += b.WritesFromGuest - a.WritesFromGuest
+		toGuest := b.BytesToGuest - a.BytesToGuest
+		fromGuest := b.BytesFromGuest - a.BytesFromGuest
+		writeTo := b.WritesToGuest - a.WritesToGuest
+		writeFrom := b.WritesFromGuest - a.WritesFromGuest
+		result.Nodes = append(result.Nodes, nodeInferenceTraffic{
+			NodeID: id, Name: id, Bytes: toGuest + fromGuest,
+			BytesToGuest: toGuest, BytesFromGuest: fromGuest,
+			WritesToGuest: writeTo, WritesFromGuest: writeFrom,
+		})
+		result.BytesToGuest += toGuest
+		result.BytesFromGuest += fromGuest
+		result.WritesToGuest += writeTo
+		result.WritesFromGuest += writeFrom
 	}
 	return result
 }
@@ -50,6 +66,16 @@ func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string
 	traffic := inferenceTraffic(nodes, before, after)
 	if traffic == nil {
 		return nil
+	}
+	// This window includes the request's prefill and decode. Dividing by it
+	// does not claim per-device kernel throughput or per-token RPC latency.
+	window := time.Since(start).Seconds()
+	if window > 0 {
+		traffic.RequestWindowSeconds = window
+		for i := range traffic.Nodes {
+			traffic.Nodes[i].ToGuestBytesPerSecond = float64(traffic.Nodes[i].BytesToGuest) / window
+			traffic.Nodes[i].FromGuestBytesPerSecond = float64(traffic.Nodes[i].BytesFromGuest) / window
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -690,7 +690,7 @@ function readChatImage(file){
 }
 // The backend owns token accounting. SSE chunks and characters are not tokens.
 // Missing or inconsistent reasoning counts must never become a fabricated zero.
-function chatRunMetrics({usage,timings,elapsed,firstOutput,firstText,firstReasoning,lastReasoning,hasReasoning,external}){
+function chatRunMetrics({usage,timings,elapsed,firstOutput,firstText,lastText,firstReasoning,lastReasoning,hasReasoning,interleaved=false,external}){
  const count=v=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0?v:null;
  const positive=v=>typeof v==='number'&&Number.isFinite(v)&&v>0?v:null;
  const duration=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null;
@@ -701,7 +701,7 @@ function chatRunMetrics({usage,timings,elapsed,firstOutput,firstText,firstReason
  const nativeRate=native!==null&&native>0&&nativeMs!==null?native*1000/nativeMs:null;
  const wall=positive(elapsed),generated=completion??native;
  const totalRate=generated!==null&&generated>0&&wall!==null?generated/wall:null;
- const first=duration(firstOutput),visible=duration(firstText),thinking=duration(firstReasoning),lastThinking=duration(lastReasoning);
+ const first=duration(firstOutput),visible=duration(firstText),lastVisible=duration(lastText),thinking=duration(firstReasoning),lastThinking=duration(lastReasoning);
  const parts=[];
  if(external)parts.push('Provedor externo');
  if(wall!==null)parts.push('Tempo total: '+wall.toFixed(2)+' s');
@@ -717,7 +717,12 @@ function chatRunMetrics({usage,timings,elapsed,firstOutput,firstText,firstReason
   parts.push('Saída sem reasoning: '+(completion-reasoning)+' tokens');
  }else if(hasReasoning||reportedReasoning!==null)parts.push('Tokens de reasoning e resposta: contagem separada indisponível');
  if(thinking!==null&&lastThinking!==null&&lastThinking>=thinking)parts.push('Janela de reasoning observada: '+(lastThinking-thinking).toFixed(2)+' s');
- if(hasReasoning||reasoning>0)parts.push('Velocidade por fase: não informada pelo runtime');
+ if(reasoning!==null&&reasoning>0&&completion>reasoning&&!interleaved&&
+     thinking!==null&&visible!==null&&visible>thinking){
+   parts.push('Reasoning observado (SSE): '+(reasoning/(visible-thinking)).toFixed(1)+' t/s');
+   if(lastVisible!==null&&lastVisible>visible)
+    parts.push('Texto observado (SSE): '+((completion-reasoning)/(lastVisible-visible)).toFixed(1)+' t/s');
+  }else if(hasReasoning||reasoning>0)parts.push('Velocidade separada por fase: indisponível (sem contagem/intervalos confiáveis)');
  const summary=nativeRate!==null?'Decode '+nativeRate.toFixed(1)+' t/s (total)':totalRate!==null?'Média '+totalRate.toFixed(1)+' t/s (total)':wall!==null?'Tempo '+wall.toFixed(2)+' s':'Métricas da geração';
  return {summary,text:parts.join(' · ')};
 }
@@ -733,7 +738,7 @@ async function sendChat(){
  const allowFallback=$('allowExternalFallback').checked;$('allowExternalFallback').checked=false;
  const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
- const start=performance.now();let first=null,firstGenerated=null,firstReasoning=null,lastReasoning=null,timings=null;let answer='',reasoning='',usage=null,rpcTraffic=null,done=false,reader;
+ const start=performance.now();let first=null,lastText=null,firstGenerated=null,firstReasoning=null,lastReasoning=null,interleaved=false,timings=null;let answer='',reasoning='',usage=null,rpcTraffic=null,done=false,reader;
  renderChat();const output=$('chatOutput');
  if(!chatHistory.length)output.replaceChildren();
  const userMessage=chatMessage('user',prompt),assistantMessage=el('article','chat-message assistant');
@@ -785,9 +790,9 @@ async function sendChat(){
     if(event.nodexlm_rpc_traffic)rpcTraffic=event.nodexlm_rpc_traffic;
     if(event.timings&&typeof event.timings==='object')timings={...timings,...event.timings};
     const thinking=event.choices?.[0]?.delta?.reasoning_content||'';
-    if(thinking){const now=performance.now();if(firstGenerated===null)firstGenerated=now;if(firstReasoning===null)firstReasoning=now;lastReasoning=now;reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning;followChat()}
+    if(thinking){if(first!==null||event.choices?.[0]?.delta?.content)interleaved=true;const now=performance.now();if(firstGenerated===null)firstGenerated=now;if(firstReasoning===null)firstReasoning=now;lastReasoning=now;reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning;followChat()}
     const text=event.choices?.[0]?.delta?.content||'';
-    if(text){if(firstGenerated===null)firstGenerated=performance.now();if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer;followChat()}
+    if(text){const now=performance.now();if(firstGenerated===null)firstGenerated=now;if(first===null)first=now;lastText=now;answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer;followChat()}
    }
    if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
   }
@@ -797,8 +802,12 @@ async function sendChat(){
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
   const relative=stamp=>stamp===null?null:(stamp-start)/1000;
-  const metrics=chatRunMetrics({usage,timings,elapsed,firstOutput:relative(firstGenerated),firstText:relative(first),firstReasoning:relative(firstReasoning),lastReasoning:relative(lastReasoning),hasReasoning:!!reasoning,external:!reader});
-  if(rpcTraffic?.nodes?.length)metrics.text+=' · RPC nesta resposta: '+rpcTraffic.nodes.map(n=>displayNodeName(n.node_id,n.name)+': '+fmt(n.bytes)).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
+  const metrics=chatRunMetrics({usage,timings,elapsed,firstOutput:relative(firstGenerated),firstText:relative(first),lastText:relative(lastText),firstReasoning:relative(firstReasoning),lastReasoning:relative(lastReasoning),hasReasoning:!!reasoning,interleaved,external:!reader});
+  if(rpcTraffic?.nodes?.length)metrics.text+=' · RPC nesta resposta (prefill+decode): '+rpcTraffic.nodes.map(n=>{
+    const to=n.bytes_to_guest??n.bytes,from=n.bytes_from_guest??0;
+    const speed=Number.isFinite(n.to_guest_bytes_per_second)?' · '+(n.to_guest_bytes_per_second/(1024*1024)).toFixed(1)+' MiB/s para Guest':'';
+    return displayNodeName(n.node_id,n.name)+': enviado '+fmt(to)+' · recebido '+fmt(from)+speed;
+   }).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
   setChatMetrics(metrics.text,metrics.summary);
  }catch(error){
   if(chatSession!==sessionEpoch)return;
@@ -1093,7 +1102,7 @@ async function refreshObservations(){
    sample.model+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+
    (sample.kind==='benchmark'?'benchmark controlado':'medição ao vivo')+' · '+
    (sample.rate_basis==='native_decode'?'decode nativo':'inclui prefill/TTFT')+
-   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro evento '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.first_text_ms!=null?' · primeiro texto '+(sample.first_text_ms/1000).toFixed(2)+'s':'')+(sample.reasoning_tokens!=null?' · reasoning '+sample.reasoning_tokens+' tokens · restante '+sample.non_reasoning_tokens+' tokens':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
+   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro evento '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.first_text_ms!=null?' · primeiro texto '+(sample.first_text_ms/1000).toFixed(2)+'s':'')+(sample.reasoning_tokens!=null?' · reasoning '+sample.reasoning_tokens+' tokens · restante '+sample.non_reasoning_tokens+' tokens':'')+(sample.phase_rate_basis==='sse_event_window'?' · reasoning observado '+(sample.observed_reasoning_tokens_per_second||0).toFixed(1)+' t/s'+(sample.observed_answer_tokens_per_second!=null?' · texto observado '+sample.observed_answer_tokens_per_second.toFixed(1)+' t/s':'')+' (intervalos SSE)':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
  for(const sample of data.inference)if(sample.suspect){const note=el('p','muted');note.append(el('strong','','Medição suspeita: '),document.createTextNode(sample.model+' — descarregue o modelo e repita o benchmark controlado. '));const button=el('button','','Ir para re-medição');button.addEventListener('click',()=>activateConsoleView('inference'));note.append(button);area.append(note);}
  for(const sample of data.inference)if(sample.native_system_info)area.append(el('p','muted',sample.native_system_info));
  for(const sample of data.inference)for(const workload of sample.workloads||[]){const s=workload.sample;area.append(el('p','muted',workload.profile+': '+(s? s.prompt_tokens+' tokens de prompt · '+s.tokens_per_second.toFixed(1)+' t/s · prefill '+(s.prefill_tokens_per_second||0).toFixed(1)+' t/s · primeiro output '+(s.first_output_ms||0).toFixed(0)+' ms':workload.status)));}
