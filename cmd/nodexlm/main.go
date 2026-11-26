@@ -699,7 +699,9 @@ func newPairing(args []string) error {
 		return err
 	}
 	fmt.Printf("NODEXLM PAIRING CODE: %s (valid %s)\n", result.Code, result.Expires)
-	if *qrHost != "" { return printPairingQR(c,*qrHost,result.Code) }
+	if *qrHost != "" {
+		return printPairingQR(c, *qrHost, result.Code)
+	}
 	return nil
 }
 
@@ -848,7 +850,9 @@ func chat(args []string) error {
 		return errors.New("fallback requires URL and model together, and cannot target a Guest")
 	}
 	content, err := documentPrompt(*prompt, *document)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	cli, err := admin(*server, *ca)
 	if err != nil {
 		return err
@@ -865,8 +869,10 @@ func chat(args []string) error {
 	if err != nil {
 		if *fallbackURL != "" && (status == 404 || status == 503) {
 			fmt.Fprintln(os.Stderr, "Local model unavailable; using explicitly configured external provider.")
-			answer, fallbackErr := externalFallback(c,*fallbackURL,*fallbackModel,request.Messages)
-			if fallbackErr != nil { return fallbackErr }
+			answer, fallbackErr := externalFallback(c, *fallbackURL, *fallbackModel, request.Messages)
+			if fallbackErr != nil {
+				return fallbackErr
+			}
 			fmt.Println(answer)
 			return nil
 		}
@@ -937,7 +943,9 @@ func localChat(args []string) error {
 		}
 		var err error
 		dataURL, err = visionDataURL(*imagePath)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 	}
 	cpu := *threads
 	if cpu <= 0 {
@@ -964,8 +972,10 @@ func localChat(args []string) error {
 	c, cancel := ctx()
 	defer cancel()
 	if dataURL != "" {
-		result, err := generateVision(c,engine,filepath.Base(*path),*prompt,dataURL)
-		if err != nil { return err }
+		result, err := generateVision(c, engine, filepath.Base(*path), *prompt, dataURL)
+		if err != nil {
+			return err
+		}
 		fmt.Println(result)
 		return nil
 	}

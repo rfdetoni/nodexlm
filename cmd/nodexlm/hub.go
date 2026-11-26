@@ -111,12 +111,18 @@ func hub(args []string) error {
 		source := f.String("source", "", "existing directory of GGUF models")
 		dir := f.String("dir", "./models", "destination model directory")
 		link := f.Bool("link", false, "hardlink trusted immutable files (no copying; same filesystem)")
-		if err := f.Parse(args[1:]); err != nil { return err }
-		if *source == "" { return errors.New("--source required") }
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *source == "" {
+			return errors.New("--source required")
+		}
 		c, cancel := ctx()
 		defer cancel()
 		items, err := catalog.ImportDirectory(c, *source, *dir, *link)
-		for _, path := range items { fmt.Println(path) }
+		for _, path := range items {
+			fmt.Println(path)
+		}
 		return err
 	case "import":
 		f := fs("hub import")
