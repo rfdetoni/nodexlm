@@ -21,7 +21,7 @@ Runtime context is configured before loading. The chat sends prior completed tur
 
 ## Quiet graphite redesign invariants
 
-- Web Visão geral shortcuts navigate into the six existing workspaces, without
+- Web Visão geral shortcuts navigate into the existing eight workspaces, without
   creating a parallel RPC/API path. The overview chat prompt only transfers
   a draft to the chat form; it does not submit or consume tokens.
 - Overview capacity is the backend aggregate *estimated budget*, not guaranteed
@@ -52,3 +52,20 @@ Runtime context is configured before loading. The chat sends prior completed tur
   o código do DOM e desligam a renovação automática.
 - O código permanece somente na memória da aba e não é persistido em
   `localStorage` ou `sessionStorage`.
+
+## Web shared primitive inventory
+
+| Surface | Canonical owner | Behavior / evidence |
+|---|---|---|
+| Controls and layout | styles.css | Single token block; wrapping action rows, fluid fields, native focus; Chromium at six widths |
+| Select options | setOptions | Keep DOM identity and current choice; retain explicitly unavailable primary Guest |
+| Async actions | withBusy / bindForm / action | Prevent duplicate submits; stable button labels and aria-busy; native validation retained |
+| Model download | renderDownload / renderProgress / transferLabel | One global transfer status; item-local progress for active file |
+| Search | catalogRequest | Explicit submit, clear cancels request and restores focus; stale results ignored |
+| Refresh | refreshEpoch | Ignore out-of-order snapshots; no added polling |
+| Chat | chatMessage / followChat | Role-separated messages; respect manual scroll; no HTML injection |
+| Pairing QR | pairing session and host snapshot | Reject result if endpoint changes during generation |
+
+Scope: native Web console. Android UI is a separate owner. Backend API and
+security policy unchanged. Manual accessibility, zoom, device and physical
+inference verification remain necessary beyond automated layout checks.

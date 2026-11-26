@@ -52,8 +52,8 @@ The canonical Web assets live in `internal/dashboard/static`. Keep vanilla
 HTML/CSS/JavaScript and existing authenticated API endpoints: no new frontend
 framework, remote fonts or client dependency for the redesign.
 
-The six existing workspaces are the source of truth:
-Visão geral, Modelos, Inferência, Dispositivos, Diagnóstico and Chat. The
+The eight web workspaces are the source of truth:
+Visão geral, Modelos, Inferência, Dispositivos, Diagnóstico, Decisões, Chat and Imagens. The
 overview has working shortcuts and real Host/Guest/model state; never display
 invented session history, token rates or aggregate usable VRAM. Capacity
 and placement remain estimates until validated by the runtime.
@@ -104,3 +104,28 @@ experimental, Host-only and off by default. It must never imply compatible
 RPC tensor distribution, mobile GPU support or authenticated native HTTP.
 Backend-specific unsupported settings fail validation at load time; users
 receive an explicit reason instead of a silent fallback.
+
+## Web token and layout ownership
+
+Runtime CSS is canonical: `internal/dashboard/static/styles.css` defines the
+single :root token block and component rules. The shared palette above remains
+valid for Android; Web uses these exact semantic tokens:
+
+| Role | CSS token | Value |
+|---|---|---|
+| Canvas | --canvas | #202327 |
+| Panel | --surface | #292d32 |
+| Input / inset | --inset | #23272c |
+| Text | --text | #e1e5e9 |
+| Muted text | --muted | #b2bbc4 |
+| Accent/focus | --accent | #8da3b6 |
+| Primary action | --primary | #586c7f |
+| Border | --border | #3d454d |
+| Card radius | --radius-card | 12px |
+| Control radius | --radius-control | 8px |
+| Control height | --control | 42px |
+
+The layout is a compact operational workspace. Overview presents each metric
+once. Narrow navigation is a horizontal rail; the document owns scrolling.
+Tables, model lists and chat history have independently bounded scroll.
+Native select geometry is OS-owned. No web font or decoration-only poll.

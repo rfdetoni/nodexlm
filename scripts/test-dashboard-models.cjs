@@ -74,7 +74,7 @@ function checkResponsiveLayout(html,css){
   // script. Behavioral tests above/below exercise the actual JS separately.
   const fixture=html.replace('<link rel="stylesheet" href="/styles.css">','<style>'+css+'</style>').replace('<script src="/app.js" defer></script>','');
   const escape=value=>value.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const widths=[360,480,768,1024,1440];
+  const widths=[320,360,480,768,1024,1440];
   const frames=widths.map(w=>'<iframe title="'+w+'" width="'+w+'" height="950" style="display:block;border:0" srcdoc="'+escape(fixture)+'"></iframe>').join('');
   const probe=`<script>
   window.addEventListener('load',()=>{
@@ -108,7 +108,7 @@ function checkResponsiveLayout(html,css){
         check(main.scrollWidth<=main.clientWidth+2,view.id+' workspace horizontal overflow');
       }
     }
-    document.getElementById('layout-result').textContent=errors.length?'LAYOUT_FAIL: '+errors.join(' | '):'LAYOUT_PASS_5_WIDTHS';
+    document.getElementById('layout-result').textContent=errors.length?'LAYOUT_FAIL: '+errors.join(' | '):'LAYOUT_PASS_6_WIDTHS';
   });
   </script>`;
   const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'nodexlm-layout-'));
@@ -119,8 +119,8 @@ function checkResponsiveLayout(html,css){
     if(result.error)throw result.error;
     assert.equal(result.status,0,'headless browser failed: '+result.stderr?.slice(-2000));
     const match=result.stdout.match(/<pre id="layout-result">([^<]*)<\/pre>/);
-    assert.equal(match?.[1],'LAYOUT_PASS_5_WIDTHS',match?.[1]||'No browser layout result');
-    console.log('Responsive dashboard layout passed at 360, 480, 768, 1024 and 1440 px');
+    assert.equal(match?.[1],'LAYOUT_PASS_6_WIDTHS',match?.[1]||'No browser layout result');
+    console.log('Responsive dashboard layout passed at 320, 360, 480, 768, 1024 and 1440 px');
   }finally{fs.rmSync(tmp,{recursive:true,force:true})}
 }
 async function main(){
@@ -139,6 +139,11 @@ async function main(){
   assert.equal(get('chatOutput').children[0].textContent,'VocêOlá');
   vm.runInContext("chatHistory=[];renderChat()",sandbox);
   assert.ok(get('chatOutput').textContent.includes('começar'),'empty chat retains useful guidance');
+  vm.runInContext("setOptions('chatModel',[['a','A'],['b','B']],'b')",sandbox);
+  const originalOption=get('chatModel').children[0];
+  vm.runInContext("setOptions('chatModel',[['a','A'],['b','B']],'a')",sandbox);
+  assert.equal(get('chatModel').children[0],originalOption,'unchanged options retain DOM identity');
+  assert.equal(get('chatModel').value,'a');
 
   // Telemetry must never turn an unknown CPU/GPU counter into a claimed idle reading.
   const device = {
@@ -273,7 +278,7 @@ async function main(){
   assert.equal(download.status,'downloading');
   assert.equal(download.name,'Qwen3-Q4_K_M.gguf');
   assert.equal(get('downloadProgress').children[1].tag,'progress');
-  assert.equal(get('catalogDownloadProgress').children[1].tag,'progress');
+  assert.ok(!html.includes('id="catalogDownloadProgress"'),'only one global transfer status');
   assert.ok(get('catalogResults').children[0].children[0].children.some(n=>n.tag==='progress'));
   locals.push({name:download.name,size_bytes:model.size_bytes});
   download.status='completed';download.received=download.total;
