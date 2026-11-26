@@ -31,6 +31,7 @@ use tokio_rustls::TlsConnector;
 
 mod affinity;
 mod compression;
+mod download;
 
 const MAX_SLOTS: usize = 8;
 const STANDBY: usize = 2;

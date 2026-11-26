@@ -115,7 +115,7 @@ internal class ModelLibraryView(
         addView(library)
         refreshLibrary()
         // An unowned Host-cache transfer cannot be resumed after Activity re-creation.
-        if (prefs.getLong("id", 0L) == -1L) clearDownload()
+        if (prefs.getLong("id", 0L) in listOf(-1L, -2L)) clearDownload()
     }
 
     override fun onAttachedToWindow() { super.onAttachedToWindow(); main.removeCallbacks(tick);main.post(tick) }
@@ -310,6 +310,59 @@ internal class ModelLibraryView(
     }
 
     private fun enqueueNetworkPart(source: String, fileName: String, repository: String) {
+        if (BuildConfig.RUST_RPC_ENABLED) {
+            val index = prefs.getInt("part_index", 0)
+            val checksum = org.json.JSONArray(prefs.getString("shas", "[]")).optString(index)
+            val expected = org.json.JSONArray(prefs.getString("sizes", "[]")).optLong(index, -1L)
+            if (checksum.matches(Regex("[0-9a-f]{64}")) && expected >= 8) {
+                enqueueRustPart(source, fileName, repository, checksum, expected)
+                return
+            }
+        }
+        enqueueDownloadManager(source, fileName, repository)
+    }
+
+    private fun enqueueRustPart(source: String, fileName: String, repository: String, checksum: String, expected: Long) {
+        val root = ModelFiles.directory(activity)
+        val staging = File(root, ".$fileName.download")
+        val target = File(root, fileName)
+        require(!staging.exists()) { activity.getString(R.string.model_downloading) }
+        val epoch = ++cacheEpoch
+        cacheCancelled = false
+        cacheReceived = 0
+        cacheExpected = expected
+        cacheTransfer = true
+        check(prefs.edit().putLong("id", -2L).putString("staging", staging.absolutePath)
+            .putString("target", target.absolutePath).putString("current_source", source).commit())
+        status.text = activity.getString(R.string.download_started, fileName)
+        val scratch = File(root, ".$fileName.native-$epoch")
+        thread(name = "nodexlm-rust-model-download") {
+            val error = runCatching {
+                NativeRustDownload.fetch(source, scratch.absolutePath, checksum, expected)
+            }.getOrElse { it.message ?: "Native download unavailable" }
+            activity.runOnUiThread {
+                if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -2L) {
+                    scratch.delete()
+                    return@runOnUiThread
+                }
+                cacheTransfer = false
+                if (error.isBlank() && scratch.renameTo(staging)) {
+                    completeDownload()
+                } else {
+                    scratch.delete()
+                    prefs.edit().putLong("id", 0L).commit()
+                    try {
+                        enqueueDownloadManager(source, fileName, repository)
+                    } catch (e: Exception) {
+                        clearDownload()
+                        status.text = activity.getString(R.string.download_failed, e.message)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun enqueueDownloadManager(source: String, fileName: String, repository: String) {
         val root = ModelFiles.directory(activity)
         val target = File(root, fileName)
         val staging = File(root, ".$fileName.download")
@@ -332,11 +385,14 @@ internal class ModelLibraryView(
     }
     private fun refreshProgress() {
         val id=prefs.getLong("id",0L)
-        if (id == -1L && cacheTransfer) {
+        if ((id == -1L || id == -2L) && cacheTransfer) {
             bar.visibility=VISIBLE;cancel.visibility=VISIBLE
+            val received=if(id == -2L)runCatching { NativeRustDownload.transferred() }.getOrDefault(0L) else cacheReceived
             bar.isIndeterminate=cacheExpected<=0
-            if(cacheExpected>0)bar.progress=(cacheReceived*1000/cacheExpected).toInt().coerceIn(0,1000)
-            downloadProgress.text="Host cache · ${gib(cacheReceived)} / ${gib(cacheExpected)}"
+            if(cacheExpected>0)bar.progress=(received*1000/cacheExpected).toInt().coerceIn(0,1000)
+            val nativeSpeed=if(id == -2L)runCatching { NativeRustDownload.bytesPerSecond() }.getOrDefault(0L) else 0L
+            val rate=if(nativeSpeed>0) " · %.2f MiB/s".format(java.util.Locale.US,nativeSpeed.toDouble()/(1024*1024)) else ""
+            downloadProgress.text="${if(id == -2L) "Rust HTTPS" else "Host cache"} · ${gib(received)} / ${gib(cacheExpected)}$rate"
             return
         }
         if (id<=0L) {bar.visibility=GONE;cancel.visibility=GONE;return}
@@ -453,7 +509,10 @@ internal class ModelLibraryView(
 
     private fun cancelDownload() {
         val id=prefs.getLong("id",0L)
-        if (id == -1L) { cacheCancelled = true; cacheEpoch++; cacheTransfer = false }
+        if (id == -1L || id == -2L) {
+            cacheCancelled = true; cacheEpoch++; cacheTransfer = false
+            if (id == -2L) runCatching { NativeRustDownload.cancel() }
+        }
         if (id>0L) downloads.remove(id)
         File(prefs.getString("staging","") ?: "").takeIf { it.isFile }?.delete()
         status.text=activity.getString(R.string.ui_c48e80c1186c)
@@ -461,6 +520,7 @@ internal class ModelLibraryView(
     }
     private fun clearDownload() {
         cacheCancelled = true; cacheEpoch++; cacheTransfer = false
+        if (prefs.getLong("id", 0L) == -2L) runCatching { NativeRustDownload.cancel() }
         val root=ModelFiles.directory(activity).canonicalFile
         val parts=runCatching {org.json.JSONArray(prefs.getString("parts","[]"))}.getOrDefault(org.json.JSONArray())
         for(i in 0 until parts.length()){for(suffix in listOf("ready","download")){val file=File(root,".${parts.optString(i)}.$suffix");if(file.canonicalFile.parentFile==root)file.delete()}}
