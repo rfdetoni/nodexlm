@@ -255,6 +255,9 @@ class MainActivity : Activity() {
             else getString(R.string.node_paired),
             12, false
         ))
+        overview.addView(action(getString(R.string.local_document_chat)) {
+            startActivity(Intent(this,LocalChatActivity::class.java))
+        })
         if (BuildConfig.HOST_ENABLED && android.os.Process.is64Bit()) {
             overview.addView(label(getString(R.string.android_host_title),18,true))
             overview.addView(label(getString(R.string.android_host_help),12,false))

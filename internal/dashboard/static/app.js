@@ -650,6 +650,10 @@ $('decisionForm').addEventListener('submit',event=>{
 });
 $('logout').addEventListener('click',()=>{sessionStorage.removeItem('nodexlm-admin');token='';clearPairingSession();chatController?.abort();chatHistory=[];$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;$('imageOutput').hidden=true;$('imageOutput').removeAttribute('src');$('chatOutput').replaceChildren();setupAuth()});
 $('downloadUrl').addEventListener('change',()=>{try{let pathname=new URL($('downloadUrl').value).pathname;const name=decodeURIComponent(pathname.split('/').pop());if(name.toLowerCase().endsWith('.gguf'))$('downloadName').value=name;}catch{}});
+$('importDirectoryForm').addEventListener('submit',event=>{event.preventDefault();guard(async()=>{
+ const button=$('importDirectoryButton');button.disabled=true;
+ try{const result=await api('/api/models/import-directory','POST',{source:$('importDirectoryPath').value.trim(),link:$('importDirectoryLink').checked});notice(result.imported+' modelos importados');}finally{button.disabled=false;await refresh()}
+})});
 $('downloadForm').addEventListener('submit',e=>{e.preventDefault();guard(async()=>{await api('/api/download','POST',{url:$('downloadUrl').value,name:$('downloadName').value});notice('Download iniciado');await refresh()})});
 function configureBackendUI(){
  const other=$('runtimeBackend').value==='mistralrs';

@@ -47,7 +47,7 @@ internal object LiteRTWorkerRuntime {
         require(roles.isNotEmpty() && roles.size==contents.size && roles.size<=64 && roles.last()=="user") { "LiteRT requires final user message" }
         require(contents.all { it.toByteArray(Charsets.UTF_8).size<=32768 }) { "Message too large" }
         cancelled.set(false)
-        val history = roles.indices.dropLast(1).map { index ->
+        val history = (0 until roles.lastIndex).map { index ->
             when (roles[index]) {
                 "system" -> Message.system(contents[index])
                 "user" -> Message.user(contents[index])

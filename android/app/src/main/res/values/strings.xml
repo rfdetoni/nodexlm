@@ -290,4 +290,9 @@
     <string name="litert_worker_start">Start LiteRT-LM cluster worker</string>
     <string name="litert_worker_requires_pairing">Import a model and pair with the Host first</string>
     <string name="scan_pairing_qr">Scan pairing QR</string>
+    <string name="local_document_chat">Local document chat</string>
+    <string name="document_attach">Attach PDF, DOCX or text</string>
+    <string name="document_clear">Remove document</string>
+    <string name="document_attached">Document attached (%1$d bytes)</string>
+    <string name="document_help">Uses the selected GGUF locally. Stop other compute modes first. PDF text extraction requires Android 15+; scanned pages require OCR elsewhere.</string>
 </resources>

@@ -17,6 +17,7 @@
         android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
         <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <activity android:name=".LocalChatActivity" android:exported="false" android:process=":localchat" />
         <activity android:name=".LiteRTActivity" android:exported="false" android:process=":litert" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

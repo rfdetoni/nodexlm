@@ -237,6 +237,7 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("GET /api/models/folder", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]string{"path": d.Manager.ModelFolder()})
 	}))
+	mux.HandleFunc("POST /api/models/import-directory", d.api(d.importDirectory))
 	mux.HandleFunc("POST /api/models/folder/open", d.api(func(w http.ResponseWriter, r *http.Request) {
 		if err := d.Manager.OpenModelFolder(); err != nil {
 			failure(w, 500, err)

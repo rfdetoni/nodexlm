@@ -56,6 +56,15 @@ class HostService : Service() {
     private fun runHost() {
         val home = File(filesDir,"host").apply { mkdirs() }
         val status = File(home,"status")
+        val telemetry = File(home,"memory.json")
+        fun publishMemory() {
+            val memory=android.app.ActivityManager.MemoryInfo()
+            getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory)
+            val reserve=GuestResourceBudget.reserveBytes(0,memory.totalMem,memory.threshold)
+            val stage=File(home,"memory.tmp")
+            stage.writeText(org.json.JSONObject().put("total",memory.totalMem).put("available",memory.availMem).put("reserve",reserve).toString())
+            android.system.Os.rename(stage.absolutePath,telemetry.absolutePath)
+        }
         fun record(text: String) { runCatching { status.writeText(text) } }
         val lease = MobileRuntimeLease.acquire(this)
         if (lease == null) {
@@ -72,12 +81,15 @@ class HostService : Service() {
                 require(executable.canExecute() && llama.canExecute()) { "Host binaries not available in this APK" }
                 lock.setReferenceCounted(false)
                 lock.acquire()
+                publishMemory()
+                var lastMemory=android.os.SystemClock.elapsedRealtime()
                 val command = ProcessBuilder(executable.absolutePath,"host","--dir",home.absolutePath,
                     "--model-dir",ModelFiles.directory(this).absolutePath,"--llama-bin",llama.absolutePath,
                     "--rpc-transport","tcp","--web-addr","127.0.0.1:8787")
                 command.environment().apply {
                     put("HOME",home.absolutePath);put("NODEXLM_HOME",home.absolutePath);put("TMPDIR",cacheDir.absolutePath)
                     put("NODEXLM_ANDROID_PARENT_PID",android.os.Process.myPid().toString())
+                    put("NODEXLM_ANDROID_MEMORY_FILE",telemetry.absolutePath)
                     remove("NODEXLM_ADMIN_TOKEN");remove("NODEXLM_JOIN_TOKEN")
                 }
                 // Startup output can contain temporary pairing credentials. Never put it in Logcat.
@@ -86,7 +98,10 @@ class HostService : Service() {
                 child = process
                 record("Host starting: http://127.0.0.1:8787")
                 if (!running.get()) process.destroy()
-                while (running.get() && !process.waitFor(1,TimeUnit.SECONDS)) {}
+                while (running.get() && !process.waitFor(1,TimeUnit.SECONDS)) {
+                    val now=android.os.SystemClock.elapsedRealtime()
+                    if(now-lastMemory>=15_000) { runCatching { publishMemory() };lastMemory=now }
+                }
                 if (process.isAlive) {
                     process.destroy()
                     if (!process.waitFor(12,TimeUnit.SECONDS)) { process.destroyForcibly();process.waitFor() }

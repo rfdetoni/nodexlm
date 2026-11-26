@@ -184,8 +184,13 @@ func drmDevices(root string) []protocol.GPUDevice {
 func Collect(name string, models []string) protocol.Device {
 	d := protocol.Device{Name: name, Platform: runtime.GOOS, Architecture: runtime.GOARCH, CPUCount: runtime.NumCPU(), Models: models}
 	switch runtime.GOOS {
-	case "linux", "android":
+	case "linux":
 		d.RAMBytes, d.AvailableRAMBytes = memoryLinux()
+	case "android":
+		d.RAMBytes, d.AvailableRAMBytes = memoryLinux()
+		if total, available, reserve, ok := androidMemory(); ok {
+			d.RAMBytes, d.AvailableRAMBytes, d.MemoryReserveBytes = total, available, reserve
+		}
 	case "darwin":
 		d.RAMBytes, d.AvailableRAMBytes = memoryDarwin()
 	case "windows":
