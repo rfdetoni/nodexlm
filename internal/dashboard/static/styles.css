@@ -202,7 +202,11 @@ th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-size:
 .chat-composer>.check-field{padding:6px 0;font-size:12px}
 .chat-composer>.check-field small{font-size:10px}
 .chat-actions{padding-top:6px;gap:6px}
-#chatMetrics{flex:none;max-height:42px;overflow:hidden}
+/* Keep the result strip compact without clipping diagnostic text. */
+.chat-run-metrics{position:relative;flex:none;min-width:0}
+.chat-run-metrics summary{cursor:pointer;font-size:12px;color:var(--muted);padding:2px 0;overflow-wrap:anywhere}
+.chat-run-metrics[open] #chatMetrics{position:absolute;bottom:100%;left:0;right:0;z-index:12;background:var(--surface);border:1px solid var(--border-control);border-radius:var(--radius-control);padding:12px;max-height:40dvh;overflow:auto;box-shadow:0 8px 24px #0005}
+#chatMetrics{margin:0;overflow-wrap:anywhere}
 @media(max-width:800px){
  .console-shell:has(#view-chat:not([hidden])){height:calc(100dvh - 88px)}
  .console-shell:has(#view-chat:not([hidden])) .console-nav{flex:none;position:static}

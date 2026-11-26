@@ -89,7 +89,7 @@
 <section class="card chat-card">
 <div class="chat-header"><label class="chat-model-row">Modelo residente<select id="chatModel" form="chatForm"></select></label><button id="clearChat" type="button" class="ghost">Apagar histórico</button></div>
 <div id="chatOutput" class="chat-output" role="log" aria-live="polite" aria-relevant="additions text"><p class="chat-empty">Carregue um modelo e envie uma mensagem para começar.</p></div>
-<p id="chatMetrics" class="muted chat-metrics" role="status"></p>
+<details id="chatMetricsPanel" class="chat-run-metrics" hidden><summary id="chatMetricsSummary" role="status">Métricas da geração</summary><p id="chatMetrics" class="muted chat-metrics"></p></details>
 <form id="chatForm">
 
 <div class="chat-composer">
