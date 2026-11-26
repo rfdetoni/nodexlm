@@ -143,7 +143,7 @@ func fetch(ctx context.Context, client *http.Client, source, target string, limi
 	if meta.Total > limit {
 		return 0, errors.New("model exceeds download limit")
 	}
-	if parallel && offset == 0 && resp.StatusCode == http.StatusOK && meta.Total >= minParallelSize && meta.SHA256 != "" && strongETag(meta.Validator) && downloadWorkers() > 1 {
+	if parallel && offset == 0 && resp.StatusCode == http.StatusOK && meta.Total >= minParallelSize && meta.SHA256 != "" && strongETag(meta.Validator) && workersFor(ctx) > 1 {
 		resp.Body.Close()
 		file.Close()
 		n, err := fetchRanges(ctx, client, source, target, meta, progress)

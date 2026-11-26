@@ -85,6 +85,9 @@ func (h Hub) DownloadFile(ctx context.Context, repository, filename, directory, 
 	if dir == "." {
 		dir = ""
 	}
+	if first, handled, err := h.downloadPinnedShards(ctx, repository, dir, directory, parts, progress); handled {
+		return first, err
+	}
 	created := make([]string, 0, len(parts))
 	var received int64
 	for _, shard := range parts {

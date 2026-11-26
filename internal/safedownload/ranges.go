@@ -286,7 +286,7 @@ func fetchRanges(ctx context.Context, client *http.Client, source, target string
 			cancel()
 		}
 	}
-	window := newRangeWindow(min(downloadWorkers(), count))
+	window := newRangeWindow(min(workersFor(ctx), count))
 	for range window.max {
 		wg.Add(1)
 		go func() {
@@ -380,7 +380,10 @@ func fetchRanges(ctx context.Context, client *http.Client, source, target string
 		return received, err
 	}
 	_ = os.Remove(journal)
-	_ = os.Remove(target + ".json")
+	// Preserve the verified identity until the caller publishes the file.
+	if raw, err := json.Marshal(meta); err == nil {
+		_ = os.WriteFile(target+".json", raw, 0600)
+	}
 	return received, nil
 }
 
