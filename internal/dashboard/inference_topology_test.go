@@ -44,3 +44,24 @@ func TestActivityWindowRejectsEpochAndOffline(t *testing.T) {
 		t.Fatal("valid zero remote delta did not identify inferred Host")
 	}
 }
+
+func TestNativeAttributionUsesRelayNotDeviceIndex(t *testing.T) {
+	selection := clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: "a"}, {ID: "b"}}}
+	endpoints := []string{"127.0.0.1:42", "unix:/tmp/guest.sock"}
+	guests := []RPCGuest{{ID: "b", Endpoint: endpoints[1]}, {ID: "a", Endpoint: endpoints[0]}}
+	owners := nativeRPCOwners(endpoints, selection, guests)
+	tokens := []local.NativeTokenActivity{{Batch: 1, Ordinal: 2, Splits: []local.NativeBackendSplit{
+		{Backend: "RPC0[127.0.0.1:42]", Count: 1},
+		{Backend: "RPC0[unix:/tmp/guest.sock]", Count: 2},
+		{Backend: "RPC0[127.0.0.1:99]", Count: 1},
+		{Backend: "CPU", Count: 1},
+	}}}
+	attributeNativeTokens(tokens, owners)
+	got := tokens[0].Splits
+	if got[0].NodeID != "a" || got[1].NodeID != "b" || got[2].NodeID != "" || got[3].NodeID != "" || got[0].Backend != "RPC0" || got[2].Backend != "RPC0" {
+		t.Fatalf("unexpected native attribution: %+v", got)
+	}
+	if nativeRPCOwners([]string{endpoints[1], endpoints[0]}, selection, guests) != nil {
+		t.Fatal("accepted mismatched relay identity")
+	}
+}

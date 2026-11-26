@@ -25,6 +25,7 @@ class LiteRTActivity : Activity() {
     private val model by lazy { File(filesDir, "litert/active.litertlm") }
     private val busy = AtomicBoolean(false)
     private val cancelled = AtomicBoolean(false)
+    private var document = ""
     private val conversationGuard = Any()
     private var conversation: Conversation? = null
     private lateinit var status: TextView
@@ -58,6 +59,11 @@ class LiteRTActivity : Activity() {
         panel.addView(gpu)
         prompt = EditText(this).apply { hint = getString(R.string.litert_prompt) }
         panel.addView(prompt)
+        panel.addView(Button(this).apply {
+            text=getString(R.string.document_attach)
+            setOnClickListener { if(!busy.get()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type="*/*";addCategory(Intent.CATEGORY_OPENABLE) },42) }
+        })
+        panel.addView(Button(this).apply { text=getString(R.string.document_clear);setOnClickListener { if(!busy.get()) document="" } })
         generate = Button(this).apply {
             text = getString(R.string.litert_run)
             setOnClickListener { runInference() }
@@ -66,6 +72,19 @@ class LiteRTActivity : Activity() {
         panel.addView(Button(this).apply {
             text = getString(R.string.litert_cancel)
             setOnClickListener { cancelInference() }
+        })
+        panel.addView(Button(this).apply {
+            text = getString(R.string.litert_worker_start)
+            setOnClickListener {
+                if (busy.get() || !model.isFile || runCatching { NodeSecrets.read(this@LiteRTActivity) }.getOrDefault("").isBlank()) {
+                    status.text = getString(R.string.litert_worker_requires_pairing)
+                    return@setOnClickListener
+                }
+                startForegroundService(Intent(this@LiteRTActivity,ComputeService::class.java)
+                    .setAction(ComputeService.START).putExtra(ComputeService.EXTRA_LITERT,true)
+                    .putExtra(ComputeService.EXTRA_LITERT_GPU,gpu.isChecked))
+                finish()
+            }
         })
         setContentView(ScrollView(this).apply { addView(panel) })
         idle()
@@ -84,7 +103,10 @@ class LiteRTActivity : Activity() {
         importButton.isEnabled = false
         status.text = getString(R.string.litert_busy)
         thread(name = "nodexlm-litert") {
-            val result = try { action() } catch (e: Exception) {
+            val result = try {
+                val lease = MobileRuntimeLease.acquire(this) ?: error("Another mobile runtime is active")
+                lease.use { action() }
+            } catch (e: Exception) {
                 getString(R.string.litert_error, e.message ?: "error")
             } catch (e: LinkageError) {
                 getString(R.string.litert_error, "Native SDK unavailable")
@@ -101,8 +123,13 @@ class LiteRTActivity : Activity() {
     @Deprecated("Android file picker callback")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != 41 || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
+        if (requestCode == 42) {
+            launch { document=MobileDocuments.read(this,uri);getString(R.string.document_attached,document.toByteArray(Charsets.UTF_8).size) }
+            return
+        }
+        if (requestCode != 41) return
         launch {
             val name = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) it.getString(0) else null
@@ -163,7 +190,7 @@ class LiteRTActivity : Activity() {
                         conversation = session
                     }
                     try {
-                        session.sendMessage(text, maxOutputToken = 256).toString()
+                        session.sendMessage(MobileDocuments.prompt(text,document), maxOutputToken = 256).toString()
                     } finally {
                         synchronized(conversationGuard) { conversation = null }
                     }

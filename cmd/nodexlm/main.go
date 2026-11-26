@@ -352,6 +352,7 @@ func serve(args []string) error {
 	}
 	c, cancel := ctx()
 	defer cancel()
+	watchAndroidParent(c, cancel)
 	go s.Cleanup(c)
 	if _, portText, e := net.SplitHostPort(*addr); e == nil {
 		if port, e := strconv.Atoi(portText); e == nil && port > 0 && port < 65536 {

@@ -96,6 +96,7 @@ class RpcGuestService : Service() {
     private val sockets = Collections.synchronizedSet(mutableSetOf<Socket>())
     private var cpuLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var runtimeLease: MobileRuntimeLease? = null
     private val wifiGuard = Any()
     private var adaptiveWifi = false
     private val wifiPolicy = WifiClaimPolicy()
@@ -147,6 +148,8 @@ class RpcGuestService : Service() {
         }
         thread(name = "nodexlm-rpc-supervisor", isDaemon = true) {
             try {
+                runtimeLease = MobileRuntimeLease.acquire(this)
+                check(runtimeLease != null && running.get()) { "Another mobile runtime owns this device" }
                 logPreviousLowMemoryExit()
                 val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
                 val requestedThreads = energy.getInt("rpc_threads", 0)
@@ -552,8 +555,14 @@ class RpcGuestService : Service() {
         connection.setRequestProperty("Authorization", "Bearer $token")
         connection.setRequestProperty("X-Nodex-Node", node)
         try {
+            val start = android.os.SystemClock.elapsedRealtime()
             connection.outputStream.use { it.write(device.toString().toByteArray(Charsets.UTF_8)) }
             check(connection.responseCode == 200) { "Host heartbeat HTTP ${connection.responseCode}" }
+            val elapsed = android.os.SystemClock.elapsedRealtime()
+            if (adaptiveWifi) synchronized(wifiGuard) {
+                wifiPolicy.observe(elapsed,connection.getHeaderField("X-Nodex-RPC-RTT")?.toDoubleOrNull(),
+                    connection.getHeaderField("X-Nodex-RPC-Jitter")?.toDoubleOrNull(),(elapsed-start).toDouble())
+            }
             connection.inputStream.close()
         } finally { connection.disconnect() }
     }

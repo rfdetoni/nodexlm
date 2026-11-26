@@ -22,4 +22,16 @@ python3 scripts/handoff-systemd.py --old old-host --new new-host \
 
 This independently re-hashes the staged GGUFs, disables/stops the old Host and destination Guest before starting the destination Host, checks the local Web console and preserves the old Host's boot enablement state on the new Host. On failure it attempts to fence the destination before restoring the original services. If fencing cannot be confirmed, it deliberately does not restart the old Host. No forced reset, SSH host-key bypass or credential copying is performed. Do not use with custom service paths or ports without review.
 
-The script automates the cold service transition only; it does not transfer the model, migrate KV/cache/sessions, fence out-of-band manual starts, re-pair nodes, or verify physical inference. After success verify the model and re-pair Guests including the old Host. Automated rollback tests use mocked SSH/systemd; real two-device validation is still required.
+The cold-switch operation does not transfer the model, migrate KV/cache/sessions, fence out-of-band manual starts, re-pair nodes, or verify physical inference. After success verify the model and re-pair Guests including the old Host. Automated rollback tests use mocked SSH/systemd; real two-device validation is still required.
+
+## Re-enroll Guests after confirming the cold switch
+
+Re-enrollment is a separate, explicitly confirmed operation because successful pairing replaces a Guest's local credential. On stock Linux systemd installations, list the former Host and the other Guests that should join the new coordinator. Install the stock Guest unit and create its dedicated service account/home on the former Host first. SSH must have independently verified host keys and noninteractive access to the required service operations.
+
+```sh
+python3 scripts/handoff-systemd.py --old old-host --new new-host \
+  --rejoin-only --confirm-rejoin --endpoint https://192.168.1.10:8443 \
+  --guest old-host --guest linux-guest
+```
+
+Use the actual new Host private LAN IP, not a DNS hostname. The script verifies the old Host is stopped/disabled and the new Host active, rejects duplicate machine identities, reads the certificate SHA-256 over the trusted SSH channel, obtains a fresh pairing code per Guest, and supplies it through stdin only. It starts each Guest after authenticated enrollment and enables it at boot only after the new Host reports that identity online and RPC-ready. On failure it stops/disables the affected Guest where possible; already migrated Guests remain on the new Host. Retry only the remaining Guests after resolving the problem. Do not automatically restart the old Host after credentials have been changed. Android and non-systemd nodes still require their own enrollment procedure; no physical inference verification or live KV transfer is implied.

@@ -1,10 +1,5 @@
 name: Smolmax ARM64 native candidate
 on:
-  pull_request:
-    paths:
-      - 'experiments/smolmax/**'
-      - 'internal/llamaruntime/patches/smolmax-single-row.patch'
-      - '.github/workflows/smolmax-native-candidate.yml'
   workflow_dispatch:
 permissions:
   contents: read

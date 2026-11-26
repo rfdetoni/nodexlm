@@ -279,4 +279,20 @@
     <string name="litert_disabled">LiteRT-LM não está incluído nesta compilação</string>
     <string name="import_directory">Importar diretório GGUF</string>
     <string name="import_directory_done">%1$d novos modelos importados</string>
+    <string name="android_host_title">Host Android (experimental)</string>
+    <string name="android_host_help">Coordenador ARM64 CPU e Guests autenticados. Pare os modos Guest/worker antes. Gerencie os modelos pelo navegador local.</string>
+    <string name="android_host_start">Iniciar Host</string>
+    <string name="android_host_stop">Parar Host</string>
+    <string name="android_host_open">Abrir painel local do Host</string>
+    <string name="android_host_token">Copiar token administrativo local</string>
+    <string name="android_host_token_copied">Token administrativo copiado</string>
+    <string name="android_host_unavailable">Inicie o Host primeiro</string>
+    <string name="litert_worker_start">Iniciar worker LiteRT-LM no cluster</string>
+    <string name="litert_worker_requires_pairing">Importe um modelo e pareie com o Host primeiro</string>
+    <string name="scan_pairing_qr">Escanear QR de pareamento</string>
+    <string name="local_document_chat">Chat local com documentos</string>
+    <string name="document_attach">Anexar PDF, DOCX ou texto</string>
+    <string name="document_clear">Remover documento</string>
+    <string name="document_attached">Documento anexado (%1$d bytes)</string>
+    <string name="document_help">Usa o GGUF selecionado localmente. Pare outros modos de processamento primeiro. A extração de PDF exige Android 15+; páginas escaneadas exigem OCR externo.</string>
 </resources>

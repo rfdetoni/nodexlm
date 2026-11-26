@@ -1,4 +1,4 @@
-package main
+package document
 
 import (
 	"archive/zip"
@@ -97,7 +97,7 @@ func readDOCX(path string) (string, error) {
 			}
 			depth--
 		}
-		if out.Len() > maxChatDocument {
+		if out.Len() > MaxText {
 			return "", errors.New("DOCX extracted text exceeds 64 KiB")
 		}
 	}

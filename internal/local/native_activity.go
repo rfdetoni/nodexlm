@@ -21,6 +21,7 @@ type NativeTokenActivity struct {
 type NativeBackendSplit struct {
 	Backend string `json:"backend"`
 	Count   int    `json:"count"`
+	NodeID  string `json:"node_id,omitempty"`
 }
 
 type nativeTrace struct {
@@ -84,7 +85,7 @@ func (t *nativeTrace) consume(line string) {
 		if n != 3 || !t.next(batch) || t.complete {
 			return
 		}
-		if !ok || split < 0 || nodes <= 0 || len(backend) == 0 || len(backend) > 96 ||
+		if !ok || split < 0 || nodes <= 0 || len(backend) == 0 || len(backend) > 512 ||
 			strings.IndexFunc(backend, func(r rune) bool { return r < 32 || r > 126 }) >= 0 {
 			t.valid = false
 			return
@@ -125,7 +126,11 @@ func (t *nativeTrace) consume(line string) {
 func (t *nativeTrace) snapshot() []NativeTokenActivity {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return append([]NativeTokenActivity(nil), t.recent...)
+	out := append([]NativeTokenActivity(nil), t.recent...)
+	for i := range out {
+		out[i].Splits = append([]NativeBackendSplit(nil), out[i].Splits...)
+	}
+	return out
 }
 
 // NativeActivity is empty for uninstrumented runtimes or unsupported decode

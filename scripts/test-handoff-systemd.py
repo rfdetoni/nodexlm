@@ -88,5 +88,61 @@ class SwitchTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class RejoinTests(unittest.TestCase):
+    def test_endpoint(self):
+        self.assertEqual(handoff.checked_endpoint("https://192.168.1.10:8443/"),
+                         "https://192.168.1.10:8443")
+        for bad in ("http://192.168.1.10:8443", "https://example.com:8443",
+                    "https://127.0.0.1:8443", "https://192.168.1.10:443",
+                    "https://user@192.168.1.10:8443"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                handoff.checked_endpoint(bad)
+
+    def run_rejoin(self, fail=False):
+        calls = []
+
+        def remote(node, *args, **kwargs):
+            if args[0] == "cat":
+                return node
+            if "openssl" in args:
+                return "sha256 Fingerprint=" + "AA:" * 31 + "AA"
+            if "pairing" in args:
+                return "NODEXLM PAIRING CODE: ABCD2345 (valid 10m)"
+            if "join" in args:
+                self.assertNotIn("ABCD2345", args)
+                self.assertEqual(kwargs["stdin"], "ABCD2345\n")
+                self.assertEqual(args[args.index("--fingerprint") + 1], "aa" * 32)
+                calls.append(("join", node))
+                if fail:
+                    raise RuntimeError("join failed")
+                return "Node paired securely: guest ID abc123"
+            raise AssertionError(args)
+
+        with patch.object(handoff, "remote", remote), \
+                patch.object(handoff, "expect"), \
+                patch.object(handoff, "stop", side_effect=lambda n, u: calls.append(("stop", n))), \
+                patch.object(handoff, "start", side_effect=lambda n, u: calls.append(("start", n))), \
+                patch.object(handoff, "enabled", side_effect=lambda n, u, v: calls.append((v, n))), \
+                patch.object(handoff, "guest_ready", return_value=True):
+            if fail:
+                with self.assertRaisesRegex(RuntimeError, "Guest stopped"):
+                    handoff.rejoin_guests("old", "new", "https://192.168.1.10:8443", ["old"])
+            else:
+                self.assertEqual(handoff.rejoin_guests("old", "new", "https://192.168.1.10:8443", ["old"]), ["old"])
+        return calls
+
+    def test_rejoin_order(self):
+        self.assertEqual(self.run_rejoin(), [
+            ("stop", "old"), ("disabled", "old"), ("join", "old"),
+            ("start", "old"), ("enabled", "old"),
+        ])
+
+    def test_rejoin_failure_leaves_guest_stopped(self):
+        self.assertEqual(self.run_rejoin(fail=True), [
+            ("stop", "old"), ("disabled", "old"), ("join", "old"),
+            ("disabled", "old"), ("stop", "old"),
+        ])
+
+
 if __name__ == "__main__":
     unittest.main()

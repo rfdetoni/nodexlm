@@ -16,4 +16,11 @@ class WifiClaimPolicyTest {
         assertTrue(p.active(99_999,false))
         assertFalse(p.active(100_000,false))
     }
+    @Test fun measuredSlowNetworkExtendsIdleGrace() {
+        val p = WifiClaimPolicy()
+        p.active(100,true)
+        p.observe(100,55.0,15.0,5.0)
+        assertTrue(p.active(40_000,false))
+        assertFalse(p.active(60_100,false))
+    }
 }
