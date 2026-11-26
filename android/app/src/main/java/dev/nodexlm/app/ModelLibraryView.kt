@@ -294,7 +294,9 @@ internal class ModelLibraryView(
                 }
                 cacheTransfer = false
                 if (available && scratch.renameTo(staging)) {
-                    completeDownload()
+                    // Host cache has already verified the entire SHA-256.
+                    // Avoid reading multi-GB model weights a second time.
+                    finishDownload()
                 } else {
                     scratch.delete()
                     prefs.edit().putLong("id", 0L).commit()
@@ -347,7 +349,8 @@ internal class ModelLibraryView(
                 }
                 cacheTransfer = false
                 if (error.isBlank() && scratch.renameTo(staging)) {
-                    completeDownload()
+                    // Rust streamed, hashed and fsynced the verified bytes.
+                    finishDownload()
                 } else {
                     scratch.delete()
                     prefs.edit().putLong("id", 0L).commit()
