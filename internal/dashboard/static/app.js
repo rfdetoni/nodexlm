@@ -495,22 +495,22 @@ function renderNodeResources(devices,registered=[]){
   const age=Number.isFinite(seen)?Math.max(0,Math.round((Date.now()-seen)/1000)):null;
   metrics.append(el('p','resource-seen',
     !live?'Última medição indisponível (dispositivo offline)':age===null?'Horário da medição desconhecido':'Última comunicação há '+age+' s'));
-  if (!live) {card.append(el('p','muted','Sem amostras atuais de recursos.'));continue;}
+  if (!live) {metrics.append(el('p','muted','Sem amostras atuais de recursos.'));continue;}
   const cpu=percent(n.cpu_usage_percent);
   const ramTotal=measuredBytes(n.ram_bytes),ramUsed=measuredBytes(n.ram_used_bytes);
   const ram=ramTotal>0 && ramUsed!==null && ramUsed<=ramTotal?ramUsed/ramTotal*100:null;
-  card.append(metricRow('CPU',cpu,'%',null,null));
-  card.append(metricRow('RAM',ram,'%',ramUsed,ramTotal));
+  metrics.append(metricRow('CPU',cpu,'%',null,null));
+  metrics.append(metricRow('RAM',ram,'%',ramUsed,ramTotal));
   const gpus=Array.isArray(n.gpus)?n.gpus:[];
-  if(!gpus.length) card.append(el('p','resource-empty','GPU não informada para este dispositivo'));
+  if(!gpus.length) metrics.append(el('p','resource-empty','GPU não informada para este dispositivo'));
   for (const g of gpus) {
    const gpuName=String(g.name||'GPU');
    const gpuUsage=percent(g.usage_percent);
    const vramTotal=measuredBytes(g.vram_bytes),vramUsed=measuredBytes(g.vram_used_bytes);
    const vram=vramTotal>0&&vramUsed!==null&&vramUsed<=vramTotal?vramUsed/vramTotal*100:null;
-   card.append(el('div','resource-gpu-title',gpuName));
-   card.append(metricRow('GPU',gpuUsage,'%',null,null));
-   card.append(metricRow('VRAM',vram,'%',vramUsed,vramTotal));
+   metrics.append(el('div','resource-gpu-title',gpuName));
+   metrics.append(metricRow('GPU',gpuUsage,'%',null,null));
+   metrics.append(metricRow('VRAM',vram,'%',vramUsed,vramTotal));
   }
  }
 }

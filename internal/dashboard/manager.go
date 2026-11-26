@@ -510,6 +510,7 @@ func (m *Manager) runLoad(ctx context.Context) error {
 	m.loadCancel = nil
 	cancelled := err != nil && (m.loadCancelRequested || errors.Is(ctx.Err(), context.Canceled))
 	m.loadCancelRequested = false
+	m.loadUploadPlan = nil
 	if cancelled {
 		m.loadPhase = "cancelled"
 		m.loadError = ""

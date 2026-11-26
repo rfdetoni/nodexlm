@@ -3,8 +3,8 @@ package safedownload
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +18,7 @@ import (
 
 func TestSegmentedDownloadOverlapsRequests(t *testing.T) {
 	t.Setenv("NODEXLM_DOWNLOAD_CONNECTIONS", "4")
-	data := bytes.Repeat([]byte("GGUF"), minParallelSize / 4)
+	data := bytes.Repeat([]byte("GGUF"), minParallelSize/4)
 	tag := fmt.Sprintf("\"%x\"", sha256.Sum256(data))
 	var active, peak atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func TestRangeWindowCongestionAndRecovery(t *testing.T) {
 
 func TestSegmentedResumeSkipsCompletedRanges(t *testing.T) {
 	t.Setenv("NODEXLM_DOWNLOAD_CONNECTIONS", "2")
-	data := bytes.Repeat([]byte("GGUF"), minParallelSize / 4)
+	data := bytes.Repeat([]byte("GGUF"), minParallelSize/4)
 	tag := fmt.Sprintf("\"%x\"", sha256.Sum256(data))
 	var mu sync.Mutex
 	requests := map[string]int{}
@@ -135,7 +135,7 @@ func TestSegmentedResumeSkipsCompletedRanges(t *testing.T) {
 
 func TestSegmentedFallbackWhenRangeIgnored(t *testing.T) {
 	t.Setenv("NODEXLM_DOWNLOAD_CONNECTIONS", "4")
-	data := bytes.Repeat([]byte("GGUF"), minParallelSize / 4)
+	data := bytes.Repeat([]byte("GGUF"), minParallelSize/4)
 	tag := fmt.Sprintf("\"%x\"", sha256.Sum256(data))
 	var probes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

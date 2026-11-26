@@ -7,3 +7,5 @@ The pinned llama.cpp patch previously drained its workers at the end of each loa
 CLI and Web sharded Hugging Face downloads share one metadata planner and resolve X-Repo-Commit and per-file sizes, then transfer up to four shards under the shared connection ceiling. All stages verify before the first shard is published last. Unavailable revision metadata retains the legacy sequential path. Admission conservatively requires free disk for the full set, even when some stages exist.
 
 Not yet implemented: Android native DownloadManager replacement, Xet, authenticated P2P cache, per-connection native APK telemetry. Real throughput and mixed-device loading overlap must be measured before claiming improvement.
+
+Dashboard: one card per registered device, with native disclosure for management tools; loading status joins the admitted placement and actual RPC counters by authenticated node ID, renders names and approximate progress, and hides redundant topology until ready. The chat has a bounded history and compact composer; the overview displays the resident model name.

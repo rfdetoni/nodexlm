@@ -36,6 +36,7 @@ const {chromium} = require('playwright');
     for (const prompt of ['Once upon a time', 'Then the little bird']) {
       await page.locator('#prompt').fill(prompt);
       await page.locator('#sendChat').click();
+      await page.waitForFunction(() => document.querySelector('#prompt').value === '');
       await page.waitForFunction(() => document.querySelector('#prompt').value === '' && !document.querySelector('#sendChat').disabled);
     }
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('nodexlm-chat')).length), 4);
