@@ -61,6 +61,21 @@ vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
 async function main(){
+  const html=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/index.html'),'utf8');
+  const css=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/styles.css'),'utf8');
+  const chat=html.slice(html.indexOf('id="view-chat"'),html.indexOf('id="view-images"'));
+  assert.match(chat,/<label class="check-field"><input id="allowExternalFallback" type="checkbox"><span>/);
+  assert.match(chat,/<div class="chat-actions">[\s\S]*?<div class="buttons"><button id="stopChat"/);
+  assert.doesNotMatch(chat,/<div class="buttons"><label/);
+  assert.match(css,/\.buttons button\{flex:0 0 auto\}/);
+  assert.match(html,/id="nav-images"[^>]*aria-controls="view-images"/);
+  assert.equal(new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1])).size,[...html.matchAll(/\bid="([^"]+)"/g)].length,'IDs must be unique');
+  vm.runInContext("chatHistory=[{role:'user',content:'Olá'},{role:'assistant',content:'Resposta'}];renderChat()",sandbox);
+  assert.equal(get('chatOutput').children.length,2,'each message must have its own layout container');
+  assert.equal(get('chatOutput').children[0].textContent,'VocêOlá');
+  vm.runInContext("chatHistory=[];renderChat()",sandbox);
+  assert.ok(get('chatOutput').textContent.includes('começar'),'empty chat retains useful guidance');
+
   // Telemetry must never turn an unknown CPU/GPU counter into a claimed idle reading.
   const device = {
     id:'guest-1',name:'Guest Linux',platform:'linux',status:'online',

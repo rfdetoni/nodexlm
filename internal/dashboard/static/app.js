@@ -30,7 +30,8 @@ const consoleViews=[
  {id:'cluster',name:'Dispositivos',description:'Guests, recursos e pareamento seguro.'},
  {id:'observability',name:'Diagnóstico',description:'Medições reais de rede e inferência.'},
  {id:'decisions',name:'Decisões',description:'Perguntas tipadas e probabilidades via System One.'},
- {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'}
+ {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'},
+ {id:'images',name:'Imagens',description:'Geração local de imagens.'}
 ];
 
 // High-frequency sampling is request-driven: only while the inference
@@ -117,6 +118,7 @@ function activateConsoleView(view){
  if(chosen.id==='inference' && token)guard(refresh);else stopActivity();
  if(chosen.id==='observability' && token)guard(refreshObservations);
  if(chosen.id==='decisions' && token)guard(refreshDecisionWorkers);
+ if(chosen.id==='chat')followChat(true);
 }
 function setupConsoleNavigation(){
  for(let i=0;i<consoleViews.length;i++){
@@ -519,7 +521,24 @@ function saveReasoningPreference(){
  if(!effortLevels.has(effort)||!Number.isInteger(budget)||budget<0||budget>4096)return;
  try{localStorage.setItem('nodexlm-chat-reasoning',JSON.stringify({effort,budget}))}catch{/* Private browser mode can disable storage. */}
 }
-function renderChat(){const output=$('chatOutput');output.replaceChildren();for(const message of chatHistory){output.append(el('strong','',message.role==='user'?'Você':'NodexLM'),el('p','',message.content))}}
+function chatMessage(role,content){
+ const message=el('article','chat-message '+role);
+ message.append(el('strong','',role==='user'?'Você':'NodexLM'),el('p','',content));
+ return message;
+}
+let chatScrollScheduled=false,chatFollow=true;
+function followChat(force=false){
+ if(force)chatFollow=true;
+ if(!chatFollow||chatScrollScheduled)return;
+ const scroll=()=>{chatScrollScheduled=false;if(chatFollow){const output=$('chatOutput');output.scrollTop=output.scrollHeight}};
+ if(typeof requestAnimationFrame==='function'){chatScrollScheduled=true;requestAnimationFrame(scroll)}else scroll();
+}
+function renderChat(){
+ const output=$('chatOutput');output.replaceChildren();
+ if(!chatHistory.length)output.append(el('p','chat-empty','Carregue um modelo e envie uma mensagem para começar.'));
+ for(const message of chatHistory)output.append(chatMessage(message.role,message.content));
+ followChat(true);
+}
 function confirmAction(text,label){
  const dialog=$('confirmation');$('confirmationText').textContent=text;$('confirmAction').textContent=label;
  return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.returnValue='cancel';dialog.showModal()});
@@ -555,7 +574,13 @@ async function sendChat(){
  const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
  const start=performance.now();let first=null;let firstGenerated=null;let nativeDecode=null;let answer='';let reasoning='';let usage=null;let rpcTraffic=null;let done=false;let reader;
- renderChat();const output=$('chatOutput');output.append(el('strong','','Você'),el('p','',prompt),el('strong','','NodexLM'));const reply=el('p','','Gerando resposta…');const details=el('details','reasoning-details');const summary=el('summary','','Raciocínio do modelo');const thoughts=el('p','reasoning-content');details.append(summary,thoughts);details.hidden=true;output.append(details,reply);
+ renderChat();const output=$('chatOutput');
+ if(!chatHistory.length)output.replaceChildren();
+ const userMessage=chatMessage('user',prompt),assistantMessage=el('article','chat-message assistant');
+ const reply=el('p','','Gerando resposta…'),details=el('details','reasoning-details'),summary=el('summary','','Raciocínio do modelo'),thoughts=el('p','reasoning-content');
+ details.append(summary,thoughts);details.hidden=true;
+ assistantMessage.append(el('strong','','NodexLM'),details,reply);
+ output.append(userMessage,assistantMessage);followChat(true);
  try{
   const effort=$('chatEffort').value;
   if(!effortLevels.has(effort))throw Error('Esforço de raciocínio inválido.');
@@ -578,7 +603,7 @@ async function sendChat(){
    const fallback=await fetch('/api/chat/fallback',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({model,messages:payload.messages,max_tokens:maxTokens,temperature:payload.temperature,stream:false})});
    const result=await fallback.json();if(!fallback.ok)throw Error(result.error||'Fallback indisponível.');
    if(typeof result.answer!=='string'||result.answer.length>65536)throw Error('Resposta externa inválida.');
-   answer=result.answer;reply.textContent=answer;done=true;$('allowExternalFallback').checked=false;
+   answer=result.answer;reply.textContent=answer;followChat();done=true;$('allowExternalFallback').checked=false;
   }else{
   if(!response.ok){const text=await response.text();let message=text;try{const error=JSON.parse(text).error;message=error?.message||error||text}catch{}throw Error(message)}
   reader=response.body.getReader();const decoder=new TextDecoder();let pending='';
@@ -598,9 +623,9 @@ async function sendChat(){
      nativeDecode=1000*Number(timing.predicted_n)/Number(timing.predicted_ms);
     }
     const thinking=event.choices?.[0]?.delta?.reasoning_content||'';
-    if(thinking){if(firstGenerated===null)firstGenerated=performance.now();reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning}
+    if(thinking){if(firstGenerated===null)firstGenerated=performance.now();reasoning+=thinking;if(reasoning.length>65536)throw Error('Raciocínio excedeu o limite do chat.');details.hidden=false;thoughts.textContent=reasoning;followChat()}
     const text=event.choices?.[0]?.delta?.content||'';
-    if(text){if(firstGenerated===null)firstGenerated=performance.now();if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer}
+    if(text){if(firstGenerated===null)firstGenerated=performance.now();if(first===null)first=performance.now();answer+=text;if(answer.length>65536)throw Error('Resposta longa demais para o histórico.');reply.textContent=answer;followChat()}
    }
    if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
   }
@@ -792,9 +817,14 @@ $('previewPlan').addEventListener('click',()=>guard(async()=>{
  area.append(el('p','muted','Camadas e KV F16 são estimativas; a alocação final depende do runtime. Aviso de rede: RTT acima de 10 ms ou eco abaixo de 50 MiB/s. Tokens/s são medidos, sem previsão pela banda; mudar a configuração ou os nós pode invalidar a comparação.'));
 }));
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();guard(sendChat)});
+$('chatForm').addEventListener('invalid',e=>{const details=e.target.closest?.('details');if(details)details.open=true},true);
+$('chatOutput').addEventListener('scroll',()=>{const output=$('chatOutput');chatFollow=output.scrollHeight-output.scrollTop-output.clientHeight<80});
+$('prompt').addEventListener('keydown',e=>{
+ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){e.preventDefault();if(!chatController)$('chatForm').requestSubmit()}
+});
 $('imageForm').addEventListener('submit',event=>{event.preventDefault();guard(async()=>{
- const button=$('generateImage');const session=token;button.disabled=true;$('imageOutput').hidden=true;
- try{const result=await api('/api/images/generations','POST',{prompt:$('imagePrompt').value.trim(),size:$('imageSize').value,steps:+$('imageSteps').value});if(!token||token!==session)return;const image=result.data?.[0]?.b64_json;if(typeof image!=='string'||image.length>45000000)throw Error('Imagem inválida.');$('imageOutput').src='data:image/png;base64,'+image;$('imageOutput').hidden=false;}finally{button.disabled=false}
+ const button=$('generateImage');const session=token;button.disabled=true;button.textContent='Gerando imagem…';$('imageOutput').hidden=true;
+ try{const result=await api('/api/images/generations','POST',{prompt:$('imagePrompt').value.trim(),size:$('imageSize').value,steps:+$('imageSteps').value});if(!token||token!==session)return;const image=result.data?.[0]?.b64_json;if(typeof image!=='string'||image.length>45000000)throw Error('Imagem inválida.');$('imageOutput').src='data:image/png;base64,'+image;$('imageOutput').hidden=false;}finally{button.disabled=false;button.textContent='Gerar imagem'}
 })});
 $('chatEffort').addEventListener('change',()=>{
  const disabled=$('chatEffort').value==='none';
