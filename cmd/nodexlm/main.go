@@ -140,6 +140,7 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm hub download --repo owner/repo --file model.Q4_K_M.gguf --dir ./models
   nodexlm hub import --file /path/to/manual.gguf --dir ./models
   nodexlm local --model ./models/model.gguf --prompt "hello"
+  nodexlm local --engine litertlm --model registry-id --prompt "hello" # prestarted loopback LiteRT-LM
   nodexlm local --model model.gguf --mmproj projector.gguf --image photo.png --prompt "Describe"
   nodexlm image --model model.safetensors --prompt "A landscape" --output landscape.png # optional sd-cli
   nodexlm local --model ./models/moe.gguf --moe-cpu --prompt "hello"
@@ -707,7 +708,8 @@ func newPairing(args []string) error {
 
 func node(args []string) error {
 	f := fs("node")
-	backend := f.String("backend", "", "existing localhost llama-server (optional)")
+	backend := f.String("backend", "", "existing localhost inference server (optional)")
+	liteRT := f.Bool("litert", false, "verify a local LiteRT-LM registry model before joining as a standalone worker")
 	path := f.String("model-path", "", "GGUF file for lazy auto-managed llama-server")
 	bin := f.String("llama-bin", "llama-server", "llama-server executable")
 	idle := f.Duration("idle", 2*time.Minute, "unload model after idle; 0 for per-job unload")
@@ -754,11 +756,26 @@ func node(args []string) error {
 			return err
 		}
 	}
+	if *liteRT && (*backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 ||
+		*moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
+		return errors.New("--litert requires --backend and --model; configure runtime options in LiteRT-LM")
+	}
 	var engine worker.Generator
 	var managed *local.Managed
 	if *model != "" {
 		if *backend != "" {
-			engine, err = local.New(*backend)
+			if *liteRT {
+				checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				liteEngine, checkErr := local.NewLiteRT(checkCtx, *backend, *model)
+				cancel()
+				if checkErr != nil {
+					return checkErr
+				}
+				defer liteEngine.HTTP.CloseIdleConnections()
+				engine = liteEngine
+			} else {
+				engine, err = local.New(*backend)
+			}
 			if err != nil {
 				return err
 			}
@@ -914,12 +931,13 @@ func models(args []string) error {
 
 func localChat(args []string) error {
 	f := fs("local")
-	path := f.String("model", "", "local GGUF file path")
+	path := f.String("model", "", "local GGUF file path or LiteRT-LM registry model ID")
 	prompt := f.String("prompt", "", "prompt")
 	imagePath := f.String("image", "", "local JPEG/PNG image for vision inference")
 	projector := f.String("mmproj", "", "local GGUF vision projector matching the model")
 	bin := f.String("llama-bin", "llama-server", "llama-server binary")
-	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp or experimental mistralrs")
+	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp, experimental mistralrs or litertlm")
+	liteEndpoint := f.String("litert-endpoint", "http://127.0.0.1:9379", "already-running local LiteRT-LM server")
 	mistralBin := f.String("mistralrs-bin", "", "mistral.rs executable; requires NODEXLM_EXPERIMENTAL_MISTRALRS=1")
 	threads := f.Int("threads", 0, "CPU threads")
 	gpu := f.String("gpu-layers", "auto", "GPU layers")
@@ -932,6 +950,25 @@ func localChat(args []string) error {
 	}
 	if *path == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
+	}
+	if *engineName == "litertlm" {
+		if *imagePath != "" || *projector != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 ||
+			*threads != 0 || *gpu != "auto" || *contextTokens != 2048 {
+			return errors.New("LiteRT-LM uses its own registry/backend configuration; llama.cpp options are unsupported")
+		}
+		c, cancel := ctx()
+		defer cancel()
+		engine, err := local.NewLiteRT(c, *liteEndpoint, *path)
+		if err != nil {
+			return err
+		}
+		defer engine.HTTP.CloseIdleConnections()
+		result, err := engine.Generate(c, protocol.ChatRequest{Model: *path, Messages: []protocol.Message{{Role: "user", Content: *prompt}}, MaxTokens: 512})
+		if err != nil {
+			return err
+		}
+		fmt.Println(result)
+		return nil
 	}
 	if (*imagePath == "") != (*projector == "") {
 		return errors.New("--image and --mmproj must be supplied together")

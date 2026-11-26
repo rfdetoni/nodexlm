@@ -24,6 +24,8 @@ This change is an independent implementation, not a port of third-party Flutter 
 
 - Dashboard local vision is opt-in with a separately selected CLIP GGUF projector. Host admission reserves twice projector weights plus 512 MiB as an estimate. Only a single inline JPEG/PNG (4 MiB, 16 MP) is accepted by chat completions; no remote URLs or file URLs. Web image contents are not saved to browser history. Distributed vision, Android vision and real model validation remain pending.
 
+- LiteRT-LM standalone integration uses the official OpenAI-compatible registry server (https://developers.google.com/edge/litert-lm/cli/openai_server). Start `litert-lm serve --host 127.0.0.1 --port 9379` after importing your model. Then use `nodexlm local --engine litertlm --model registry-id --prompt "Hello"` or on an enrolled node `nodexlm node --litert --backend http://127.0.0.1:9379 --model registry-id`. Verifies the registry ID, rejects non-loopback URLs and redirects. No tensor RPC, managed dashboard lifecycle, bundled mobile SDK or GPU/NPU guarantees.
+
 ## Acceptance before enabling broader mobile changes
 - Build both Android ABIs; CPU-only device must not initialize Vulkan in the RPC process; Auto/GPU/Hybrid must retain device discovery and fallback.
 - Compare greedy output with cold cache for extended conversations, changed system prompts, identical requests, stop/cancel and model reload. Measure TTFT, PSS, tokens/s, thermal and energy on real devices. Prefix caching is scoped to the loaded embedded context; do not share it across unrelated trust domains.
