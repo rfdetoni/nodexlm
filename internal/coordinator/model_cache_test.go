@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -54,6 +55,17 @@ func TestAuthenticatedModelCacheRejectsUnauthenticatedAndStaleContent(t *testing
 	if got := request(false).Code; got != http.StatusUnauthorized {
 		t.Fatalf("unauthorized cache: %d", got)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if file, err := safedownload.OpenVerifiedContent(ctx, root, sha); err == nil {
+		file.Close()
+		t.Fatal("cancelled cache verification must not read model bytes")
+	}
+	server.modelCacheSlots <- struct{}{}
+	if got := request(true).Code; got != http.StatusTooManyRequests {
+		t.Fatalf("concurrent model cache request accepted: %d", got)
+	}
+	<-server.modelCacheSlots
 	ok := request(true)
 	if ok.Code != 200 || ok.Body.String() != string(body) || ok.Header().Get("ETag") != fmt.Sprintf("%q", sha) {
 		t.Fatalf("authenticated cache invalid: status=%d body=%q", ok.Code, ok.Body.String())
