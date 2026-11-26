@@ -189,15 +189,51 @@ function setSelect(items,chosen){
 function setDraftModels(items,chosen){
  setOptions('draftModelSelect',[['','Sem draft'],...items.map(m=>[m.name,m.name])],chosen);
 }
-function settingsFromForm(model) {
- return {model, backend:$('runtimeBackend').value, threads:+$('threads').value, threads_batch:+$('threadsBatch').value, parallel_slots:+$('parallelSlots').value, prompt_cache_mib:+$('promptCacheMiB').value, load_mode:$('loadMode').value, lazy_mode:$('lazyMode').value, numa:$('numaPolicy').value, context_tokens:+$('contextTokens').value,
-  gpu_layers:$('gpuLayers').value, host_gpu:$('hostGpu').value, moe_cpu:$('moeCPU').checked,
-  distributed:$('distributed').checked, placement_strategy:$('placementStrategy').value, primary_node:$('primaryNode').value, moe_cpu_layers:+$('moeCPULayers').value,
-  moe_cache_mib:+$('moeCache').value, moe_cache_cpu_share:+$('moeCacheCPUShare').value, flash_attention:$('flashAttention').value,
-   kv_cache_type:$('kvCacheType').value, batch_size:+$('batchSize').value,
-   ubatch_size:+$('ubatchSize').value, cache_reuse_tokens:+$('cacheReuseTokens').value,
-  speculative_mode:$('speculativeMode').value, speculative_tokens:+$('speculativeTokens').value, draft_model:$('draftModelSelect').value,vision_projector:$('visionProjector').value.trim()};
+// One field map owns both the form-to-API serialization and API-to-form
+// hydration. Dynamic model/node selects remain owned by setOptions.
+const inferenceFields=[
+ ['runtimeBackend','backend','llama.cpp'],
+ ['threads','threads',1,'number'],
+ ['threadsBatch','threads_batch',0,'number'],
+ ['parallelSlots','parallel_slots',1,'number'],
+ ['promptCacheMiB','prompt_cache_mib',0,'number'],
+ ['loadMode','load_mode','auto'],
+ ['lazyMode','lazy_mode','auto'],
+ ['numaPolicy','numa',''],
+ ['contextTokens','context_tokens',2048,'number'],
+ ['gpuLayers','gpu_layers','auto'],
+ ['hostGpu','host_gpu','auto'],
+ ['moeCPU','moe_cpu',false,'checkbox'],
+ ['distributed','distributed',false,'checkbox'],
+ ['placementStrategy','placement_strategy','speed'],
+ ['moeCPULayers','moe_cpu_layers',0,'number'],
+ ['moeCache','moe_cache_mib',0,'number'],
+ ['moeCacheCPUShare','moe_cache_cpu_share',0,'number'],
+ ['flashAttention','flash_attention','auto'],
+ ['kvCacheType','kv_cache_type','f16'],
+ ['batchSize','batch_size',0,'number'],
+ ['ubatchSize','ubatch_size',0,'number'],
+ ['cacheReuseTokens','cache_reuse_tokens',0,'number'],
+ ['speculativeMode','speculative_mode','off'],
+ ['speculativeTokens','speculative_tokens',0,'number'],
+ ['visionProjector','vision_projector','','trim']
+];
+function settingsFromForm(model){
+ const result={model,primary_node:$('primaryNode').value,draft_model:$('draftModelSelect').value};
+ for(const [id,key,,kind] of inferenceFields){
+  const input=$(id);
+  result[key]=kind==='checkbox'?input.checked:kind==='number'?Number(input.value):kind==='trim'?input.value.trim():input.value;
+ }
+ return result;
 }
+function hydrateSettings(settings){
+ for(const [id,key,fallback,kind] of inferenceFields){
+  const input=$(id),value=settings[key]??fallback;
+  if(kind==='checkbox')input.checked=!!value;
+  else input.value=value===''&&fallback!==''?fallback:value;
+ }
+}
+
 function modelFile(candidate) {
  // Hub paths may contain directories; the Host only stores a safe GGUF basename.
  const base=String(candidate.filename || '').split('/').pop();
@@ -559,10 +595,7 @@ async function refreshSnapshot(){
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
   $('primaryNode').dataset.initialized='no';
-  for(const [id,v] of Object.entries({threads:s.threads,threadsBatch:s.threads_batch||0,parallelSlots:s.parallel_slots||1,promptCacheMiB:s.prompt_cache_mib||0,contextTokens:s.context_tokens,gpuLayers:s.gpu_layers,moeCPULayers:s.moe_cpu_layers,moeCache:s.moe_cache_mib,moeCacheCPUShare:s.moe_cache_cpu_share||0,cacheReuseTokens:s.cache_reuse_tokens||0,speculativeTokens:s.speculative_tokens||0})) $(id).value=v;
-  $('runtimeBackend').value=s.backend||'llama.cpp';$('visionProjector').value=s.vision_projector||'';
-  $('hostGpu').value=s.host_gpu||'auto';
-  $('loadMode').value=s.load_mode||'auto'; $('lazyMode').value=s.lazy_mode||'auto'; $('numaPolicy').value=s.numa||''; $('moeCPU').checked=s.moe_cpu; $('distributed').checked=!!s.distributed; $('placementStrategy').value=s.placement_strategy||'speed'; $('flashAttention').value=s.flash_attention||'auto'; $('kvCacheType').value=s.kv_cache_type||'f16'; $('batchSize').value=s.batch_size||0; $('ubatchSize').value=s.ubatch_size||0; $('speculativeMode').value=s.speculative_mode||'off'; settingsInitialized=true;
+  hydrateSettings(s);settingsInitialized=true;
   configureBackendUI();
  }
  renderLocalModels(models,status);renderCatalog();

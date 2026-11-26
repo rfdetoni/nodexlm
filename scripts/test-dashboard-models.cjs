@@ -130,6 +130,14 @@ async function main(){
   const chat=html.slice(html.indexOf('id="view-chat"'),html.indexOf('id="view-images"'));
   assert.match(html,/id="nodePageStatus"/);
   assert.match(html,/id="toggleSecret"/);
+  vm.runInContext("hydrateSettings({threads:6,context_tokens:4096,distributed:true,backend:'llama.cpp',vision_projector:'vision.gguf'})",sandbox);
+  const hydrated=vm.runInContext("settingsFromForm('test.gguf')",sandbox);
+  assert.equal(hydrated.threads,6);
+  assert.equal(hydrated.context_tokens,4096);
+  assert.equal(hydrated.distributed,true);
+  assert.equal(hydrated.vision_projector,'vision.gguf');
+  assert.equal(hydrated.parallel_slots,1);
+
   vm.runInContext("renderNodeTable(Array.from({length:25},(_,i)=>({id:'guest-'+i,name:'Guest '+i,platform:'linux',architecture:'amd64',status:'online',runtime:{benchmark:true}})))",sandbox);
   assert.equal(get('nodes').children.length,20);
   const originalNodeAction=get('nodes').children[0].children[5].children[0];
