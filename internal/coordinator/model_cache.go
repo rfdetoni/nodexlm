@@ -41,8 +41,17 @@ func (s *Server) nodeModelCache(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "model cache disabled")
 		return
 	}
+	// Hashing multi-GB models competes with inference. Reject concurrent
+	// cache requests instead of queueing unbounded background disk reads.
+	select {
+	case s.modelCacheSlots <- struct{}{}:
+		defer func() { <-s.modelCacheSlots }()
+	default:
+		fail(w, http.StatusTooManyRequests, "model cache busy")
+		return
+	}
 	digest := r.PathValue("sha256")
-	file, err := safedownload.OpenVerifiedContent(dir, digest)
+	file, err := safedownload.OpenVerifiedContent(r.Context(), dir, digest)
 	if err != nil {
 		fail(w, http.StatusNotFound, "verified model unavailable")
 		return

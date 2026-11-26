@@ -59,13 +59,14 @@ type Server struct {
 	rpcMicrobench   func(string)
 	rpcDrain        func(string)
 	modelCacheDir   string
+	modelCacheSlots chan struct{}
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
 	if len(adminToken) < 32 || len(enrollmentToken) < 32 || adminToken == enrollmentToken {
 		return nil, errors.New("admin and enrollment tokens must be distinct, at least 32 characters each")
 	}
-	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, decisionTimings: map[string][]time.Duration{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub()}, nil
+	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, decisionTimings: map[string][]time.Duration{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub(), modelCacheSlots: make(chan struct{}, 1)}, nil
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.

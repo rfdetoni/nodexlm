@@ -14,11 +14,11 @@ import (
 // OpenVerifiedContent opens a previously published immutable model from the
 // local SHA-256 index. It never follows symbolic links or trusts stale index
 // entries. The caller must authenticate before asking for file content.
-func OpenVerifiedContent(directory, digest string) (*os.File, error) {
+func OpenVerifiedContent(ctx context.Context, directory, digest string) (*os.File, error) {
 	if !digestName.MatchString(digest) {
 		return nil, errors.New("invalid cached content digest")
 	}
-	ctx := WithContentCache(context.Background(), directory)
+	ctx = WithContentCache(ctx, directory)
 	index := cacheIndex(ctx, digest, false)
 	if index == "" {
 		return nil, errors.New("content cache unavailable")
@@ -59,7 +59,7 @@ func OpenVerifiedContent(directory, digest string) (*os.File, error) {
 		return nil, errors.New("cached model changed while opening")
 	}
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	if _, err := io.Copy(hash, &contextReader{ctx: ctx, reader: file}); err != nil {
 		return nil, err
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != digest {
