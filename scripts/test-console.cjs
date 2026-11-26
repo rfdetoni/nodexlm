@@ -31,6 +31,7 @@ const {chromium} = require('playwright');
     await page.locator('#nav-chat').click();
     await page.locator('#view-chat').waitFor({state: 'visible'});
     await page.waitForFunction(() => document.querySelector('#chatModel').options.length > 0);
+    await page.locator('.chat-settings summary').click();
     await page.locator('#chatTokens').fill('8');
     await page.locator('#chatEffort').selectOption('none');
     for (const prompt of ['Once upon a time', 'Then the little bird']) {
@@ -43,6 +44,7 @@ const {chromium} = require('playwright');
     assert.equal(chatRequests.length,2,'both conversations must reach the native backend');
     assert(chatRequests.every(x=>x.reasoning_effort==='none' && x.reasoning_budget_tokens===undefined),
       'disabling thinking must be forwarded as reasoning_effort none without an active token budget');
+    await page.locator('.chat-settings summary').click();
     await page.locator('#chatEffort').selectOption('max');
     await page.locator('#chatThinkingBudget').fill('4');
     await page.locator('#chatThinkingBudget').dispatchEvent('change');
@@ -51,6 +53,7 @@ const {chromium} = require('playwright');
     await page.locator('#nav-chat').click();
     await page.locator('#view-chat').waitFor({state: 'visible'});
     await page.locator('#chatOutput').getByText('Then the little bird', {exact:true}).waitFor();
+    await page.locator('.chat-settings summary').click();
     assert.equal(await page.locator('#chatEffort').inputValue(), 'max',
       'reasoning effort must persist across browser reload');
     assert.equal(await page.locator('#chatThinkingBudget').inputValue(), '4',
@@ -109,8 +112,8 @@ const {chromium} = require('playwright');
     for (const [name, width, height] of [['desktop',1280,900], ['mobile',390,844]]) {
       await page.setViewportSize({width,height});
       await page.locator('#chatForm').scrollIntoViewIfNeeded();
+      assert(await page.evaluate(() => {const main=document.querySelector('#consoleMain');return main.scrollHeight<=main.clientHeight+2}), `${name}: chat workspace must not scroll`);
       const overflow=await page.evaluate(() => [...document.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>innerWidth+1&&getComputedStyle(e).position!=='fixed').map(e=>e.tagName+'#'+e.id+'.'+e.className).slice(0,15));
-      await page.screenshot({path: path.join(out, name+'.png'), fullPage: true});
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: horizontal overflow: ${overflow.join(', ')}`);
       await page.screenshot({path: path.join(out, name+'.png'), fullPage: true});
     }

@@ -18,3 +18,17 @@ func TestOutputLatencyIgnoresRoleAndUsage(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 }
+
+func TestReasoningLatencyPrecedesVisibleText(t *testing.T) {
+	start := time.Now()
+	l := streamLatency{start: start}
+	l.observe([]byte(`{"choices":[{"delta":{"reasoning_content":"think"}}]}`), start.Add(25*time.Millisecond))
+	l.observe([]byte(`{"choices":[{"delta":{"content":"answer"}}]}`), start.Add(125*time.Millisecond))
+	var sample InferenceSample
+	l.apply(&sample)
+	if sample.FirstOutputMilliseconds != 25 || sample.FirstTextMilliseconds == nil ||
+		*sample.FirstTextMilliseconds != 125 || sample.FirstReasoningMilliseconds == nil ||
+		*sample.FirstReasoningMilliseconds != 25 {
+		t.Fatalf("wrong output latency: %+v", sample)
+	}
+}

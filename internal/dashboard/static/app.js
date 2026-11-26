@@ -701,7 +701,7 @@ async function sendChat(){
   if(effort==='none'&&thinkingBudget>0)throw Error('Desative o orçamento de tokens quando o thinking estiver desligado.');
   const documentText=await readChatDocument(documentFile,controller.signal);
   const imageURL=await readChatImage(imageFile);
-  if(controller.signal.aborted)return;
+  if(controller.signal.aborted)throw Error('Geração interrompida.');
   if(new TextEncoder().encode(prompt+documentText).length>65536)throw Error('Mensagem com documento excede 64 KiB.');
   const content=imageURL?[{type:'text',text:prompt+documentText},{type:'image_url',image_url:{url:imageURL}}]:prompt+documentText;
   const payload={model,messages:[...chatHistory.slice(-62),{role:'user',content}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
@@ -738,7 +738,7 @@ async function sendChat(){
    if(part.done&&!done)throw Error('A conexão terminou antes de concluir a resposta.');
   }
   }
-  if(controller.signal.aborted)return;
+  if(controller.signal.aborted)throw Error('Geração interrompida.');
   chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
@@ -1033,7 +1033,7 @@ async function refreshObservations(){
    sample.model+': '+sample.tokens_per_second.toFixed(1)+' tokens/s · '+
    (sample.kind==='benchmark'?'benchmark controlado':'medição ao vivo')+' · '+
    (sample.rate_basis==='native_decode'?'decode nativo':'inclui prefill/TTFT')+
-   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro texto '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
+   ' · '+sample.cached_tokens+' tokens de prompt reutilizados'+(sample.prefill_tokens_per_second>0?' · prefill '+sample.prefill_tokens_per_second.toFixed(1)+' t/s':'')+(sample.draft_acceptance!=null?' · draft '+(sample.draft_acceptance*100).toFixed(1)+'%':'')+(sample.load_ms>0?' · carga '+(sample.load_ms/1000).toFixed(1)+'s':'')+(sample.first_output_ms>0?' · primeiro evento '+(sample.first_output_ms/1000).toFixed(2)+'s':'')+(sample.first_text_ms!=null?' · primeiro texto '+(sample.first_text_ms/1000).toFixed(2)+'s':'')+(sample.reasoning_tokens!=null?' · reasoning '+sample.reasoning_tokens+' tokens · restante '+sample.non_reasoning_tokens+' tokens':'')+(sample.rpc_traffic?' · '+(sample.rpc_traffic.request_bytes_per_output_token/1024).toFixed(2)+' KiB por token de saída (requisição inteira)':'')));
  for(const sample of data.inference)if(sample.suspect){const note=el('p','muted');note.append(el('strong','','Medição suspeita: '),document.createTextNode(sample.model+' — descarregue o modelo e repita o benchmark controlado. '));const button=el('button','','Ir para re-medição');button.addEventListener('click',()=>activateConsoleView('inference'));note.append(button);area.append(note);}
  for(const sample of data.inference)if(sample.native_system_info)area.append(el('p','muted',sample.native_system_info));
  for(const sample of data.inference)for(const workload of sample.workloads||[]){const s=workload.sample;area.append(el('p','muted',workload.profile+': '+(s? s.prompt_tokens+' tokens de prompt · '+s.tokens_per_second.toFixed(1)+' t/s · prefill '+(s.prefill_tokens_per_second||0).toFixed(1)+' t/s · primeiro output '+(s.first_output_ms||0).toFixed(0)+' ms':workload.status)));}
