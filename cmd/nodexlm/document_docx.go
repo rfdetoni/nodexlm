@@ -56,7 +56,7 @@ func readDOCX(path string) (string, error) {
 		return "", err
 	}
 	defer r.Close()
-	limited := &io.LimitedReader{R: r, N: maxDOCXXML+1}
+	limited := &io.LimitedReader{R: r, N: maxDOCXXML + 1}
 	decoder := xml.NewDecoder(limited)
 	var out strings.Builder
 	depth, textDepth := 0, 0

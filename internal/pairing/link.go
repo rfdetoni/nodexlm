@@ -17,6 +17,5 @@ func Link(host, code string) (string, error) {
 		return "", errors.New("invalid pairing code")
 	}
 	params := url.Values{"host": {strings.TrimRight(u.String(), "/")}, "code": {code}}
-	return "nodexlm://pair?"+params.Encode(), nil
+	return "nodexlm://pair?" + params.Encode(), nil
 }
-

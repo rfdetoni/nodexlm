@@ -95,5 +95,5 @@ func encodeVisionData(data []byte) (string, error) {
 		int64(cfg.Width) > maxVisionPixels/int64(cfg.Height) {
 		return "", errors.New("invalid JPEG/PNG or image exceeds 16 megapixels")
 	}
-	return "data:image/"+format+";base64,"+base64.StdEncoding.EncodeToString(data), nil
+	return "data:image/" + format + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
