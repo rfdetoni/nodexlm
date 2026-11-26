@@ -43,6 +43,10 @@ internal class ModelLibraryView(
     private var finding = false
     private var verifying = false
     private var preparing = false
+    private var sampledDownload = 0L
+    private var sampledAt = 0L
+    private var sampledBytes = 0L
+    private var bytesPerSecond = 0.0
     private val tick = object : Runnable {
         override fun run() {
             refreshProgress()
@@ -287,7 +291,22 @@ internal class ModelLibraryView(
                 val total=c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
                 if(total>0) {bar.isIndeterminate=false;bar.progress=(bytes*1000/total).toInt().coerceIn(0,1000)}
                 else bar.isIndeterminate=true
-                downloadProgress.text="${gib(bytes)} / ${if(total>0)gib(total) else "?"}"
+                val now=android.os.SystemClock.elapsedRealtime()
+                if(id!=sampledDownload){
+                    sampledDownload=id;sampledAt=now;sampledBytes=bytes;bytesPerSecond=0.0
+                }else if(state==DownloadManager.STATUS_RUNNING && now-sampledAt>=1000){
+                    val elapsed=(now-sampledAt).coerceAtLeast(1)
+                    val instant=(bytes-sampledBytes).coerceAtLeast(0)*1000.0/elapsed
+                    bytesPerSecond=if(bytesPerSecond==0.0)instant else bytesPerSecond*0.7+instant*0.3
+                    sampledAt=now;sampledBytes=bytes
+                }else if(state!=DownloadManager.STATUS_RUNNING){
+                    bytesPerSecond=0.0;sampledAt=now;sampledBytes=bytes
+                }
+                val rate=if(bytesPerSecond>0 && state==DownloadManager.STATUS_RUNNING)
+                    " · %.2f MiB/s".format(java.util.Locale.US,bytesPerSecond/(1024*1024)) else ""
+                val eta=if(total>bytes && bytesPerSecond>0)
+                    " · ~%ds".format(java.util.Locale.US,((total-bytes)/bytesPerSecond).toLong()) else ""
+                downloadProgress.text="${gib(bytes)} / ${if(total>0)gib(total) else "?"}$rate$eta"
                 when(state) {
                     DownloadManager.STATUS_SUCCESSFUL -> completeDownload()
                     DownloadManager.STATUS_FAILED -> {status.text=activity.getString(R.string.ui_24184bb0704d);clearDownload()}
@@ -387,6 +406,7 @@ internal class ModelLibraryView(
         bar.visibility=GONE
         cancel.visibility=GONE
         downloadProgress.text=""
+        sampledDownload=0L;sampledAt=0L;sampledBytes=0L;bytesPerSecond=0.0
     }
     private fun refreshLibrary() {
         library.removeAllViews()

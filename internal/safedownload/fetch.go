@@ -56,6 +56,14 @@ func fetch(ctx context.Context, client *http.Client, source, target string, limi
 	if limit < 4 {
 		return 0, errors.New("invalid download limit")
 	}
+	// Prefer the official Xet CAS client only when explicitly enabled and the
+	// URL identifies an immutable Hugging Face revision. All Xet output is
+	// verified against Hub SHA-256 metadata before entering the staging path.
+	if parallel {
+		if n, handled, err := TryXet(ctx, client, source, target, limit, progress); handled || err != nil {
+			return n, err
+		}
+	}
 	for _, path := range []string{target, target + ".json"} {
 		if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
 			return 0, errors.New("staging path must be a regular file")

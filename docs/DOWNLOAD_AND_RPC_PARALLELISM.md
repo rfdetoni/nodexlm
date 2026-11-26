@@ -8,7 +8,9 @@ CLI and Web sharded Hugging Face downloads share one metadata planner and resolv
 
 Android model downloads now resolve each shard to a single immutable Hugging Face commit, require SHA-256 and pinned shard sizes from HTTPS HEAD metadata, and verify all bytes before publication. Models without a verifiable digest are rejected instead of being accepted on GGUF magic alone. DownloadManager is still the transport, so there is no claim of native Rust downloading or per-connection telemetry.
 
-Not yet implemented: Android native DownloadManager replacement, Xet transfer optimization, authenticated P2P cache, per-connection native APK telemetry. Real throughput and mixed-device loading overlap must be measured before claiming improvement.
+Optional official Xet CAS acceleration: set NODEXLM_DOWNLOAD_XET=1 on desktop/Host and install the supported Hugging Face `hf` CLI with hf-xet enabled. Only immutable commit-pinned GGUF URLs with content SHA-256 and size metadata are eligible. The CLI writes into an isolated temporary directory and the entire output is rehashed before staging, so failure can safely fall back to the internal HTTPS downloader. No new dependency or Python process is started by default. Xet download progress is currently reported upon verification, not per connection. The APK uses DownloadManager and now reports observed transfer rate and approximate ETA (neither is native per-connection telemetry).
+
+Not yet implemented: Android native DownloadManager replacement, authenticated P2P cache, per-connection native APK telemetry. Direct Xet CAS implementation inside the APK remains pending. Real throughput and mixed-device loading overlap must be measured before claiming improvement.
 
 Dashboard: one card per registered device, with native disclosure for management tools; loading status joins the admitted placement and actual RPC counters by authenticated node ID, renders names and approximate progress, and hides redundant topology until ready. The chat has a bounded history and compact composer; the overview displays the resident model name.
 
