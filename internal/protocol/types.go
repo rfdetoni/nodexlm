@@ -53,7 +53,10 @@ type RuntimeCapability struct {
 	// RPCDevices lists native device kinds in ggml-rpc-server exposure order.
 	// For example ["gpu","cpu"] means two distinct RPC devices on one Guest.
 	// Empty is a legacy worker whose device topology is unknown.
-	RPCDevices []string `json:"rpc_devices,omitempty"`
+	RPCDevices          []string `json:"rpc_devices,omitempty"`
+	RPCProtocolMajor    int      `json:"rpc_protocol_major,omitempty"`
+	RPCProtocolMinor    int      `json:"rpc_protocol_minor,omitempty"`
+	RPCDirectTensorCopy bool     `json:"rpc_direct_tensor_copy,omitempty"`
 }
 
 type Device struct {
