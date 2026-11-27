@@ -4,6 +4,7 @@ package local
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -11,11 +12,13 @@ import (
 const nativeTraceLimit = 16
 
 // NativeTokenActivity reports successful native graph submissions, not device
-// utilization, execution time or an estimate derived from transport bytes.
+// utilization or per-device execution time. DecodeMicroseconds is the native
+// synchronized decode wall time, including scheduling, RPC and trace overhead.
 type NativeTokenActivity struct {
-	Batch   uint64               `json:"batch"`
-	Ordinal uint64               `json:"ordinal"`
-	Splits  []NativeBackendSplit `json:"splits"`
+	Batch              uint64               `json:"batch"`
+	Ordinal            uint64               `json:"ordinal"`
+	Splits             []NativeBackendSplit `json:"splits"`
+	DecodeMicroseconds *uint64              `json:"decode_microseconds,omitempty"`
 }
 
 type NativeBackendSplit struct {
@@ -25,15 +28,16 @@ type NativeBackendSplit struct {
 }
 
 type nativeTrace struct {
-	mu       sync.Mutex
-	line     [1024]byte
-	used     int
-	discard  bool
-	batch    uint64
-	splits   []NativeBackendSplit
-	complete bool
-	valid    bool
-	recent   []NativeTokenActivity
+	mu                 sync.Mutex
+	line               [1024]byte
+	used               int
+	discard            bool
+	batch              uint64
+	splits             []NativeBackendSplit
+	complete           bool
+	decodeMicroseconds *uint64
+	valid              bool
+	recent             []NativeTokenActivity
 }
 
 // Write is attached only to stderr and only when tracing is explicitly enabled.
@@ -71,6 +75,7 @@ func (t *nativeTrace) next(batch uint64) bool {
 		t.batch = batch
 		t.splits = t.splits[:0]
 		t.complete, t.valid = false, true
+		t.decodeMicroseconds = nil
 	}
 	return true
 }
@@ -102,10 +107,19 @@ func (t *nativeTrace) consume(line string) {
 		}
 		t.splits = append(t.splits, NativeBackendSplit{Backend: backend, Count: 1})
 	case strings.HasPrefix(line, "NODEXLM_NATIVE_BATCH "):
-		n, _ := fmt.Sscanf(line, "NODEXLM_NATIVE_BATCH batch=%d inputs=%d status=%d output=%d", &batch, &inputs, &status, &output)
-		if n == 4 && t.next(batch) {
+		head, duration, hasDuration := strings.Cut(line, " decode_us=")
+		n, _ := fmt.Sscanf(head, "NODEXLM_NATIVE_BATCH batch=%d inputs=%d status=%d output=%d", &batch, &inputs, &status, &output)
+		if n == 4 && t.next(batch) && !t.complete {
 			t.complete = true
 			t.valid = t.valid && inputs == 1 && status == 0 && output == 1
+			if hasDuration {
+				us, err := strconv.ParseUint(duration, 10, 64)
+				if err != nil {
+					t.valid = false
+				} else {
+					t.decodeMicroseconds = &us
+				}
+			}
 		}
 	case strings.HasPrefix(line, "NODEXLM_NATIVE_TOKEN "):
 		n, _ := fmt.Sscanf(line, "NODEXLM_NATIVE_TOKEN batch=%d task=%d slot=%d ordinal=%d attributable=%d", &batch, &task, &slot, &ordinal, &attributable)
@@ -113,7 +127,7 @@ func (t *nativeTrace) consume(line string) {
 			attributable != 1 || ordinal <= 1 || len(t.splits) == 0 {
 			return
 		}
-		entry := NativeTokenActivity{Batch: batch, Ordinal: ordinal, Splits: append([]NativeBackendSplit(nil), t.splits...)}
+		entry := NativeTokenActivity{Batch: batch, Ordinal: ordinal, Splits: append([]NativeBackendSplit(nil), t.splits...), DecodeMicroseconds: t.decodeMicroseconds}
 		if len(t.recent) == nativeTraceLimit {
 			copy(t.recent, t.recent[1:])
 			t.recent = t.recent[:nativeTraceLimit-1]
@@ -129,6 +143,10 @@ func (t *nativeTrace) snapshot() []NativeTokenActivity {
 	out := append([]NativeTokenActivity(nil), t.recent...)
 	for i := range out {
 		out[i].Splits = append([]NativeBackendSplit(nil), out[i].Splits...)
+		if out[i].DecodeMicroseconds != nil {
+			us := *out[i].DecodeMicroseconds
+			out[i].DecodeMicroseconds = &us
+		}
 	}
 	return out
 }

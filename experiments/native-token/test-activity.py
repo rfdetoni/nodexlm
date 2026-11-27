@@ -55,10 +55,14 @@ with tempfile.TemporaryDirectory() as tmp:
     batches = {batch: (int(inputs), int(status), int(output))
                for batch, inputs, status, output in re.findall(
                    r"NODEXLM_NATIVE_BATCH batch=(\d+) inputs=(\d+) status=(-?\d+) output=(\d+)", text)}
+    durations = {batch: int(us) for batch, us in re.findall(
+        r"NODEXLM_NATIVE_BATCH batch=(\d+) inputs=\d+ status=-?\d+ output=\d+ decode_us=(\d+)", text)}
     splits = {batch for batch, count in re.findall(
         r"NODEXLM_NATIVE_SPLIT batch=(\d+) split=\d+ nodes=(\d+) backend=[^\n]+", text) if int(count) > 0}
     attributable = [t for t in tokens if t[4] == "1"]
     assert len(attributable) >= 2, tokens
     assert len({(t[1], t[2], t[3]) for t in tokens}) == len(tokens), tokens
     assert all(batches[t[0]] == (1, 0, 1) and t[0] in splits for t in attributable), (tokens, batches, splits)
-    print("Native token/batch/backend graph submission correlation verified")
+    assert all(t[0] in durations for t in attributable), durations
+    assert any(durations[t[0]] > 0 for t in attributable), durations
+    print("Native token/batch/backend graph submission correlation and synchronized decode duration verified")

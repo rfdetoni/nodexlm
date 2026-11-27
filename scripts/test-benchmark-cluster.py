@@ -32,9 +32,9 @@ def series(rates=(12, 16, 14), changed=False):
     node = "b" * 64
     rows = []
     for i, rate in enumerate(rates):
-        before = {node: {"bytes_to_guest": 100, "bytes_from_guest": 20,
+        before = {node: {"relay_epoch": 1, "bytes_to_guest": 100, "bytes_from_guest": 20,
                          "writes_to_guest": 1, "writes_from_guest": 2}}
-        after = {node: {"bytes_to_guest": 300, "bytes_from_guest": 60,
+        after = {node: {"relay_epoch": 1, "bytes_to_guest": 300, "bytes_from_guest": 60,
                         "writes_to_guest": 3, "writes_from_guest": 5}}
         rows.append({
             "inference": sample(rate, node + ":0:RPC0:1" if not (changed and i == 1)
@@ -78,6 +78,17 @@ class BenchmarkAcceptance(unittest.TestCase):
         rows[0]["rpc_stats_after"]["b" * 64]["bytes_to_guest"] = 50
         with self.assertRaisesRegex(ValueError, "changed/reset"):
             traffic_delta(rows[0])
+
+    def test_rejects_recreated_or_missing_relay_even_with_increasing_counters(self):
+        for epoch in (None, 0, 2, True):
+            row = series()[0]
+            row["rpc_stats_after"]["b" * 64]["relay_epoch"] = epoch
+            with self.subTest(epoch=epoch), self.assertRaisesRegex(ValueError, "epoch"):
+                traffic_delta(row)
+        row = series()[0]
+        row["rpc_stats_after"].clear()
+        with self.assertRaisesRegex(ValueError, "membership"):
+            traffic_delta(row)
 
     def test_http_requires_numeric_loopback_and_no_credentials(self):
         self.assertEqual(endpoint("http://127.0.0.1:8787"), "http://127.0.0.1:8787")
