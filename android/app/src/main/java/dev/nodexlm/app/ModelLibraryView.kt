@@ -114,7 +114,7 @@ internal class ModelLibraryView(
         library.orientation = VERTICAL
         addView(library)
         refreshLibrary()
-        // An unowned Host-cache transfer cannot be resumed after Activity re-creation.
+        // The worker cannot survive Activity recreation; retain only verified, fsync-committed range checkpoints for the next explicit download.
         if (prefs.getLong("id", 0L) in listOf(-1L, -2L)) clearDownload()
     }
 
@@ -283,13 +283,14 @@ internal class ModelLibraryView(
         check(prefs.edit().putLong("id", -1L).putString("staging", staging.absolutePath)
             .putString("target", target.absolutePath).putString("current_source", source).commit())
         status.text = activity.getString(R.string.download_started, fileName)
-        val scratch = File(root, ".$fileName.p2p-$epoch")
+        // Stable private stage allows resuming fsync-committed Host ranges after a restart.
+        val scratch = File(root, ".$fileName.p2p.partial")
         thread(name = "nodexlm-host-content-cache") {
             val available = HostModelCache.fetch(activity, checksum, expected, scratch,
                 { cacheCancelled || epoch != cacheEpoch }, { cacheReceived = it })
             activity.runOnUiThread {
                 if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -1L) {
-                    scratch.delete()
+                    HostCacheRanges.discard(scratch)
                     return@runOnUiThread
                 }
                 cacheTransfer = false
@@ -298,10 +299,12 @@ internal class ModelLibraryView(
                     // Avoid reading multi-GB model weights a second time.
                     finishDownload()
                 } else {
-                    scratch.delete()
                     prefs.edit().putLong("id", 0L).commit()
                     try {
                         enqueueNetworkPart(source, fileName, repository)
+                        // No hidden second partial copy after a verified
+                        // public downloader has successfully taken over.
+                        HostCacheRanges.discard(scratch)
                     } catch (e: Exception) {
                         clearDownload()
                         status.text = activity.getString(R.string.download_failed, e.message)
@@ -398,7 +401,25 @@ internal class ModelLibraryView(
             val received=if(id == -2L)runCatching { NativeRustDownload.transferred() }.getOrDefault(0L) else cacheReceived
             bar.isIndeterminate=cacheExpected<=0
             if(cacheExpected>0)bar.progress=(received*1000/cacheExpected).toInt().coerceIn(0,1000)
-            val nativeSpeed=if(id == -2L)runCatching { NativeRustDownload.bytesPerSecond() }.getOrDefault(0L) else 0L
+            if (id == -1L) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (sampledDownload != id) {
+                    sampledDownload = id
+                    sampledAt = now
+                    sampledBytes = received
+                    bytesPerSecond = 0.0
+                } else if (now - sampledAt >= 1000L) {
+                    val observed = (received - sampledBytes).coerceAtLeast(0L) * 1000.0 /
+                        (now - sampledAt).coerceAtLeast(1L)
+                    bytesPerSecond = if (bytesPerSecond <= 0.0) observed else
+                        bytesPerSecond * 0.7 + observed * 0.3
+                    sampledAt = now
+                    sampledBytes = received
+                }
+            }
+            val nativeSpeed = if (id == -2L)
+                runCatching { NativeRustDownload.bytesPerSecond() }.getOrDefault(0L)
+                else bytesPerSecond.toLong()
             val rate=if(nativeSpeed>0) " · %.2f MiB/s".format(java.util.Locale.US,nativeSpeed.toDouble()/(1024*1024)) else ""
             val details = if (id == -2L) runCatching {
                 val rows = org.json.JSONArray(NativeRustDownload.connectionStats())

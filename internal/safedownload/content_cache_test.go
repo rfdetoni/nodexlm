@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -44,5 +46,50 @@ func TestVerifiedPublicationDeduplicatesAndRejectsStaleIndex(t *testing.T) {
 	ok, err = PublishVerifiedLink(ctx, stage, filepath.Join(root, "third.gguf"))
 	if err != nil || ok {
 		t.Fatal("stale content cache accepted", err)
+	}
+}
+
+func TestColdModelVerificationHandlesConcurrentRangeReaders(t *testing.T) {
+	t.Setenv("NODEXLM_MODEL_P2P", "1")
+	root := t.TempDir()
+	body := make([]byte, 1024*1024)
+	copy(body, []byte("GGUF"))
+	sha := fmt.Sprintf("%x", sha256.Sum256(body))
+	if err := os.WriteFile(filepath.Join(root, "weights.gguf"), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, ".nodexlm-content-index")
+	if err := os.Mkdir(index, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(index, sha), []byte("weights.gguf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the first four parallel cold GETs plus a second waiting batch.
+	// They must validate without data races or unbounded verification state.
+	var wg sync.WaitGroup
+	failures := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			file, err := OpenVerifiedContent(context.Background(), root, sha)
+			if err != nil {
+				failures <- err
+				return
+			}
+			defer file.Close()
+			var prefix [4]byte
+			if _, err := io.ReadFull(file, prefix[:]); err != nil {
+				failures <- err
+			} else if string(prefix[:]) != "GGUF" {
+				failures <- fmt.Errorf("unexpected model signature %q", prefix)
+			}
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	for err := range failures {
+		t.Fatal(err)
 	}
 }

@@ -41,8 +41,10 @@ func (s *Server) nodeModelCache(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "model cache disabled")
 		return
 	}
-	// Hashing multi-GB models competes with inference. Reject concurrent
-	// cache requests instead of queueing unbounded background disk reads.
+	// Admit up to four authenticated HTTPS streams (the Android range
+	// worker ceiling). Clients perform HEAD first to verify/index an immutable
+	// SHA-256 once; subsequent GET ranges reuse the verified inode metadata.
+	// Reject excess requests instead of queueing unbounded disk reads.
 	select {
 	case s.modelCacheSlots <- struct{}{}:
 		defer func() { <-s.modelCacheSlots }()

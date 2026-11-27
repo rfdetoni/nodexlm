@@ -24,6 +24,11 @@ var verifiedModels = struct {
 	files map[string]verifiedModel
 }{files: make(map[string]verifiedModel)}
 
+// Fixed-size striped admission prevents multiple concurrent SHA-256 scans of
+// the same multi-GB model when Android opens four Range streams at once.
+// The stripes are bounded; no per-model mutexes or unbounded maps are retained.
+var verifiedDigestLocks [64]sync.Mutex
+
 func verifiedKey(path, digest string) string {
 	return path + "\x00" + digest
 }
@@ -66,6 +71,12 @@ func OpenVerifiedContent(ctx context.Context, directory, digest string) (*os.Fil
 	if !digestName.MatchString(digest) {
 		return nil, errors.New("invalid cached content digest")
 	}
+	// Each request still authenticates at the Host boundary. Serialize only
+	// potentially expensive initial disk verification by stable digest stripe;
+	// subsequent validated inode cache hits release immediately.
+	stripe := &verifiedDigestLocks[(int(digest[0])*37+int(digest[1]))%len(verifiedDigestLocks)]
+	stripe.Lock()
+	defer stripe.Unlock()
 	ctx = WithContentCache(ctx, directory)
 	index := cacheIndex(ctx, digest, false)
 	if index == "" {
