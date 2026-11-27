@@ -66,6 +66,10 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 			}
 			if ple != "" {
 				args = append(args, "--ple", ple)
+				// The sidecar is tens of GiB; keep lookup rows on disk.
+				if m.LazyMode == "" || m.LazyMode == "auto" {
+					args = append(args, "--lazy-mode", "on")
+				}
 			}
 		}
 		mode := os.Getenv("NODEXLM_SMOLMAX_MODE")

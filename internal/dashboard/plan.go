@@ -67,8 +67,13 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if meta.Trellis && settings.Distributed {
-		return nil, errors.New("Trellis/Gyro runtime currently requires Host-only placement")
+	if meta.Trellis {
+		if settings.Distributed {
+			return nil, errors.New("Trellis/Gyro runtime currently requires Host-only placement")
+		}
+		if _, err := local.TrellisPLE(path, meta); err != nil {
+			return nil, err
+		}
 	}
 	size, err := local.ModelSize(path)
 	if err != nil {

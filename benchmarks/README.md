@@ -60,4 +60,4 @@ required to deploy this patch; the old r1 binary is not modified in place.
 
 Latency tuning compares total request time with equal prompt/output counts and fixed native topology. Native scheduler and Flash Attention candidates are explicit experiments; native output placement reserves all non-block tensor bytes on the final device. RPC traffic windows split at the first observed SSE event (not exact native phase boundaries). The cost-based speed planner uses compatible benchmarks and RTT where available. NODEXLM_RPC_COST_PLACEMENT=0 and NODEXLM_RPC_BATCH_COMMANDS=0 disable the respective optimizations.
 
-Model compatibility: stock GGML TQ2_0 uses type 35. Agention Gyro-M uses TQ2_T (type 144) despite the file suffix. The bundled runtime rejects these descriptors before native startup; the noPLE variant additionally requires the fork's external PLE support. Do not mix native runtimes with incompatible tensor formats in a distributed cluster.
+Model compatibility: stock GGML TQ2_0 uses type 35; Gyro uses types 144–149. See [Trellis runtime](../docs/TRELLIS.md) for the separate experimental Host-only runtime and external PLE requirements.

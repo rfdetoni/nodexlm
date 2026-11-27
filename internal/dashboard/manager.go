@@ -70,7 +70,11 @@ func (m *Manager) inspectInferenceGGUF(path string, s Settings) (local.GGUFInfo,
 		if !errors.Is(err, llamaruntime.ErrTrellisFormat) {
 			return meta, err
 		}
-		return local.InspectTrellisGGUF(path)
+		meta, err = local.InspectTrellisGGUF(path)
+		if err != nil {
+			return meta, err
+		}
+		return meta, nil
 	}
 	return local.InspectGGUF(path)
 }
@@ -584,8 +588,13 @@ func (m *Manager) load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if meta.Trellis && s.Distributed {
-		return errors.New("Trellis/Gyro runtime is Host-only until matching RPC workers are validated; disable distributed inference explicitly")
+	if meta.Trellis {
+		if s.Distributed {
+			return errors.New("Trellis/Gyro runtime is Host-only until matching RPC workers are validated; disable distributed inference explicitly")
+		}
+		if _, err := local.TrellisPLE(path, meta); err != nil {
+			return err
+		}
 	}
 	rpcEndpoints := []string(nil)
 	localLayers := 0

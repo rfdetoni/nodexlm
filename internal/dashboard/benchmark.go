@@ -160,8 +160,13 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	if err != nil {
 		return InferenceSample{}, err
 	}
-	if meta.Trellis && nodeID != "" {
-		return InferenceSample{}, errors.New("Trellis/Gyro runtime is Host-only; select Host local for the benchmark")
+	if meta.Trellis {
+		if nodeID != "" {
+			return InferenceSample{}, errors.New("Trellis/Gyro runtime is Host-only; select Host local for the benchmark")
+		}
+		if _, err := local.TrellisPLE(path, meta); err != nil {
+			return InferenceSample{}, err
+		}
 	}
 	benchmarkPhase(ctx, "memory", fmt.Sprintf("%d blocks; %.2f GiB", meta.BlockCount, float64(size)/(1<<30)))
 	hostBudget, err := m.hostBudget(settings, hardware.Collect("Host", nil))
