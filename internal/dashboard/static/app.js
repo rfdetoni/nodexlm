@@ -1189,7 +1189,7 @@ const benchmarkPhaseText={
  preflight:['Validando Guests','Testando conexão, alocação e transferência RPC antes da carga.'],
  preflight_retry:['Recuperando conexão RPC','A conexão foi interrompida. Nova tentativa com túnel autenticado independente.'],
  preflight_ok:['Guest validado','Alocação, envio e leitura de tensor confirmados.'],
- load:['Carregando modelo','O runtime está alocando buffers e carregando os pesos. O total transferível não é conhecido.'],
+ load:['Carregando modelo','O runtime está alocando buffers e carregando os pesos. Sem limite de tempo para a carga; use Cancelar se necessário. O total transferível não é conhecido.'],
  warmup:['Aquecimento','Executando uma requisição de até 8 tokens, excluída da medição.'],
  measure:['Inferência medida','Executando o prompt fixo de até 64 tokens; aguardando a resposta do runtime.'],
  sample:['Amostra concluída','Tokens e velocidade recebidos do runtime.'],
@@ -1225,6 +1225,8 @@ function benchmarkLiveEvent(event){
    const area=$('benchmarkLiveTraffic');area.replaceChildren();
    benchmarkChart(area,'RPC enviado desde o início da carga','MiB',event.traffic.map(t=>({label:t.name,value:t.sent_bytes/1048576})));
    benchmarkChart(area,'RPC recebido desde o início da carga','MiB',event.traffic.map(t=>({label:t.name,value:t.received_bytes/1048576})));
+   const waiting=event.traffic.filter(t=>t.sent_bytes===0).map(t=>t.name);
+   if(waiting.length)area.append(el('p','muted','Sem bytes enviados desde o início desta carga: '+waiting.join(', ')+'. O runtime pode ainda estar preparando ou alocando buffers.'));
   }
   return;
  }

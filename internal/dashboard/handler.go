@@ -87,13 +87,7 @@ func (d *Dashboard) Handler() http.Handler {
 		if !decode(w, r, &input) {
 			return
 		}
-		timeout := 5 * time.Minute
-		if input.Extended {
-			timeout = 20 * time.Minute
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), timeout)
-		defer cancel()
-		sample, err := d.Manager.benchmarkInference(ctx, input.Model, input.Node, input.Extended)
+		sample, err := d.Manager.benchmarkInference(r.Context(), input.Model, input.Node, input.Extended)
 		if err != nil {
 			failure(w, 409, err)
 			return
@@ -112,9 +106,7 @@ func (d *Dashboard) Handler() http.Handler {
 			failure(w, 400, errors.New("cluster series requires 2–10 rounds"))
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
-		defer cancel()
-		rows, err := d.Manager.benchmarkSeries(ctx, input.Model, "cluster", false, input.Rounds)
+		rows, err := d.Manager.benchmarkSeries(r.Context(), input.Model, "cluster", false, input.Rounds)
 		if err != nil {
 			failure(w, 409, err)
 			return
@@ -122,9 +114,7 @@ func (d *Dashboard) Handler() http.Handler {
 		reply(w, 200, rows)
 	}))
 	mux.HandleFunc("GET /api/bench/model-identity", d.api(func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
-		defer cancel()
-		identity, err := d.Manager.benchmarkModelIdentity(ctx, r.URL.Query().Get("model"))
+		identity, err := d.Manager.benchmarkModelIdentity(r.Context(), r.URL.Query().Get("model"))
 		if err != nil {
 			failure(w, 409, err)
 			return
@@ -147,9 +137,7 @@ func (d *Dashboard) Handler() http.Handler {
 			failure(w, 400, errors.New("stability duration must be 1–60 minutes"))
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(input.Minutes+10)*time.Minute)
-		defer cancel()
-		rows, err := d.Manager.benchmarkSeriesDuration(ctx, input.Model, input.Node, false, 1, time.Duration(input.Minutes)*time.Minute)
+		rows, err := d.Manager.benchmarkSeriesDuration(r.Context(), input.Model, input.Node, false, 1, time.Duration(input.Minutes)*time.Minute)
 		if err != nil {
 			failure(w, 409, err)
 			return

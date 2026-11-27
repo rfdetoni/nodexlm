@@ -121,26 +121,18 @@ func (d *Dashboard) benchmarkStream(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	timeout := 5 * time.Minute
 	switch input.Action {
-	case "single":
-		if input.Extended {
-			timeout = 20 * time.Minute
-		}
+	case "single", "identity":
 	case "series":
 		if input.Rounds < 2 || input.Rounds > 10 {
 			failure(w, 400, errors.New("cluster series requires 2–10 rounds"))
 			return
 		}
-		timeout = 30 * time.Minute
 	case "stability":
 		if input.Minutes < 1 || input.Minutes > 60 {
 			failure(w, 400, errors.New("stability duration must be 1–60 minutes"))
 			return
 		}
-		timeout = time.Duration(input.Minutes+10) * time.Minute
-	case "identity":
-		timeout = 30 * time.Minute
 	default:
 		failure(w, 400, errors.New("unknown benchmark action"))
 		return
@@ -153,7 +145,9 @@ func (d *Dashboard) benchmarkStream(w http.ResponseWriter, r *http.Request) {
 		failure(w, 409, errors.New("another benchmark stream is active"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	// Loading distributed weights may take hours on slow Guests. Only the
+	// request lifetime (including explicit cancellation) bounds the benchmark.
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	events := make(chan benchmarkProgressEvent, 16)
 	send := func(event benchmarkProgressEvent) {

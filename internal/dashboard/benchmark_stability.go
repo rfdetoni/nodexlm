@@ -22,11 +22,9 @@ func measureStability(ctx context.Context, engine *local.Managed, key string, re
 	nextWindow := started
 	for time.Now().Before(deadline) {
 		began := time.Now()
-		// Allow a request crossing the planned boundary to finish, but not
-		// to block forever. Cancellation still propagates to the runtime.
-		callCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		raw, err := engine.Complete(callCtx, request)
-		cancel()
+		// Let a request crossing the planned boundary finish. Slow inference
+		// must not be interrupted by an arbitrary per-request deadline.
+		raw, err := engine.Complete(ctx, request)
 		if err != nil {
 			return InferenceSample{}, err
 		}
