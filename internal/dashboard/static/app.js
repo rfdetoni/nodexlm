@@ -612,6 +612,16 @@ async function refreshSnapshot(){
  if(guests.length)benchOptions.push(['cluster','Cluster (planejamento atual)']);
  benchOptions.push(...guests.map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)]));
  setOptions('inferenceBenchTarget',benchOptions,$('inferenceBenchTarget').value);
+ const handoffTarget=$('handoffTarget');
+ if(handoffTarget){
+  const handoffOptions=[['','Selecione um Guest online'],...nodes.filter(n=>n.status==='online').map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)])];
+  setOptions('handoffTarget',handoffOptions,handoffTarget.value);
+ }
+ if($('handoffMeta')){
+  const ep=cluster.authority?.epoch??1;
+  const ho=cluster.handoff||{};
+  $('handoffMeta').textContent='Época do cluster: '+ep+' · Fase: '+(ho.phase||'idle')+(ho.impact_summary?' · '+ho.impact_summary:'');
+ }
  const d=status.download;renderDownload(d);
  if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
   const name=pendingApply;pendingApply=null;
@@ -978,7 +988,7 @@ $('pairAutoRenew').addEventListener('change',()=>{
 setInterval(pairingTick,1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)return pairingTick()});
 bindAction('previewPlan',async()=>{
- const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.strategy||'capacity'))); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
+ const plan=await api('/api/plan');const area=$('planOutput');area.hidden=false;area.replaceChildren(el('strong','',plan.model+' · '+plan.blocks+' camadas · '+(plan.objective||plan.strategy||'speed')+' ('+(plan.allocation_basis==='confirmed_native'?'confirmado':'estimado')+')')); if(plan.selection_reason)area.append(el('p','muted',plan.selection_reason)); if(plan.excluded_guests?.length)area.append(el('p','muted','Guests não selecionados: '+plan.excluded_guests.map(x=>x.slice(0,12)).join(', ')));
  for(const suggestion of plan.suggestions||[])if(suggestion.kind==='speculative_ngram')area.append(el('p','muted',suggestion.reason+' RTT: '+suggestion.round_trip_ms.toFixed(1)+' ms.'));else if(suggestion.kind==='kv_q8_0')area.append(el('p','muted',suggestion.reason));
  for(const node of plan.nodes) {
   const rpcMode=node.rpc_mode==='gpu'?' · GPU prioritária':node.rpc_mode==='gpu+ram'?' · GPU + RAM':node.rpc_mode==='ram'?' · RAM/CPU':'';
@@ -1018,7 +1028,36 @@ bindAction('clearChat',async()=>{
 });
 
 
-setInterval(()=>{if(token && !$('app').hidden && !document.hidden)guard(()=>refresh(true))},10000);
+bindAction('handoffPlan',async()=>{
+ const model=$('modelSelect').value||latestStatus?.settings?.model||'';
+ const st=await api('/v1/handoff/plan','POST',{target_node_id:$('handoffTarget').value,model,new_host_url:$('handoffUrl').value.trim(),new_host_cert_sha256:$('handoffCert').value.trim().toLowerCase()});
+ notice(st.impact_summary||'Plano de migração preparado (fase: '+st.phase+').');
+ await refresh();
+});
+bindAction('handoffStart',async()=>{
+ if(!await confirmAction('Confirmar troca de coordenador para o Guest planejado? Os Guests precisarão ingressar na nova época e o Host atual entrará em fencing.','Iniciar migração'))return;
+ const st=await api('/v1/handoff/start','POST',{confirm:true,staged_verified:true});
+ notice('Migração em fase: '+st.phase);
+ await refresh();
+});
+bindAction('handoffCancel',async()=>{
+ const st=await api('/v1/handoff/cancel','POST',{});
+ notice('Migração cancelada: '+st.phase);
+ await refresh();
+});
+bindAction('handoffRollback',async()=>{
+ if(!await confirmAction('Executar rollback da migração? Após fencing, confirme antes que o novo Host foi isolado.','Confirmar rollback'))return;
+ const st=await api('/v1/handoff/rollback','POST',{new_authority_fenced:true});
+ notice('Rollback concluído: '+st.phase);
+ await refresh();
+});
+
+function scheduleClusterRefresh(){
+ const active=Boolean(latestStatus?.runtime?.loading||latestStatus?.runtime?.in_flight||latestStatus?.download?.status==='downloading'||pairingTimerActive);
+ setTimeout(()=>{if(token&&!$('app').hidden&&!document.hidden)guard(()=>refresh(true)).finally(scheduleClusterRefresh);else scheduleClusterRefresh()},active?10000:25000);
+}
+const pairingTimerActive=false;
+scheduleClusterRefresh();
 // Poll only transfer status during downloads, avoiding full cluster refresh each second.
 setInterval(async()=>{
  if(!token || document.hidden || $('app').hidden || downloadPollBusy || latestStatus?.download?.status!=='downloading')return;
