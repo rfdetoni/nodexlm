@@ -793,12 +793,8 @@ func node(args []string) error {
 		}
 		*engineName = "litertlm"
 	}
-	if *engineName != "" && (!local.IsRegisteredRuntime(*engineName) || *backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
+	if *engineName != "" && !(*engineName == "trellis" && *backend == "" && *path != "") && (!local.IsRegisteredRuntime(*engineName) || *backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
 		return errors.New("registered runtime requires --backend and --model; configure native options in that runtime")
-	}
-	if *liteRT && (*backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 ||
-		*moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
-		return errors.New("--litert requires --backend and --model; configure runtime options in LiteRT-LM")
 	}
 	var engine worker.Generator
 	var managed *local.Managed
@@ -827,11 +823,14 @@ func node(args []string) error {
 			if cpu <= 0 {
 				cpu = hardware.PhysicalCPUCount()
 			}
-			resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
+			resolved, trellis, resolveErr := resolveCLIModelRuntime(context.Background(), *dir, *bin, *path, *engineName == "trellis")
 			if resolveErr != nil {
 				return resolveErr
 			}
-			managed = &local.Managed{Binary: resolved, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+			if trellis {
+				*engineName = "trellis"
+			}
+			managed = &local.Managed{Binary: resolved, TrellisRuntime: trellis, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 			engine = managed
 		}
 	}
@@ -1036,10 +1035,11 @@ func localChat(args []string) error {
 		}
 	}
 	resolved := ""
+	trellis := false
 	switch local.EffectiveBackend(*engineName) {
-	case local.BackendLlama:
+	case local.BackendLlama, "trellis":
 		var resolveErr error
-		resolved, resolveErr = llamaruntime.AutoExecutable(context.Background(), config.DefaultDir(), *bin)
+		resolved, trellis, resolveErr = resolveCLIModelRuntime(context.Background(), config.DefaultDir(), *bin, *path, *engineName == "trellis")
 		if resolveErr != nil {
 			return resolveErr
 		}
@@ -1048,7 +1048,10 @@ func localChat(args []string) error {
 	default:
 		return fmt.Errorf("unknown inference engine: %s", *engineName)
 	}
-	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, VisionProjectorPath: *projector, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+	if trellis {
+		*engineName = local.BackendLlama
+	}
+	engine := &local.Managed{Backend: *engineName, Binary: resolved, TrellisRuntime: trellis, ModelPath: *path, VisionProjectorPath: *projector, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 	defer engine.Close()
 	c, cancel := ctx()
 	defer cancel()

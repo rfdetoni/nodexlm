@@ -364,3 +364,7 @@ main().catch(e=>{console.error(e);process.exitCode=1;});
 
 assert.equal(vm.runInContext("fmtRPC(128)",sandbox),'128 B');
 assert.equal(vm.runInContext("fmtRPC(1024)",sandbox),'1.00 KiB');
+
+vm.runInContext("chatWorkerModels=new Map([['worker',['remote-model']]]); $('chatTarget').value='worker'; updateChatModelOptions()",sandbox);
+assert.equal(get('chatModel').value,'remote-model');
+vm.runInContext("$('chatTarget').value='';updateChatModelOptions()",sandbox);

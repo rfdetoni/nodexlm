@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
-	compat "github.com/rfdetoni/nodexlm/internal/openai"
 	"github.com/rfdetoni/nodexlm/internal/local"
+	compat "github.com/rfdetoni/nodexlm/internal/openai"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/requestlog"
 )

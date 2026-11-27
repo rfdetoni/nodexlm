@@ -621,7 +621,9 @@ async function refreshSnapshot(){
  const previousTarget=$('chatTarget').value;
  const wholeWorkers=nodes.filter(n=>n.status==='online'&&n.models?.length&&!n.runtime?.rpc_ready);
  chatWorkerModels=new Map(wholeWorkers.map(n=>[n.id,n.models]));
- setOptions('chatTarget',[['','Host · modelos residentes'],...wholeWorkers.map(n=>[n.id,displayNodeName(n.id,n.name)+' · '+(n.runtime?.engine||'modelo inteiro')])],previousTarget);
+ const targets=[['','Host · modelos residentes'],...wholeWorkers.map(n=>[n.id,displayNodeName(n.id,n.name)+' · '+(n.runtime?.engine||'modelo inteiro')])];
+ if(previousTarget&&!chatWorkerModels.has(previousTarget))targets.push([previousTarget,'Guest indisponível — selecione outro executor']);
+ setOptions('chatTarget',targets,previousTarget);
  updateChatModelOptions();
  const primaryOptions=[['','Automático'],['host','Host'],...guests.map(n=>[n.id,n.name||n.id])];
  if(selectedPrimary&&!primaryOptions.some(([id])=>id===selectedPrimary))primaryOptions.push([selectedPrimary,'Guest indisponível: '+selectedPrimary]);
@@ -767,6 +769,7 @@ async function sendChat(){
  const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];const chatSession=sessionEpoch;
  const allowFallback=$('allowExternalFallback').checked;$('allowExternalFallback').checked=false;
  const targetNode=$('chatTarget').value;
+ if(targetNode&&!chatWorkerModels.has(targetNode))throw Error('Guest indisponível. Selecione explicitamente outro executor.');
  if(targetNode&&(imageFile||allowFallback))throw Error('Guest de modelo inteiro: somente texto, sem fallback externo.');
  const model=$('chatModel').value||(!targetNode?latestStatus?.runtime?.model:'')||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
@@ -877,7 +880,7 @@ function endSession(){
  sessionStorage.removeItem('nodexlm-admin');token='';sessionEpoch++;refreshEpoch++;stopActivity();
  catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;
  $('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();
- resetBenchmarkSession();clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
+ resetBenchmarkSession();clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];chatWorkerModels.clear();setOptions('chatTarget',[['','Host · modelos residentes']],'');updateChatModelOptions();settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
  $('secret').type='password';$('toggleSecret').textContent='Mostrar';$('toggleSecret').setAttribute('aria-pressed','false');$('toggleSecret').setAttribute('aria-label','Mostrar credencial');
  $('prompt').value='';$('overviewPrompt').value='';$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;
  $('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();$('chatMetrics').textContent='';
@@ -1127,7 +1130,7 @@ function updateChatModelOptions(){
  const models=target?chatWorkerModels.get(target)||[]:residentModelNames;
  setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
 }
-$('chatTarget').addEventListener('change',updateChatModelOptions);
+$('chatTarget').addEventListener('change',()=>{updateChatModelOptions();chatHistory=[];renderChat();});
 function renderResidentModels(models){
  const list=$('residentModels');
  const changed=JSON.stringify(residentModelNames)!==JSON.stringify(models)||!list.children.length;

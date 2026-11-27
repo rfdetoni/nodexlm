@@ -71,8 +71,10 @@ func (r *Runner) Run(ctx context.Context) error {
 				models = []string{r.Model}
 				if r.Runtime != "" {
 					probeCtx, done := context.WithTimeout(ctx, 4*time.Second)
-					check, ok := r.Engine.(interface{ CheckModel(context.Context, string) error })
-					if !ok || check.CheckModel(probeCtx, r.Model) != nil {
+					check, ok := r.Engine.(interface {
+						CheckModel(context.Context, string) error
+					})
+					if ok && check.CheckModel(probeCtx, r.Model) != nil {
 						models = nil
 					}
 					done()
@@ -156,7 +158,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		} else if work.Kind != "" && work.Kind != "chat" {
 			generateErr = errors.New("unsupported worker job kind")
-		} else if r.Engine == nil || work.Request.Model != r.Model {
+		} else if r.Engine == nil || (r.Model != "*" && work.Request.Model != r.Model) {
 			generateErr = errors.New("worker cannot run requested model")
 		} else if work.Request.Stream {
 			if engine, ok := r.Engine.(interface {
