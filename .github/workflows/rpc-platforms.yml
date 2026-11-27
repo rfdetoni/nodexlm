@@ -101,7 +101,7 @@ jobs:
           assert len(cpu)>=2, "CPU variant modules missing"
           if os.environ.get("BACKEND") == "vulkan":
               assert any("ggml-vulkan" in p.name for p in root.iterdir() if p.is_file()), "Vulkan backend module missing"
-          assert any(b"bounded parallel RPC tensor uploads enabled" in p.read_bytes() for p in root.iterdir() if p.is_file()), "RPC loader patch marker missing"
+          assert any(b"bounded parallel RPC tensor uploads enabled (preplanned endpoints=" in p.read_bytes() for p in root.iterdir() if p.is_file()), "RPC loader patch marker missing"
           PY
           archive="nodexlm-rpc_${version}_${TARGET_OS}_${TARGET_ARCH}_${BACKEND}.tar.gz"
           tar -czf "dist/$archive" -C stage bin LICENSE.llama.cpp native-capabilities.txt
@@ -128,6 +128,7 @@ jobs:
           NODEXLM_TEST_DEVICE_MICROBENCH: ${{ matrix.os == 'linux' && matrix.arch == 'amd64' && matrix.backend == 'cpu' && '1' || '0' }}
           NODEXLM_RPC_DIRECTIONAL_BENCH: '1'
           NODEXLM_PARALLEL_RPC_UPLOAD: '1'
+          NODEXLM_TEST_PREPLANNED_UPLOAD: '1'
           NODEXLM_RPC_DIR: ${{ github.workspace }}/stage
           NODEXLM_TEST_MODEL: ${{ github.workspace }}/tiny.gguf
         run: |

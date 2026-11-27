@@ -91,7 +91,7 @@ func TestModelWideRPCCacheIsolation(t *testing.T) {
 	t.Setenv("NODEXLM_MODEL_WIDE_RPC_BUILD", "")
 	base := distributedDir(t.TempDir(), "cpu")
 	t.Setenv("NODEXLM_MODEL_WIDE_RPC_BUILD", "1")
-	if !modelWideRPCBuild() || !strings.Contains(distributedDir(filepath.Dir(base), "cpu"), "-model-wide-v1-") {
+	if !modelWideRPCBuild() || !strings.Contains(distributedDir(filepath.Dir(base), "cpu"), "-model-wide-v2-") {
 		t.Fatal("model-wide RPC source build must not reuse published r5")
 	}
 }

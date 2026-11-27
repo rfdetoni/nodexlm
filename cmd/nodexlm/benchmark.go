@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,10 +65,8 @@ func benchmarkRun(args []string) error {
 	transport.Proxy = nil
 	transport.ResponseHeaderTimeout = 0
 	client.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	baseCtx, cancel := ctx()
+	requestCtx, cancel := ctx()
 	defer cancel()
-	requestCtx, stop := context.WithTimeout(baseCtx, 100*time.Minute)
-	defer stop()
 	var before, after, identity json.RawMessage
 	if *hashModel {
 		if _, err := client.Request(requestCtx, "GET", "/api/bench/model-identity?model="+url.QueryEscape(*model), nil, &identity); err != nil {

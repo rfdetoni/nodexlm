@@ -163,6 +163,7 @@ def main():
                 ids={n['id'] for n in nodes}
                 wait_for(lambda: all(stats.get(id,{}).get('idle',0)>0 for id in ids) if (stats:=json.load(api('/api/cluster'))['rpc_stats']) else None,20)
                 print('PASS: cancelled distributed native load with observed RPC traffic; child reaped, Guests idle, reload follows')
+            load_before = json.load(api('/api/cluster'))['rpc_stats']
             api('/api/load','POST',{}).close()
             def loaded():
                 state = json.load(api('/api/status'))['runtime']
@@ -173,6 +174,13 @@ def main():
             topology=json.load(api('/api/inference/topology'))
             assert topology['loaded'] and sum(n['layers'] for n in topology['nodes']) == topology['blocks'],topology
             assert len(topology['nodes']) == guest_count+1,topology
+            if os.environ.get('NODEXLM_TEST_PREPLANNED_UPLOAD') == '1' and guest_count == 2:
+                load_after = json.load(api('/api/cluster'))['rpc_stats']
+                for node in nodes:
+                    key = node['id']
+                    assert load_after[key]['relay_epoch'] == load_before[key]['relay_epoch'], key
+                    assert load_after[key]['bytes_to_guest'] > load_before[key]['bytes_to_guest'], key
+                print('PASS: both independent Guests received native traffic during model load')
             assert json.load(api('/api/inference/activity'))['in_flight'] == 0
             if os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
                 try:

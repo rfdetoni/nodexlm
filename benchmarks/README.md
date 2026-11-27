@@ -44,3 +44,16 @@ traffic is measured as monotonic relay deltas, not unique model bytes.
 Round and sample progress use completed counts. Stability shows elapsed
 planned duration, not a prediction of completion. Partial measurements are
 not exported as completed reports. Existing JSON endpoints remain supported.
+
+Benchmark loading, hashing and inference have no fixed wall-clock deadline.
+Cancel the dashboard request or press Ctrl+C in the CLI to stop it. The
+stability duration measures inference after warmup, excluding model loading.
+Short RPC handshake, connection and health-probe timeouts remain in place.
+
+The preplanned RPC loader groups all weight descriptors by the native
+endpoint before any transfer starts, rather than discovering workers while
+loading each context. CPU/GPU on one Guest share the native dispatcher.
+Mapped weights require no staging copy; buffered weights use one 1 MiB
+scratch buffer per endpoint. Direct IO and tensor-validation mode continue
+to use the native sequential path. A new immutable native bundle is
+required to deploy this patch; the old r1 binary is not modified in place.

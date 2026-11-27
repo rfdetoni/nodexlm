@@ -53,4 +53,4 @@ jobs:
           cmake --build build --parallel 2 --target llama-server ggml-rpc-server
           test -x build/bin/llama-server
           if test -x build/bin/ggml-rpc-server; then test -x build/bin/ggml-rpc-server; else test -x build/bin/rpc-server; fi
-          strings build/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled (model-wide, max 8 workers)' >/dev/null
+          strings build/bin/llama-server | grep -F 'bounded parallel RPC tensor uploads enabled (preplanned endpoints=' >/dev/null

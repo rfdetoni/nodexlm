@@ -53,6 +53,11 @@ type Managed struct {
 	Idle                                         time.Duration
 	KeepLoaded                                   bool
 	RPCServers                                   []string
+
+	// UnboundedStartup is reserved for explicitly cancellable benchmarks.
+	// Normal interactive model loads retain the backend startup deadline.
+	UnboundedStartup bool
+
 	// Native RPC devices are selected by the Host before model loading.
 	// RPCDeviceNames contains registered llama.cpp names such as RPC0/RPC1;
 	// empty preserves upstream default behavior for legacy Guests.
@@ -292,7 +297,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	}
 	endpoint.APIKey = launch.APIKey
 	timeout := launch.Timeout
-	startup, stop := context.WithTimeout(ctx, timeout)
+	startup, stop := m.startupContext(ctx, timeout)
 	defer stop()
 	for {
 		select {
@@ -340,7 +345,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 			return nativeLoadError(EffectiveBackend(m.Backend), exit.err, stderr.String())
 		case <-startup.Done():
 			stopProcess()
-			if errors.Is(startup.Err(), context.DeadlineExceeded) {
+			if !m.UnboundedStartup && errors.Is(startup.Err(), context.DeadlineExceeded) {
 				return fmt.Errorf("%s not ready after %s; check model and native output: %s", EffectiveBackend(m.Backend), timeout, stderr.String())
 			}
 			return fmt.Errorf("%s startup cancelled: %w", EffectiveBackend(m.Backend), startup.Err())
@@ -348,6 +353,15 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 	}
 }
+
+// Keep parent cancellation and any caller deadline even in benchmark mode.
+func (m *Managed) startupContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if m.UnboundedStartup {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 func (m *Managed) stopLocked() {
 	m.nativeActivity.Store(nil)
 	if m.started != nil {

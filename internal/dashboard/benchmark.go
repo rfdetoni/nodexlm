@@ -204,6 +204,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 		return InferenceSample{}, err
 	}
 	engine := managedFromSettings(settings, binary, path, model, draftPath)
+	engine.UnboundedStartup = true
 	var topology string
 	var loadGuests []RPCGuest
 	benchmarkPhase(ctx, "placement", "")
