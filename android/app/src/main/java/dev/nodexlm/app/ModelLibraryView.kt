@@ -48,6 +48,15 @@ internal class ModelLibraryView(
     @Volatile private var cacheReceived = 0L
     private var cacheExpected = 0L
     private var cacheTransfer = false
+    // Activity recreation can outlive the previous transfer worker; a local
+    // epoch alone does not distinguish two different Activity instances.
+    private fun ownsTransfer(epoch: Long, id: Long, owner: String): Boolean =
+        epoch == cacheEpoch && prefs.getLong("id", 0L) == id &&
+            prefs.getString("transfer_owner", "") == owner
+
+    private fun replacementOwnsStage(id: Long, target: File): Boolean =
+        prefs.getLong("id", 0L) == id &&
+            prefs.getString("target", "") == target.absolutePath
     private var sampledDownload = 0L
     private var sampledAt = 0L
     private var sampledBytes = 0L
@@ -276,21 +285,25 @@ internal class ModelLibraryView(
             return
         }
         val epoch = ++cacheEpoch
+        val owner = java.util.UUID.randomUUID().toString()
         cacheCancelled = false
         cacheReceived = 0L
         cacheExpected = expected
         cacheTransfer = true
         check(prefs.edit().putLong("id", -1L).putString("staging", staging.absolutePath)
-            .putString("target", target.absolutePath).putString("current_source", source).commit())
+            .putString("target", target.absolutePath).putString("current_source", source)
+            .putString("transfer_owner", owner).commit())
         status.text = activity.getString(R.string.download_started, fileName)
         // Stable private stage allows resuming fsync-committed Host ranges after a restart.
         val scratch = File(root, ".$fileName.p2p.partial")
         thread(name = "nodexlm-host-content-cache") {
             val available = HostModelCache.fetch(activity, checksum, expected, scratch,
-                { cacheCancelled || epoch != cacheEpoch }, { cacheReceived = it })
+                { cacheCancelled || !ownsTransfer(epoch, -1L, owner) }, { cacheReceived = it })
             activity.runOnUiThread {
-                if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -1L) {
-                    HostCacheRanges.discard(scratch)
+                if (!ownsTransfer(epoch, -1L, owner)) {
+                    // A new Activity may already be resuming the same sparse
+                    // stage. Never delete or publish data owned by another run.
+                    if (!replacementOwnsStage(-1L, target)) HostCacheRanges.discard(scratch)
                     return@runOnUiThread
                 }
                 cacheTransfer = false
@@ -333,12 +346,14 @@ internal class ModelLibraryView(
         val target = File(root, fileName)
         require(!staging.exists()) { activity.getString(R.string.model_downloading) }
         val epoch = ++cacheEpoch
+        val owner = java.util.UUID.randomUUID().toString()
         cacheCancelled = false
         cacheReceived = 0
         cacheExpected = expected
         cacheTransfer = true
         check(prefs.edit().putLong("id", -2L).putString("staging", staging.absolutePath)
-            .putString("target", target.absolutePath).putString("current_source", source).commit())
+            .putString("target", target.absolutePath).putString("current_source", source)
+            .putString("transfer_owner", owner).commit())
         status.text = activity.getString(R.string.download_started, fileName)
         // Stable private stage lets Rust resume only fsync-committed ranges after process death.
         val scratch = File(root, ".$fileName.native.partial")
@@ -347,10 +362,9 @@ internal class ModelLibraryView(
                 NativeRustDownload.fetch(source, scratch.absolutePath, checksum, expected)
             }.getOrElse { it.message ?: "Native download unavailable" }
             activity.runOnUiThread {
-                if (epoch != cacheEpoch || prefs.getLong("id", 0L) != -2L) {
-                    // This was cancelled/replaced. Never leave a sidecar that
-                    // prevents future recovery or silently retains gigabytes.
-                    discardRustStage(fileName)
+                if (!ownsTransfer(epoch, -2L, owner)) {
+                    // A newer Activity may already be using this exact stage.
+                    if (!replacementOwnsStage(-2L, target)) discardRustStage(fileName)
                     return@runOnUiThread
                 }
                 cacheTransfer = false
