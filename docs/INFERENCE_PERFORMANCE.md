@@ -156,3 +156,18 @@ O fingerprint identifica configuração e metadados do arquivo local, não é
 SHA-256 dos pesos. Para publicar, registre também hash de cada shard,
 revisão do modelo, hardware, runtime/commit, rede e condições de teste.
 Veja [metodologia pública](../benchmarks/METHODOLOGY.md).
+
+## Divisão híbrida por camada
+
+O planejamento RPC com topologia conhecida usa contagem de camadas como
+unidade única de `--tensor-split`, sem misturar MiB de capacidade com MiB
+atribuídos. A fatia do Guest é dividida GPU primeiro e CPU/RAM para o restante,
+respeitando orçamentos independentes e estimativa de KV/contexto. Um Guest
+de zero camadas não recebe peso artificial. Benchmarks de Guest individual
+usam a mesma política que a inferência, inclusive GPU única com CPU exposta.
+O painel mostra as camadas estimadas por dispositivo, separadas dos limites
+de memória. Não é confirmação de bytes nativos alocados.
+
+Preencher RAM desnecessariamente pode reduzir tokens/s: decode é sequencial.
+A estratégia Capacidade privilegia memória agregada; Velocidade usa medições
+comparáveis do Host e Guests. Validar em hardware real antes de alegar ganhos.

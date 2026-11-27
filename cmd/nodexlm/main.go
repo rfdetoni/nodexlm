@@ -65,6 +65,8 @@ func run(args []string) error {
 		return nil
 	case "doctor":
 		return doctor(args[1:])
+	case "benchmark":
+		return benchmarkCommand(args[1:])
 	case "bench":
 		return bench(args[1:])
 	case "cert":
@@ -112,6 +114,8 @@ func run(args []string) error {
 const usage = `NodexLM — privacy-first distributed local inference
 
   nodexlm doctor [--json]            # diagnose local configuration and runtime
+  nodexlm benchmark run --model model.gguf --profile standard --output report.json
+  nodexlm benchmark compare --baseline old.json --current new.json
   nodexlm bench --node NODE_ID       # benchmark an idle authenticated Guest tunnel
   nodexlm cert --hosts 127.0.0.1,localhost,192.168.1.10
   nodexlm handoff manifest --source /path/model.gguf # export trusted GGUF hashes

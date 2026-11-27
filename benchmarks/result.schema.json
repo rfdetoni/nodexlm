@@ -28,7 +28,8 @@
           "standard",
           "extended",
           "compare",
-          "capacity"
+          "capacity",
+          "stability"
         ]
       },
       "measured_at": {
@@ -74,7 +75,10 @@
               ],
               "properties": {
                 "kind": {
-                  "const": "benchmark"
+                  "enum": [
+                    "benchmark",
+                    "stability"
+                  ]
                 },
                 "rate_basis": {
                   "enum": [
@@ -127,6 +131,20 @@
           },
           "additionalProperties": false
         }
+      },
+      "metadata_before": {
+        "type": "object"
+      },
+      "metadata_after": {
+        "type": "object"
+      },
+      "energy_wh": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "tokens_per_joule": {
+        "type": "number",
+        "minimum": 0
       }
     },
     "additionalProperties": false

@@ -31,7 +31,7 @@ def render(root):
             for row in rows:
                 sample = row["sample"]
                 rate = sample["tokens_per_second"]
-                if (sample["kind"] != "benchmark" or sample["rate_basis"] != basis
+                if (sample["kind"] != ("stability" if report["profile"] == "stability" else "benchmark") or sample["rate_basis"] != basis
                         or sample["fingerprint"] != fingerprint or not math.isfinite(rate)
                         or rate <= 0 or type(sample["tokens"]) is not int or sample["tokens"] <= 0
                         or not re.fullmatch(r"Host|Guest|Cluster(?: [1-9][0-9]?)?", row["target"])):

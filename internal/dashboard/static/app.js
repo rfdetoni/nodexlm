@@ -57,6 +57,7 @@ function renderTopology(activity=null){
   const active=node.node_id==='host'?activity?.host_inferred:live?.active;
   const range=node.first_block>=0?'blk.'+node.first_block+'–'+node.last_block:'sem blocos';
   const text=displayNodeName(node.node_id,node.name)+' · '+range+' · '+node.layers+' camadas · '+node.mode+(node.devices?.length?' ('+node.devices.join(', ')+')':'')+' · '+fmt(node.weight_bytes)+' de pesos ('+node.weight_method+')'+(node.estimated_kv_bytes!=null?' · KV ~'+fmt(node.estimated_kv_bytes):'')+' · RAM/VRAM: '+fmt(node.ram_budget_bytes)+' / '+fmt(node.vram_budget_bytes);
+  for(const device of node.device_layers||[])area.append(el('p','muted','↳ '+(device.kind==='gpu'?'GPU / VRAM':'CPU / RAM')+' · '+device.name+' · '+device.layers+' camadas · ~'+fmt(device.estimated_weight_bytes)));
   area.append(el('p',active?'topology-active':'muted',text+(active?(node.node_id==='host'?' · Host (inferido)':' · tráfego recente'):'')+(live?.available?' · '+live.mib_per_second_window.toFixed(2)+' MiB/s':'')));
  }
  area.prepend(bar);
@@ -998,6 +999,7 @@ bindAction('previewPlan',async()=>{
   const rpcMode=node.rpc_mode==='gpu'?' · GPU prioritária':node.rpc_mode==='gpu+ram'?' · GPU + RAM':node.rpc_mode==='ram'?' · RAM/CPU':'';
   const memory=node.rpc_mode?' · VRAM '+fmt(node.vram_budget_bytes||0)+' / RAM '+fmt(node.ram_budget_bytes||0):'';
   area.append(el('p','',(node.name||node.endpoint)+': ~'+node.layers+' camadas · '+fmt(node.estimated_weight_bytes)+' de pesos / '+fmt(node.budget_bytes)+' disponíveis'+rpcMode+memory));
+  for(const device of node.device_layers||[])area.append(el('p','muted','↳ '+(device.kind==='gpu'?'GPU / VRAM':'CPU / RAM')+' · '+device.name+' · '+device.layers+' camadas · ~'+fmt(device.estimated_weight_bytes)));
  }
  area.append(el('p','', 'KV '+(plan.estimated_kv_type||'f16')+' estimado: '+fmt(plan.estimated_kv_bytes)+' · '+(plan.tokens_per_second?plan.tokens_per_second.toFixed(1)+' tokens/s medidos':'Tokens/s ainda não medido')+' · '+({'unmeasured':'Gargalo ainda não medido','network-advisory':'Atenção à velocidade da rede','host-memory':'Limite de memória do Host'}[plan.bottleneck]||plan.bottleneck)));
  for(const node of plan.nodes){if(node.network)area.append(el('p','muted',(node.name||node.endpoint)+': '+node.network.round_trip_ms.toFixed(2)+' ms RTT · '+node.network.mib_per_second.toFixed(1)+' MiB/s de eco'));}
@@ -1193,7 +1195,7 @@ function benchmarkPublicSample(sample){
   const n=benchmarkNumber(sample[key]);if(n!==null)out[key]=n;
  }
  if(out.tokens>0&&out.elapsed_ms>0)out.end_to_end_tokens_per_second=out.tokens*1000/out.elapsed_ms;
- if(Array.isArray(sample.measurements))out.measurements=sample.measurements.slice(0,3).map(benchmarkPublicSample);
+ if(Array.isArray(sample.measurements))out.measurements=sample.measurements.slice(0,sample.kind==='stability'?60:3).map(benchmarkPublicSample);
  if(Array.isArray(sample.workloads))out.workloads=sample.workloads.slice(0,3).map(w=>({profile:w.profile,status:w.status,...(w.sample?{sample:benchmarkPublicSample(w.sample)}:{})}));
  return out;
 }
@@ -1229,6 +1231,8 @@ function benchmarkChart(area,title,unit,rows){
 }
 function benchmarkReportView(report){
  const area=el('article','benchmark-report');area.append(el('h3','',report.model+' · '+report.profile),el('p','muted',report.measured_at+' · '+report.rate_basis));
+ if(report.metadata_before?.devices)area.append(el('p','muted','Dispositivos online antes da execução: '+report.metadata_before.devices.length+' · runtime fixado '+report.metadata_before.pinned_runtime));
+ if(report.energy_wh>0)area.append(el('p','','Energia informada: '+report.energy_wh.toFixed(3)+' Wh · '+report.tokens_per_joule.toFixed(4)+' tokens/J (energia total do ensaio)'));
  if(report.ratio!==null)area.append(el('p','benchmark-ratio','Cluster / Host: '+report.ratio.toFixed(2)+'× (mesma base de tempo)'));
  for(const [key,title,unit] of benchmarkMetrics){
   const rows=report.rows.flatMap(row=>{
@@ -1238,7 +1242,7 @@ function benchmarkReportView(report){
  benchmarkChart(area,'RPC enviado por rodada (inclui carga)','MiB',report.rows.filter(r=>r.relay).map(r=>({label:r.target,value:r.relay.bytes_to_guest/1048576})));
  benchmarkChart(area,'RPC recebido por rodada (inclui carga)','MiB',report.rows.filter(r=>r.relay).map(r=>({label:r.target,value:r.relay.bytes_from_guest/1048576})));
  for(const row of report.rows){
-  if(row.sample.measurements?.length)benchmarkChart(area,'Repetições · '+row.target+' · '+report.rate_basis,'t/s',row.sample.measurements.flatMap((s,i)=>benchmarkNumber(s.tokens_per_second)===null?[]:[{label:'Execução '+(i+1),value:s.tokens_per_second}]));
+  if(row.sample.measurements?.length)benchmarkChart(area,'Repetições / janelas · '+row.target+' · '+row.sample.measurements[0].rate_basis,'t/s',row.sample.measurements.flatMap((s,i)=>benchmarkNumber(s.tokens_per_second)===null?[]:[{label:'Execução '+(i+1),value:s.tokens_per_second}]));
   const workloads=row.sample.workloads||[];
   for(const basis of ['native_decode','end_to_end'])benchmarkChart(area,'Contextos · '+row.target+' · '+basis,'t/s',workloads.filter(w=>w.sample?.rate_basis===basis&&benchmarkNumber(w.sample.tokens_per_second)!==null).map(w=>({label:w.profile+' ('+w.sample.prompt_tokens+' tokens)',value:w.sample.tokens_per_second})));
   for(const [key,title,unit] of benchmarkMetrics.filter(m=>m[0]!=='tokens_per_second'))benchmarkChart(area,title+' · contextos · '+row.target,unit,workloads.flatMap(w=>{const v=benchmarkNumber(w.sample?.[key]);return v===null?[]:[{label:w.profile,value:v}]}));
@@ -1265,10 +1269,18 @@ async function runBenchmarkReport(){
  if(residentModelNames.length||latestStatus?.runtime?.loaded||latestStatus?.runtime?.loading)throw Error('Descarregue os modelos antes do benchmark.');
  const controller=new AbortController();benchmarkController=controller;$('benchmarkCancel').disabled=false;
  const status=$('benchmarkStatus'),rows=[],signal=controller.signal;
+ const minutes=Number($('benchmarkMinutes').value),energy=$('benchmarkEnergy').value===''?null:Number($('benchmarkEnergy').value);
  const single=(node,extended=false)=>api('/api/bench/inference','POST',{model,node_id:node,extended},signal);
  const add=(sample,name)=>{if(!sample||!(sample.model===model||sample.model.startsWith(model+'@'))||!benchmarkComparable([sample]))throw Error('Medição inválida ou suspeita.');rows.push({target:name,sample});};
  try{
-  if(profile==='compare'||profile==='capacity'){
+  const metadata_before=await api('/api/bench/metadata','GET',undefined,signal);
+  if(profile==='stability'){
+   if(!Number.isInteger(minutes)||minutes<1||minutes>60)throw Error('Use 1–60 minutos.');
+   status.textContent='Estabilidade: inferência contínua por '+minutes+' minutos, sem recarregar o modelo.';
+   const sample=await api('/api/bench/stability','POST',{model,node_id:target,minutes},signal);
+   if(sample.kind!=='stability'||!(sample.tokens_per_second>0))throw Error('Medição de estabilidade inválida.');
+   rows.push({target:target==='cluster'?'Cluster':target?'Guest':'Host',sample});
+  }else if(profile==='compare'||profile==='capacity'){
    if(!Number.isInteger(rounds)||rounds<2||rounds>10)throw Error('Use de 2 a 10 rodadas.');
    if(profile==='compare'){status.textContent='Medindo Host local…';add(await single(''),'Host');}
    status.textContent='Medindo cluster com topologia fixada ('+rounds+' rodadas)…';
@@ -1284,7 +1296,9 @@ async function runBenchmarkReport(){
   if(signal.aborted||benchmarkController!==controller)return;
   const host=rows.find(r=>r.target==='Host'),cluster=rows.filter(r=>r.target.startsWith('Cluster'));
   const ratio=host&&cluster.length?benchmarkMedian(cluster.map(r=>r.sample.tokens_per_second))/host.sample.tokens_per_second:null;
-  const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample),...(r.relay?{relay:r.relay}:{})}))};
+  const metadata_after=await api('/api/bench/metadata','GET',undefined,signal);
+  const totalTokens=rows.reduce((sum,r)=>sum+(r.sample.measurements?.length&&r.sample.kind!=='stability'?r.sample.measurements.reduce((n,m)=>n+m.tokens,0):r.sample.tokens),0);
+  const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,metadata_before,metadata_after,...(energy>0&&profile==='stability'?{energy_wh:energy,tokens_per_joule:totalTokens/(energy*3600)}:{}),rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample),...(r.relay?{relay:r.relay}:{})}))};
   benchmarkReports.push(report);benchmarkReports=benchmarkReports.slice(-10);renderBenchmarkReports();
   status.textContent='Concluído. Exporte os dados antes de sair.';
   await refreshBenchmarkRecent();

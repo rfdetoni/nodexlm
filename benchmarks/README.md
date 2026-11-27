@@ -13,3 +13,16 @@ Gere uma página estática sem dependências:
 
 Publique o diretório gerado via GitHub Pages, após habilitar Pages no
 repositório. O gerador não envia dados para terceiros.
+
+## CLI e estabilidade
+
+    nodexlm benchmark run --model model.gguf --profile compare --rounds 5 --output private.json
+    nodexlm benchmark run --model model.gguf --profile stability --node cluster --minutes 60 --output stability.json
+    nodexlm benchmark compare --baseline old.json --current new.json
+
+CLI reports are private (native placement information may identify nodes).
+The browser exports a reduced public format. Stability uses one loaded runtime
+for the entire timed workload; failures abort rather than invent a success.
+Before/after device snapshots are not peak memory readings. Energy is
+optional, manually measured across the entire stability run; no energy
+sensor is simulated.

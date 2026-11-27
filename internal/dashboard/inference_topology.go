@@ -12,6 +12,13 @@ import (
 	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
 
+type topologyDevice struct {
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Layers      int    `json:"layers"`
+	WeightBytes uint64 `json:"estimated_weight_bytes"`
+}
+
 type topologyNode struct {
 	NodeID       string   `json:"node_id"`
 	Name         string   `json:"name"`
@@ -25,6 +32,8 @@ type topologyNode struct {
 	Devices      []string `json:"devices,omitempty"`
 	RAMBudget    uint64   `json:"ram_budget_bytes"`
 	VRAMBudget   uint64   `json:"vram_budget_bytes"`
+
+	DeviceLayers []topologyDevice `json:"device_layers,omitempty"`
 }
 
 type inferenceTopology struct {
@@ -62,6 +71,7 @@ func buildInferenceTopology(s Settings, meta local.GGUFInfo, size, hostBudget ui
 		}
 		out.rpcOwners = nativeRPCOwners(engine.RPCServers, selected, guests)
 		deviceOwner := map[string]int{}
+		deviceKinds := map[string]string{}
 		rpcIndex := 0
 		var total uint64
 		for _, chosen := range selected.Guests {
@@ -78,14 +88,17 @@ func buildInferenceTopology(s Settings, meta local.GGUFInfo, size, hostBudget ui
 				mode = "legacy"
 			}
 			out.Nodes = append(out.Nodes, topologyNode{NodeID: guest.ID, Name: name, Mode: mode, RAMBudget: guest.RAMBudgetBytes, VRAMBudget: guest.GPUBudgetBytes})
-			for range guest.RPCDeviceKinds {
-				deviceOwner[fmt.Sprintf("RPC%d", rpcIndex)] = len(out.Nodes) - 1
+			for _, kind := range guest.RPCDeviceKinds {
+				name := fmt.Sprintf("RPC%d", rpcIndex)
+				deviceOwner[name] = len(out.Nodes) - 1
+				deviceKinds[name] = kind
 				rpcIndex++
 			}
 			total += chosen.CapacityBytes
 		}
 		if devices.Modes["host"] != "" && len(devices.Devices) > 0 {
 			deviceOwner[devices.Devices[0]] = 0
+			deviceKinds[devices.Devices[0]] = "gpu"
 			out.Nodes[0].Mode = "host-" + devices.Modes["host"]
 		}
 		remaining := blocks - engine.RPCLocalLayers
@@ -101,6 +114,7 @@ func buildInferenceTopology(s Settings, meta local.GGUFInfo, size, hostBudget ui
 				end := int((cumulative*uint64(remaining) + sum - 1) / sum)
 				out.Nodes[owner].Layers += end - previous
 				out.Nodes[owner].Devices = append(out.Nodes[owner].Devices, device)
+				out.Nodes[owner].DeviceLayers = append(out.Nodes[owner].DeviceLayers, topologyDevice{Name: device, Kind: deviceKinds[device], Layers: end - previous, WeightBytes: estimatedBlockWeight(meta, size, engine.RPCLocalLayers+previous, end-previous)})
 				previous = end
 			}
 		} else {

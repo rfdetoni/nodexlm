@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -49,6 +50,8 @@ type placement struct {
 	Layers          int                  `json:"layers"`
 	WeightBytes     uint64               `json:"estimated_weight_bytes"`
 	Budget          uint64               `json:"budget_bytes"`
+
+	DeviceLayers []topologyDevice `json:"device_layers,omitempty"`
 }
 
 func (m *Manager) Plan() (map[string]any, error) {
@@ -106,6 +109,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 			total += guest.CapacityBytes
 		}
 		remaining := int(meta.BlockCount) - localLayers
+		rpcIndex, splitIndex, deviceOffset := 0, 0, localLayers
 		for i, guest := range selection.Guests {
 			layers := remaining
 			if i < len(selection.Guests)-1 {
@@ -120,17 +124,28 @@ func (m *Manager) Plan() (map[string]any, error) {
 			}
 			name, endpoint := guest.ID, ""
 			var ramBudget, vramBudget uint64
+			var details []topologyDevice
 			for _, original := range guests {
 				if original.ID == guest.ID {
 					name, endpoint = original.Name, original.Endpoint
 					ramBudget, vramBudget = original.RAMBudgetBytes, original.GPUBudgetBytes
+					for _, kind := range original.RPCDeviceKinds {
+						device := fmt.Sprintf("RPC%d", rpcIndex)
+						rpcIndex++
+						if splitIndex < len(devices.Devices) && devices.Devices[splitIndex] == device {
+							count := int(devices.Split[splitIndex])
+							details = append(details, topologyDevice{Name: device, Kind: kind, Layers: count, WeightBytes: estimatedBlockWeight(meta, uint64(size), deviceOffset, count)})
+							deviceOffset += count
+							splitIndex++
+						}
+					}
 					break
 				}
 			}
 			nodes = append(nodes, placement{NodeID: guest.ID, Name: name, Network: m.networkSample(guest.ID),
 				Endpoint: endpoint, Layers: layers, WeightBytes: weight,
 				Budget: guest.CapacityBytes, RPCMode: devices.Modes[guest.ID],
-				RAMBudget: ramBudget, VRAMBudget: vramBudget})
+				RAMBudget: ramBudget, VRAMBudget: vramBudget, DeviceLayers: details})
 			remaining -= layers
 			total -= guest.CapacityBytes
 		}

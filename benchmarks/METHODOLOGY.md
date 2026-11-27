@@ -36,3 +36,16 @@ brutos; deltas agregados por rodada incluem upload e inferência. O fingerprint 
 separadamente. Use o gerador estático para publicar tabelas dos resultados.
 Não inclua resultados sintéticos na página oficial. Resultados enviados pela
 comunidade são autodeclarados até reprodução independente.
+
+## Stability and energy
+
+The stability profile keeps the same engine loaded and repeats deterministic
+requests for 1–60 minutes. The last request may cross the planned deadline.
+Failures abort the measurement and must be documented. The exported rate
+is aggregate output tokens divided by full measured inference wall time;
+up to 60 representative request windows are retained, not a full trace.
+Optional external Wh must refer to the whole measured test and include all
+devices; warmup/load energy, if included, lowers the reported efficiency.
+Host and Guest hardware snapshots before/after are not peaks; thermal status
+is an Android status category, not degrees Celsius. No missing measurements
+are replaced by zero.
