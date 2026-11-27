@@ -136,3 +136,23 @@ entre primeiro e último evento de texto. Ambas possuem
 `phase_rate_basis=sse_event_window`; são **taxas de janela observadas**,
 não tempo exato por token nativo. Quando as fases se intercalam ou falta
 contagem confiável, não são calculadas.
+
+## Benchmark público — painel Web
+
+A seção **Benchmarks** usa a configuração salva e os endpoints autenticados
+existentes. Perfis: padrão (3 requisições), ampliado (contextos curto/médio/longo,
+quando suportados), A/B (Host + 2–10 rodadas de cluster) e capacidade
+(cluster sem baseline local). Descarregue todos os modelos antes de iniciar.
+Para forçar uma distribuição real, salve a estratégia Capacidade.
+
+Cada rodada padrão retém as três medições individuais além da mediana.
+Os gráficos distinguem decode nativo, ponta a ponta, prefill, carga e, quando
+reportados, janelas SSE. Exportação JSON preserva as medições individuais;
+CSV resume as rodadas. Histórico da sessão limitado a dez relatórios;
+o cache do Host retém a última medição por modelo/alvo por até 24 h.
+Não há upload automático nem dependência de biblioteca de gráficos.
+
+O fingerprint identifica configuração e metadados do arquivo local, não é
+SHA-256 dos pesos. Para publicar, registre também hash de cada shard,
+revisão do modelo, hardware, runtime/commit, rede e condições de teste.
+Veja [metodologia pública](../benchmarks/METHODOLOGY.md).

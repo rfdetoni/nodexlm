@@ -44,6 +44,7 @@ type InferenceSample struct {
 
 	OutputChunkP50Milliseconds float64              `json:"output_chunk_p50_ms,omitempty"`
 	OutputChunkP95Milliseconds float64              `json:"output_chunk_p95_ms,omitempty"`
+	Measurements []InferenceSample `json:"measurements,omitempty"`
 	Workloads                  []BenchmarkWorkload  `json:"workloads,omitempty"`
 	ElapsedMilliseconds        float64              `json:"elapsed_ms,omitempty"`
 	Runs                       int                  `json:"runs,omitempty"`

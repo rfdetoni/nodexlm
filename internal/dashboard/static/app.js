@@ -33,6 +33,7 @@ const consoleViews=[
  {id:'models',name:'Modelos',description:'Biblioteca GGUF, downloads e catálogo.'},
  {id:'inference',name:'Inferência',description:'Configuração, camadas e carregamento.'},
  {id:'cluster',name:'Dispositivos',description:'Guests, recursos e pareamento seguro.'},
+ {id:'benchmark',name:'Benchmarks',description:'Inferência controlada, gráficos e exportação de resultados.'},
  {id:'observability',name:'Diagnóstico',description:'Medições reais de rede e inferência.'},
  {id:'decisions',name:'Decisões',description:'Perguntas tipadas e probabilidades via System One.'},
  {id:'chat',name:'Chat',description:'Converse com os modelos residentes.'},
@@ -124,6 +125,7 @@ function activateConsoleView(view){
  $('consoleMain').scrollTop=0;
  try{sessionStorage.setItem('nodexlm-console-view',chosen.id)}catch{}
  if(chosen.id==='inference' && token)guard(refresh);else stopActivity();
+ if(chosen.id==='benchmark' && token){guard(refresh);guard(refreshBenchmarkRecent);}
  if(chosen.id==='observability' && token)guard(refreshObservations);
  if(chosen.id==='decisions' && token)guard(refreshDecisionWorkers);
  if(chosen.id==='chat')followChat(true);
@@ -596,6 +598,7 @@ async function refreshSnapshot(){
  const s=status.settings;
  const prior=$('modelSelect').value;
  setSelect(models,settingsInitialized?(models.some(m=>m.name===prior)?prior:s.model):s.model);
+ setOptions('benchmarkModel',[['','Selecione um modelo'],...models.map(m=>[m.name,m.name+' ('+fmt(m.size_bytes)+')'])],$('benchmarkModel').value||s.model);
  setDraftModels(models,settingsInitialized?$('draftModelSelect').value:s.draft_model);
  if (!settingsInitialized) {
   $('primaryNode').dataset.initialized='no';
@@ -612,6 +615,7 @@ async function refreshSnapshot(){
  if(guests.length)benchOptions.push(['cluster','Cluster (planejamento atual)']);
  benchOptions.push(...guests.map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)]));
  setOptions('inferenceBenchTarget',benchOptions,$('inferenceBenchTarget').value);
+ setOptions('benchmarkTarget',benchOptions,$('benchmarkTarget').value);
  const handoffTarget=$('handoffTarget');
  if(handoffTarget){
   const handoffOptions=[['','Selecione um Guest online'],...nodes.filter(n=>n.status==='online').map(n=>[n.id,(n.name||'Guest')+' · '+(n.platform||'')+' · '+n.id.slice(0,8)])];
@@ -855,7 +859,7 @@ function endSession(){
  sessionStorage.removeItem('nodexlm-admin');token='';sessionEpoch++;refreshEpoch++;stopActivity();
  catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;
  $('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();
- clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
+ resetBenchmarkSession();clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
  $('secret').type='password';$('toggleSecret').textContent='Mostrar';$('toggleSecret').setAttribute('aria-pressed','false');$('toggleSecret').setAttribute('aria-label','Mostrar credencial');
  $('prompt').value='';$('overviewPrompt').value='';$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;
  $('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();$('chatMetrics').textContent='';
@@ -1168,5 +1172,135 @@ bindAction('openModelFolder',async()=>{
  await api('/api/models/folder/open','POST',{});
  notice('Solicitada abertura da pasta no computador Host.');
 });
+// Controlled benchmark UI: no background sampling, CDN or chart library.
+let benchmarkController=null,benchmarkReports=[];
+const benchmarkMetrics=[
+ ['tokens_per_second','Taxa principal','t/s'],
+ ['end_to_end_tokens_per_second','Ponta a ponta','t/s'],
+ ['prefill_tokens_per_second','Prefill nativo','t/s'],
+ ['load_ms','Carga','ms'],
+ ['first_output_ms','Primeiro evento','ms'],
+ ['first_text_ms','Primeiro texto','ms'],
+ ['observed_reasoning_tokens_per_second','Reasoning (janela SSE)','t/s'],
+ ['observed_answer_tokens_per_second','Texto (janela SSE)','t/s'],
+ ['output_chunk_p95_ms','P95 entre eventos SSE','ms']
+];
+function benchmarkNumber(v){return typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null}
+function benchmarkPublicSample(sample){
+ const out={};
+ for(const key of ['kind','rate_basis','phase_rate_basis','measured_at','fingerprint'])if(typeof sample[key]==='string')out[key]=sample[key];
+ for(const key of ['tokens','prompt_tokens','cached_tokens','reasoning_tokens','non_reasoning_tokens','seconds','elapsed_ms','runs',...benchmarkMetrics.map(m=>m[0])]){
+  const n=benchmarkNumber(sample[key]);if(n!==null)out[key]=n;
+ }
+ if(out.tokens>0&&out.elapsed_ms>0)out.end_to_end_tokens_per_second=out.tokens*1000/out.elapsed_ms;
+ if(Array.isArray(sample.measurements))out.measurements=sample.measurements.slice(0,3).map(benchmarkPublicSample);
+ if(Array.isArray(sample.workloads))out.workloads=sample.workloads.slice(0,3).map(w=>({profile:w.profile,status:w.status,...(w.sample?{sample:benchmarkPublicSample(w.sample)}:{})}));
+ return out;
+}
+function benchmarkComparable(samples){
+ if(!samples.length)return false;
+ const first=samples[0];
+ return /^[0-9a-f]{64}$/.test(first.fingerprint||'')&&['native_decode','end_to_end'].includes(first.rate_basis)&&samples.every(s=>s.kind==='benchmark'&&!s.suspect&&s.fingerprint===first.fingerprint&&s.rate_basis===first.rate_basis&&benchmarkNumber(s.tokens_per_second)>0&&s.tokens>0);
+}
+function benchmarkMedian(values){
+ const v=values.slice().sort((a,b)=>a-b),i=Math.floor(v.length/2);
+ return v.length?(v.length%2?v[i]:(v[i-1]+v[i])/2):null;
+}
+function benchmarkChart(area,title,unit,rows){
+ if(!rows.length)return;
+ const group=el('section','benchmark-chart');group.append(el('h3','',title));
+ const max=Math.max(...rows.map(r=>r.value),1);
+ for(const row of rows){
+  const line=el('div','benchmark-chart-row'),label=el('span','',row.label),bar=el('progress','benchmark-bar'),value=el('strong','',row.value.toFixed(2)+' '+unit);
+  bar.max=max;bar.value=row.value;bar.setAttribute('aria-label',row.label+' — '+title);line.append(label,bar,value);group.append(line);
+ }
+ area.append(group);
+}
+function benchmarkReportView(report){
+ const area=el('article','benchmark-report');area.append(el('h3','',report.model+' · '+report.profile),el('p','muted',report.measured_at+' · '+report.rate_basis));
+ if(report.ratio!==null)area.append(el('p','benchmark-ratio','Cluster / Host: '+report.ratio.toFixed(2)+'× (mesma base de tempo)'));
+ for(const [key,title,unit] of benchmarkMetrics){
+  const rows=report.rows.flatMap(row=>{
+   const value=benchmarkNumber(row.sample[key]);return value===null?[]:[{label:row.target,value}];
+  });benchmarkChart(area,title,unit,rows);
+ }
+ for(const row of report.rows){
+  if(row.sample.measurements?.length)benchmarkChart(area,'Repetições · '+row.target+' · '+report.rate_basis,'t/s',row.sample.measurements.flatMap((s,i)=>benchmarkNumber(s.tokens_per_second)===null?[]:[{label:'Execução '+(i+1),value:s.tokens_per_second}]));
+  const workloads=row.sample.workloads||[];
+  for(const basis of ['native_decode','end_to_end'])benchmarkChart(area,'Contextos · '+row.target+' · '+basis,'t/s',workloads.filter(w=>w.sample?.rate_basis===basis&&benchmarkNumber(w.sample.tokens_per_second)!==null).map(w=>({label:w.profile+' ('+w.sample.prompt_tokens+' tokens)',value:w.sample.tokens_per_second})));
+  for(const w of workloads)if(w.status!=='measured')area.append(el('p','muted',w.profile+': '+w.status));
+ }
+ return area;
+}
+function renderBenchmarkReports(){
+ const area=$('benchmarkResults');area.replaceChildren();
+ if(!benchmarkReports.length)area.append(el('p','muted','Nenhuma execução nesta sessão.'));
+ for(const report of benchmarkReports.slice().reverse())area.append(benchmarkReportView(report));
+ $('benchmarkJSON').disabled=$('benchmarkCSV').disabled=!benchmarkReports.length;
+}
+async function refreshBenchmarkRecent(){
+ const data=await api('/api/observability'),area=$('benchmarkRecent');area.replaceChildren();
+ const samples=(data.inference||[]).filter(s=>s.kind==='benchmark'&&!s.suspect);
+ if(!samples.length)area.append(el('p','muted','Nenhuma medição controlada recente.'));
+ for(const s of samples)area.append(el('p','',s.model.split('@')[0]+' · '+(s.model.endsWith('@bench-cluster')?'Cluster':s.model.includes('@')?'Guest':'Host')+' · '+s.tokens_per_second.toFixed(2)+' t/s · '+s.rate_basis));
+}
+async function runBenchmarkReport(){
+ if(benchmarkController)return;
+ const model=$('benchmarkModel').value,target=$('benchmarkTarget').value,profile=$('benchmarkProfile').value,rounds=Number($('benchmarkRounds').value);
+ if(!model)throw Error('Selecione um modelo.');
+ if(residentModelNames.length||latestStatus?.runtime?.loaded||latestStatus?.runtime?.loading)throw Error('Descarregue os modelos antes do benchmark.');
+ const controller=new AbortController();benchmarkController=controller;$('benchmarkCancel').disabled=false;
+ const status=$('benchmarkStatus'),rows=[],signal=controller.signal;
+ const single=(node,extended=false)=>api('/api/bench/inference','POST',{model,node_id:node,extended},signal);
+ const add=(sample,name)=>{if(!benchmarkComparable([sample]))throw Error('Medição inválida ou suspeita.');rows.push({target:name,sample});};
+ try{
+  if(profile==='compare'||profile==='capacity'){
+   if(!Number.isInteger(rounds)||rounds<2||rounds>10)throw Error('Use de 2 a 10 rodadas.');
+   if(profile==='compare'){status.textContent='Medindo Host local…';add(await single(''),'Host');}
+   status.textContent='Medindo cluster com topologia fixada ('+rounds+' rodadas)…';
+   const result=await api('/api/bench/inference-series','POST',{model,rounds},signal);
+   if(!Array.isArray(result)||result.length!==rounds)throw Error('Série incompleta.');
+   const samples=result.map(r=>r.inference);
+   if(!samples[0]?.benchmark_topology||!samples.every(s=>s.model===model+'@bench-cluster'&&s.benchmark_topology===samples[0].benchmark_topology)||!benchmarkComparable([...rows.map(r=>r.sample),...samples]))throw Error('Modelo, runtime, topologia ou base de tempo mudou.');
+   samples.forEach((s,i)=>add(s,'Cluster '+(i+1)));
+  }else{
+   status.textContent='Medindo '+(target==='cluster'?'cluster':target?'Guest':'Host')+'…';
+   add(await single(target,profile==='extended'),target==='cluster'?'Cluster':target?'Guest':'Host');
+  }
+  if(signal.aborted||benchmarkController!==controller)return;
+  const host=rows.find(r=>r.target==='Host'),cluster=rows.filter(r=>r.target.startsWith('Cluster'));
+  const ratio=host&&cluster.length?benchmarkMedian(cluster.map(r=>r.sample.tokens_per_second))/host.sample.tokens_per_second:null;
+  const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample)}))};
+  benchmarkReports.push(report);benchmarkReports=benchmarkReports.slice(-10);renderBenchmarkReports();
+  status.textContent='Concluído. Exporte os dados antes de sair.';
+  await refreshBenchmarkRecent();
+ }catch(error){if(benchmarkController===controller)status.textContent=signal.aborted?'Cancelado.':'Falha: '+error.message;}
+ finally{if(benchmarkController===controller){benchmarkController=null;$('benchmarkCancel').disabled=true;}}
+}
+function resetBenchmarkSession(){
+ benchmarkController?.abort();benchmarkController=null;benchmarkReports=[];renderBenchmarkReports();$('benchmarkRecent').replaceChildren();$('benchmarkCancel').disabled=true;$('benchmarkStatus').textContent='Pronto para medir.';
+}
+function benchmarkCSVCell(value){
+ let s=String(value??'');if(/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';
+}
+function exportBenchmark(format){
+ if(!benchmarkReports.length)return;
+ let content;
+ if(format==='json')content=JSON.stringify(benchmarkReports,null,2);
+ else{
+  const keys=['tokens','prompt_tokens','elapsed_ms',...benchmarkMetrics.map(m=>m[0])];
+  const rows=[['model','profile','measured_at','target','rate_basis',...keys]];
+  for(const report of benchmarkReports)for(const row of report.rows)rows.push([report.model,report.profile,report.measured_at,row.target,row.sample.rate_basis,...keys.map(k=>row.sample[k])]);
+  content=rows.map(r=>r.map(benchmarkCSVCell).join(',')).join('\n');
+ }
+ const url=URL.createObjectURL(new Blob([content],{type:format==='json'?'application/json':'text/csv;charset=utf-8'})),a=el('a','');
+ a.href=url;a.download='nodexlm-benchmark.'+format;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+bindForm('benchmarkForm','benchmarkRun',runBenchmarkReport);
+$('benchmarkCancel').addEventListener('click',()=>benchmarkController?.abort());
+$('benchmarkClear').addEventListener('click',()=>{benchmarkReports=[];renderBenchmarkReports();});
+$('benchmarkJSON').addEventListener('click',()=>exportBenchmark('json'));
+$('benchmarkCSV').addEventListener('click',()=>exportBenchmark('csv'));
+bindAction('benchmarkRefresh',refreshBenchmarkRecent);
 setupConsoleNavigation();
 setupAuth();if(token){renderChat();guard(refresh);guard(loadModelFolder);}

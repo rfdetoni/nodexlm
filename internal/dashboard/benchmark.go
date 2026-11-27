@@ -320,7 +320,8 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 		measurements = append(measurements, sample)
 	}
 	// A median resists a single noisy network, thermal or scheduling outlier.
-	sample := medianInferenceSample(measurements)
+	sample := medianInferenceSample(slices.Clone(measurements))
+	sample.Measurements = measurements
 	if extended {
 		sample.Workloads = benchmarkWorkloads(ctx, engine, key, request, settings.ContextTokens)
 		if ctx.Err() != nil {

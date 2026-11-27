@@ -60,6 +60,12 @@ const sandbox={document,performance:{now:()=>Date.now()},localStorage,sessionSto
 vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
+assert.equal(vm.runInContext('benchmarkMedian([9,3,6,12])',sandbox),7.5);
+assert.equal(vm.runInContext('benchmarkComparable([{kind:"benchmark",fingerprint:"a".repeat(64),rate_basis:"native_decode",tokens_per_second:9,tokens:64},{kind:"benchmark",fingerprint:"a".repeat(64),rate_basis:"end_to_end",tokens_per_second:9,tokens:64}])',sandbox),false);
+assert.equal(vm.runInContext('benchmarkPublicSample({tokens:64,elapsed_ms:2000,token:"secret",benchmark_topology:"private",native_system_info:"private"}).end_to_end_tokens_per_second',sandbox),32);
+assert.equal(vm.runInContext('"token" in benchmarkPublicSample({token:"secret"})',sandbox),false);
+assert.equal(vm.runInContext('"benchmark_topology" in benchmarkPublicSample({benchmark_topology:"private"})',sandbox),false);
+
 function checkResponsiveLayout(html,css){
   const {spawnSync}=require('node:child_process');
   const os=require('node:os');
