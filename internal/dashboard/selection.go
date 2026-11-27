@@ -57,7 +57,7 @@ func (m *Manager) chooseRPCWithMeasurements(s Settings, meta local.GGUFInfo, siz
 		if resultErr == nil {
 			result = preferGPUAcrossGuests(result, guests, meta, s, size)
 		}
-		if resultErr == nil && (selectedMultiGPU(result, guests) || knownRPCPlacement(result, guests)) && len(planRPCDevices(result, guests, meta, s, size).Devices) == 0 {
+		if resultErr == nil && len(result.Guests) > 0 && (s.RPCNativeScheduler || selectedMultiGPU(result, guests) || knownRPCPlacement(result, guests)) && len(planRPCDevices(result, guests, meta, s, size).Devices) == 0 {
 			result, resultErr = clusterplan.Selection{}, errors.New("RPC split exceeds individual CPU/GPU budget; reduce context or add capacity")
 		}
 	}()
@@ -219,7 +219,7 @@ func (m *Manager) chooseRPCWithMeasurements(s Settings, meta local.GGUFInfo, siz
 		candidates = append(candidates, candidate)
 	}
 	selectPlacement := clusterplan.SelectWithHostSpeed
-	if strategy == "speed" && os.Getenv("NODEXLM_RPC_COST_PLACEMENT") == "1" {
+	if strategy == "speed" && os.Getenv("NODEXLM_RPC_COST_PLACEMENT") != "0" {
 		selectPlacement = clusterplan.SelectWithHostSpeedAndRTT
 	}
 	selection, err := selectPlacement(meta.BlockCount, size, hostBudget, hostSpeed, candidates, strategy)
@@ -257,7 +257,7 @@ func (m *Manager) chooseRPCWithMeasurements(s Settings, meta local.GGUFInfo, siz
 }
 
 func applyLayerBytes(meta local.GGUFInfo, s Settings, size, host uint64, available []RPCGuest, selection *clusterplan.Selection) error {
-	if os.Getenv("NODEXLM_GGUF_LAYER_BYTES") != "1" || len(meta.BlockBytes) < 2 || len(meta.BlockBytes) != int(meta.BlockCount) || len(selection.Guests) == 0 {
+	if os.Getenv("NODEXLM_GGUF_LAYER_BYTES") == "0" || len(meta.BlockBytes) < 2 || len(meta.BlockBytes) != int(meta.BlockCount) || len(selection.Guests) == 0 {
 		return nil
 	}
 	uniform := true
@@ -287,12 +287,18 @@ func applyLayerBytes(meta local.GGUFInfo, s Settings, size, host uint64, availab
 	}
 	allocation, ok := clusterplan.LayerAllocation(meta.BlockBytes, meta.NonBlockBytes, host, budgets, selection.LocalLayers)
 	if !ok {
+		if len(planRPCDevices(*selection, available, meta, s, size).Devices) > 0 {
+			return nil
+		}
 		return errors.New("estimated contiguous GGUF layers do not fit selected node budgets")
 	}
 	candidate := *selection
 	candidate.LocalLayers = allocation[0]
 	candidate.GuestLayers = allocation[1:]
 	if plan := planRPCDevices(candidate, available, meta, s, size); len(plan.Devices) == 0 {
+		if len(planRPCDevices(*selection, available, meta, s, size).Devices) > 0 {
+			return nil
+		}
 		return errors.New("estimated GGUF layer split exceeds native device budgets")
 	}
 	*selection = candidate

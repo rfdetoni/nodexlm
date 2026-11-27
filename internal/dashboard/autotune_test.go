@@ -147,3 +147,25 @@ func TestFixedBenchmarkPlacementRetainsSplitForLowerBatch(t *testing.T) {
 		t.Fatal("accepted insufficient device memory")
 	}
 }
+
+func TestRecommendLatencySettingsRejectsDecodeOnlyAndDifferentWorkload(t *testing.T) {
+	baseline := InferenceSample{Tokens: 64, PromptTokens: 32, RateBasis: "native_decode", BenchmarkTopology: "same", ElapsedMilliseconds: 1000, TokensPerSecond: 100, PromptMilliseconds: 300}
+	slow := baseline
+	slow.TokensPerSecond = 120
+	slow.ElapsedMilliseconds = 1050
+	fast := baseline
+	fast.ElapsedMilliseconds = 850
+	fast.PromptMilliseconds = 200
+	different := fast
+	different.Tokens = 16
+	different.ElapsedMilliseconds = 100
+	rows := []TuneCandidate{
+		{Sample: &baseline},
+		{Settings: Settings{Threads: 2}, Sample: &slow},
+		{Settings: Settings{Threads: 4}, Sample: &fast},
+		{Settings: Settings{Threads: 8}, Sample: &different},
+	}
+	if got := recommendLatencySettings(rows); got == nil || got.Threads != 4 {
+		t.Fatalf("expected lower total latency with identical workload: %+v", got)
+	}
+}

@@ -37,6 +37,18 @@ func (p RPCDevicePlacement) TensorSplitArg() string {
 	return strings.Join(parts, ",")
 }
 
+// NativeTensorSplitArg accounts for the output pseudo-layer in llama.cpp's
+// denominator. The planner's Split values count transformer blocks only.
+func (p RPCDevicePlacement) NativeTensorSplitArg() string {
+	if len(p.Split) <= 1 {
+		return ""
+	}
+	native := p
+	native.Split = append([]uint64(nil), p.Split...)
+	native.Split[len(native.Split)-1]++
+	return native.TensorSplitArg()
+}
+
 func rpcGPUCount(guest RPCGuest) int {
 	n := 0
 	for _, kind := range guest.RPCDeviceKinds {
@@ -104,6 +116,9 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 			return RPCDevicePlacement{}
 		}
 	}
+	if s.RPCNativeScheduler && (len(meta.BlockBytes) != int(meta.BlockCount) || meta.NonBlockBytes == 0) {
+		return RPCDevicePlacement{}
+	}
 	result := RPCDevicePlacement{Modes: make(map[string]string)}
 	transient := estimateTransientBytes(meta, s)
 	totalBudget := uint64(0)
@@ -154,6 +169,14 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		}
 		fits := func(offset, count int, budget uint64) bool {
 			w := estimatedBlockWeight(meta, modelBytes, offset, count)
+			// Conservatively reserve all non-block weights on the last device,
+			// including a possible duplicate tied output embedding.
+			if s.RPCNativeScheduler && offset+count == int(meta.BlockCount) {
+				if meta.NonBlockBytes > ^uint64(0)-w {
+					return false
+				}
+				w += meta.NonBlockBytes
+			}
 			if w > ^uint64(0)/margin {
 				return false
 			}
@@ -406,7 +429,7 @@ func preferGPUAcrossGuests(selection clusterplan.Selection, available []RPCGuest
 		}
 		return total
 	}
-	if len(previous.Devices) != 0 && gpuLayers(next) <= gpuLayers(previous) {
+	if len(previous.Devices) != 0 && len(next.Modes) <= len(previous.Modes) && gpuLayers(next) <= gpuLayers(previous) {
 		return selection
 	}
 	candidate.Reason += "; VRAM-priority alternative across Guests (estimated; benchmark to verify throughput)"

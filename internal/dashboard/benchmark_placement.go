@@ -152,12 +152,22 @@ func (p *benchmarkPlacement) validate(guests []RPCGuest, meta local.GGUFInfo, s 
 		}
 		hostNeed += meta.NonBlockBytes * 115 / 100
 	}
+	if s.RPCNativeScheduler && (len(meta.BlockBytes) != blocks || meta.NonBlockBytes == 0 || meta.NonBlockBytes > ^uint64(0)/115) {
+		return errors.New("native scheduler requires known non-block tensor sizes")
+	}
 	var cumulative uint64
 	start := p.localLayers
 	for i, device := range p.devices.Devices {
 		cumulative += p.devices.Split[i]
 		end := p.localLayers + int((cumulative*uint64(blocks-p.localLayers)+splitSum-1)/splitSum)
 		required := need(start, end-start)
+		if s.RPCNativeScheduler && i == len(p.devices.Devices)-1 {
+			extra := meta.NonBlockBytes * 115 / 100
+			if extra > ^uint64(0)-required {
+				return errors.New("native output memory overflow")
+			}
+			required += extra
+		}
 		if budget, ok := budgets[device]; ok {
 			if required > budget {
 				return fmt.Errorf("fixed device %s exceeds current estimated memory budget", device)

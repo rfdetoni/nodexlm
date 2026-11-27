@@ -152,9 +152,7 @@ func (d *Dashboard) Handler() http.Handler {
 		if !decode(w, r, &input) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
-		defer cancel()
-		report, err := d.Manager.tuneInferenceTarget(ctx, input.Model, input.Node)
+		report, err := d.Manager.tuneInferenceTarget(r.Context(), input.Model, input.Node)
 		if err != nil {
 			failure(w, 409, err)
 			return

@@ -12,6 +12,9 @@ type nodeInferenceTraffic struct {
 	NodeID string `json:"node_id"`
 	Name   string `json:"name"`
 	Bytes  uint64 `json:"bytes"`
+
+	EstimatedLayers *int `json:"estimated_layers,omitempty"`
+
 	// Bytes and writes are completed relay transfers, not native GPU work.
 	BytesToGuest            uint64  `json:"bytes_to_guest"`
 	BytesFromGuest          uint64  `json:"bytes_from_guest"`
@@ -30,6 +33,23 @@ type InferenceRPCTraffic struct {
 	WritesFromGuest      uint64                 `json:"writes_from_guest"`
 	BytesPerOutput       float64                `json:"request_bytes_per_output_token"`
 	RequestWindowSeconds float64                `json:"request_window_seconds,omitempty"`
+
+	// SSE-observed boundary, not an exact native phase.
+	PrefillWindow *rpcTrafficWindow `json:"until_first_event,omitempty"`
+	DecodeWindow  *rpcTrafficWindow `json:"after_first_event,omitempty"`
+}
+
+type rpcTrafficWindow struct {
+	BytesToGuest   uint64 `json:"bytes_to_guest"`
+	BytesFromGuest uint64 `json:"bytes_from_guest"`
+}
+
+func trafficWindow(nodes []string, before, after map[string]rpcmesh.TunnelStats) *rpcTrafficWindow {
+	traffic := inferenceTraffic(nodes, before, after)
+	if traffic == nil {
+		return nil
+	}
+	return &rpcTrafficWindow{BytesToGuest: traffic.BytesToGuest, BytesFromGuest: traffic.BytesFromGuest}
 }
 
 func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
@@ -62,10 +82,14 @@ func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelSta
 	return result
 }
 
-func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
+func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string, before, after map[string]rpcmesh.TunnelStats, first ...map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
 	traffic := inferenceTraffic(nodes, before, after)
 	if traffic == nil {
 		return nil
+	}
+	if len(first) > 0 && first[0] != nil {
+		traffic.PrefillWindow = trafficWindow(nodes, before, first[0])
+		traffic.DecodeWindow = trafficWindow(nodes, first[0], after)
 	}
 	// This window includes the request's prefill and decode. Dividing by it
 	// does not claim per-device kernel throughput or per-token RPC latency.
@@ -87,6 +111,8 @@ func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string
 			for i := range traffic.Nodes {
 				if traffic.Nodes[i].NodeID == node.NodeID {
 					traffic.Nodes[i].Name = node.Name
+					layers := node.Layers
+					traffic.Nodes[i].EstimatedLayers = &layers
 				}
 			}
 		}

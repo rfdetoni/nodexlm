@@ -59,6 +59,8 @@ type Settings struct {
 	SpeculativeMode   string  `json:"speculative_mode,omitempty"`
 	DraftModel        string  `json:"draft_model,omitempty"`
 	VisionProjector   string  `json:"vision_projector,omitempty"`
+
+	RPCNativeScheduler bool `json:"rpc_native_scheduler,omitempty"`
 }
 
 // managedFromSettings keeps native options identical for loads and benchmarks.
@@ -79,6 +81,7 @@ func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string)
 		SpeculativeTokens: s.SpeculativeTokens,
 		SpeculativeMode:   s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
 		VisionProjectorPath: projector,
+		RPCNativeScheduler:  s.RPCNativeScheduler,
 	}
 }
 
@@ -281,7 +284,7 @@ func (m *Manager) validate(s Settings) error {
 	if backend != local.BackendLlama && backend != local.BackendMistralRS {
 		return errors.New("unsupported backend; select llama.cpp or mistralrs")
 	}
-	if backend == local.BackendMistralRS && s.Distributed {
+	if backend == local.BackendMistralRS && (s.Distributed || s.RPCNativeScheduler) {
 		return errors.New("mistral.rs cannot distribute GGUF over NodexLM RPC Guests; select llama.cpp for distributed inference")
 	}
 	if s.Threads < 1 || s.Threads > 256 || s.ContextTokens < 256 || s.ContextTokens > 262144 || s.MoECPULayers < 0 || s.MoECPULayers > 1024 || s.MoECacheMiB < 0 || s.MoECacheMiB > 65536 || s.MoECPU && s.MoECPULayers > 0 || (s.PlacementStrategy != "" && s.PlacementStrategy != "capacity" && s.PlacementStrategy != "speed") {
@@ -363,7 +366,7 @@ func (m *Manager) Update(s Settings) error {
 		old.ThreadsBatch != s.ThreadsBatch || old.ParallelSlots != s.ParallelSlots || old.PromptCacheMiB != s.PromptCacheMiB || old.LoadMode != s.LoadMode || old.LazyMode != s.LazyMode || old.NUMA != s.NUMA ||
 		old.GPULayers != s.GPULayers || old.MoECPU != s.MoECPU ||
 		old.MoECPULayers != s.MoECPULayers || old.MoECacheMiB != s.MoECacheMiB || old.MoECacheCPUShare != s.MoECacheCPUShare ||
-		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType ||
+		old.FlashAttention != s.FlashAttention || old.KVCacheType != s.KVCacheType || old.RPCNativeScheduler != s.RPCNativeScheduler ||
 		old.BatchSize != s.BatchSize || old.UBatchSize != s.UBatchSize ||
 		old.CacheReuseTokens != s.CacheReuseTokens || old.SpeculativeTokens != s.SpeculativeTokens ||
 		old.SpeculativeMode != s.SpeculativeMode || old.DraftModel != s.DraftModel || old.VisionProjector != s.VisionProjector {
@@ -704,7 +707,7 @@ func (m *Manager) load(ctx context.Context) error {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers
 		engine.RPCDeviceNames = devicePlacement.Devices
-		engine.RPCTensorSplit = devicePlacement.TensorSplitArg()
+		engine.RPCTensorSplit = devicePlacement.NativeTensorSplitArg()
 		if s.GPULayers == "auto" {
 			engine.GPULayers = "all"
 		}

@@ -50,7 +50,7 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 		Schema   int      `json:"schema"`
 
 		Parts [][2]int64 `json:"parts"`
-	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version, llamaruntime.BundledRPCRelease(), 3, parts})
+	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version, llamaruntime.BundledRPCRelease(), 4, parts})
 	if err != nil {
 		return ""
 	}

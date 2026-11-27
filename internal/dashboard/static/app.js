@@ -18,6 +18,13 @@ let deviceNames=new Map();
 const displayNodeName=(id,name)=>name&&name!==id?name:deviceNames.get(id)||(id==='host'?'Host':'Guest sem nome');
 let modelFolderPath='';
 const fmt = bytes => bytes > 0 ? (bytes / 1073741824).toFixed(2) + ' GiB' : '—';
+function fmtRPC(bytes){
+ if(!Number.isFinite(bytes)||bytes<0)return 'indisponível';
+ if(bytes<1024)return Math.round(bytes)+' B';
+ if(bytes<1048576)return (bytes/1024).toFixed(2)+' KiB';
+ if(bytes<1073741824)return (bytes/1048576).toFixed(2)+' MiB';
+ return (bytes/1073741824).toFixed(2)+' GiB';
+}
 function notice(message) { $('toast').textContent=message; $('toast').style.display='block'; clearTimeout(notice.timer); notice.timer=setTimeout(() => $('toast').style.display='none', 4800); }
 async function api(path, method='GET', body, signal) {
   const session=token,epoch=sessionEpoch;
@@ -217,6 +224,7 @@ const inferenceFields=[
  ['moeCache','moe_cache_mib',0,'number'],
  ['moeCacheCPUShare','moe_cache_cpu_share',0,'number'],
  ['flashAttention','flash_attention','auto'],
+ ['rpcNativeScheduler','rpc_native_scheduler',false,'checkbox'],
  ['kvCacheType','kv_cache_type','f16'],
  ['batchSize','batch_size',0,'number'],
  ['ubatchSize','ubatch_size',0,'number'],
@@ -822,8 +830,9 @@ async function sendChat(){
   if(rpcTraffic?.nodes?.length)metrics.text+=' · RPC nesta resposta (prefill+decode): '+rpcTraffic.nodes.map(n=>{
     const to=n.bytes_to_guest??n.bytes,from=n.bytes_from_guest??0;
     const speed=Number.isFinite(n.to_guest_bytes_per_second)?' · '+(n.to_guest_bytes_per_second/(1024*1024)).toFixed(1)+' MiB/s para Guest':'';
-    return displayNodeName(n.node_id,n.name)+': enviado '+fmt(to)+' · recebido '+fmt(from)+speed;
+    return displayNodeName(n.node_id,n.name)+': enviado '+fmtRPC(to)+' · recebido '+fmtRPC(from)+speed+(n.estimated_layers!=null?' · ~'+n.estimated_layers+' camadas':'');
    }).join(', ')+' · Host: ~'+rpcTraffic.estimated_host_layers+' camadas';
+  if(rpcTraffic?.until_first_event&&rpcTraffic?.after_first_event){const a=rpcTraffic.until_first_event,b=rpcTraffic.after_first_event;metrics.text+=' · RPC até primeiro evento: '+fmtRPC(a.bytes_to_guest+a.bytes_from_guest)+' · após primeiro evento: '+fmtRPC(b.bytes_to_guest+b.bytes_from_guest);}
   setChatMetrics(metrics.text,metrics.summary);
  }catch(error){
   if(chatSession!==sessionEpoch)return;
@@ -1135,10 +1144,10 @@ bindAction('autotuneBench',async()=>{
   const report=await api('/api/bench/autotune','POST',{model:$('modelSelect').value,node_id:$('inferenceBenchTarget').value});
   const area=$('autotuneResults');area.replaceChildren();
   if(report.placement_fixed)area.append(el('p','muted','Placement fixado do baseline; candidatos com memória insuficiente são rejeitados.'));
-  for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s':row.error||'indisponível')));
+  for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s · '+(row.sample.elapsed_ms/1000).toFixed(2)+' s totais':row.error||'indisponível')));
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')+' · '+(s.speculative_tokens||0)+' tokens (0 = nativo)'));
-   const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
-  }else area.append(el('p','muted','Nenhum ganho comparável de decode ou prefill dentro dos limites.'));
+   const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('rpcNativeScheduler').checked=!!s.rpc_native_scheduler;$('flashAttention').value=s.flash_attention||'auto';$('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
+  }else area.append(el('p','muted','Nenhum ganho de latência total de pelo menos 5% sem regressão relevante de prefill/decode.'));
  
 });
 bindAction('refreshObservations',refreshObservations);

@@ -11,6 +11,7 @@ import (
 
 	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
+	"github.com/rfdetoni/nodexlm/internal/rpcmesh"
 )
 
 // Use one bound for dashboard and OpenAI-compatible inference.
@@ -86,9 +87,12 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	start := time.Now()
 	if len(engine.RPCServers) > 0 && provider != nil && len(nodes) > 0 {
 		baseline := provider()
+		var first map[string]rpcmesh.TunnelStats
+		generationCtx = context.WithValue(generationCtx, rpcPhaseSnapshotKey{}, func() { first = provider() })
 		err := generate(generationCtx, engine, req)
 		if err == nil {
-			traffic := m.recordRPCTraffic(req.Model, start, nodes, baseline, provider())
+			after := provider()
+			traffic := m.recordRPCTraffic(req.Model, start, nodes, baseline, after, first)
 			for _, callback := range onTraffic {
 				callback(traffic)
 			}
@@ -100,6 +104,8 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 	m.recordGeneration(time.Since(start), err)
 	return err
 }
+
+type rpcPhaseSnapshotKey struct{}
 
 type generationActivityKey struct{}
 type generationActivity struct {
@@ -128,6 +134,9 @@ func (m *Manager) GenerateStream(ctx context.Context, req protocol.ChatRequest, 
 			first := latency.first.IsZero()
 			latency.observe(payload, time.Now())
 			if first && !latency.first.IsZero() {
+				if snapshot, ok := ctx.Value(rpcPhaseSnapshotKey{}).(func()); ok {
+					snapshot()
+				}
 				setGenerationPhase(ctx, "decode")
 			}
 			if bytes.Contains(payload, []byte(`"usage"`)) {

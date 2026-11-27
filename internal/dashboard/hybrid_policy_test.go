@@ -232,3 +232,23 @@ func TestVRAMPriorityUsesIdleGPUInsteadOfGuestCPU(t *testing.T) {
 		t.Fatal("explicit primary placement must not be changed")
 	}
 }
+
+func TestNativeSplitAccountsForOutputPseudoLayer(t *testing.T) {
+	plan := RPCDevicePlacement{Devices: []string{"RPC0", "RPC1", "RPC2"}, Split: []uint64{9, 13, 10}}
+	if got := plan.NativeTensorSplitArg(); got != "9,13,11" || plan.TensorSplitArg() != "9,13,10" {
+		t.Fatalf("native split must account for output without mutating block plan: %s", got)
+	}
+}
+
+func TestNativeSchedulerReservesOutputMemory(t *testing.T) {
+	const mib = uint64(1 << 20)
+	meta := local.GGUFInfo{BlockCount: 2, BlockBytes: []uint64{100 * mib, 100 * mib}, NonBlockBytes: 100 * mib}
+	guest := RPCGuest{ID: "gpu", CapacityBytes: 250 * mib, GPUBudgetBytes: 250 * mib, RPCDeviceKinds: []string{"gpu"}}
+	selection := clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}
+	if len(planRPCDevices(selection, []RPCGuest{guest}, meta, Settings{}, 300*mib).Devices) == 0 {
+		t.Fatal("baseline should fit the repeating blocks")
+	}
+	if len(planRPCDevices(selection, []RPCGuest{guest}, meta, Settings{RPCNativeScheduler: true}, 300*mib).Devices) != 0 {
+		t.Fatal("native output placement exceeded GPU budget")
+	}
+}

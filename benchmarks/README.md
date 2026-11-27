@@ -57,3 +57,5 @@ Mapped weights require no staging copy; buffered weights use one 1 MiB
 scratch buffer per endpoint. Direct IO and tensor-validation mode continue
 to use the native sequential path. A new immutable native bundle is
 required to deploy this patch; the old r1 binary is not modified in place.
+
+Latency tuning compares total request time with equal prompt/output counts and fixed native topology. Native scheduler and Flash Attention candidates are explicit experiments; native output placement reserves all non-block tensor bytes on the final device. RPC traffic windows split at the first observed SSE event (not exact native phase boundaries). The cost-based speed planner uses compatible benchmarks and RTT where available. NODEXLM_RPC_COST_PLACEMENT=0 and NODEXLM_RPC_BATCH_COMMANDS=0 disable the respective optimizations.
