@@ -101,7 +101,7 @@ func parseNVIDIASMI(out string) []protocol.GPUDevice {
 		// nvidia-smi's FB memory is a dedicated device allocation pool.
 		// Unlike Android/iGPU shared heaps this may expand the usable
 		// runtime budget, but must never be added to host RAM twice.
-		gpu := protocol.GPUDevice{Name: strings.TrimSpace(columns[0]), Vendor: "nvidia", MemoryType: "dedicated", VRAMBytes: total << 20, FreeVRAMBytes: free << 20}
+		gpu := protocol.GPUDevice{DeviceID: fmt.Sprintf("nvidia:%d", len(result)), Name: strings.TrimSpace(columns[0]), Vendor: "nvidia", MemoryType: "dedicated", VRAMBytes: total << 20, FreeVRAMBytes: free << 20}
 		if free <= total {
 			used := (total - free) << 20
 			gpu.VRAMUsedBytes = &used
@@ -160,7 +160,7 @@ func drmDevices(root string) []protocol.GPUDevice {
 			memType = "dedicated"
 		}
 		gpu := protocol.GPUDevice{
-			Name: strings.ToUpper(vendor) + " " + card, Vendor: vendor, MemoryType: memType,
+			DeviceID: "drm:" + card, Name: strings.ToUpper(vendor) + " " + card, Vendor: vendor, MemoryType: memType,
 			VRAMBytes: total, FreeVRAMBytes: free,
 		}
 		if usedErr == nil && e2 == nil && total > 0 && used <= total {

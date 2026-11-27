@@ -250,7 +250,7 @@ func validDevice(d protocol.Device) bool {
 		}
 	}
 	for _, gpu := range d.GPUs {
-		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+		if len(gpu.DeviceID) > 128 || len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
 			(gpu.MemoryType != "" && gpu.MemoryType != "shared" && gpu.MemoryType != "dedicated" && gpu.MemoryType != "unknown") ||
 			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes ||
 			!validUsage(gpu.UsagePercent) || (gpu.VRAMUsedBytes != nil && *gpu.VRAMUsedBytes > gpu.VRAMBytes) {
@@ -304,6 +304,11 @@ func (s *Server) register(w http.ResponseWriter, d protocol.Device) {
 		return
 	}
 	d.ID = id
+	for i := range d.GPUs {
+		if d.GPUs[i].DeviceID == "" {
+			d.GPUs[i].DeviceID = fmt.Sprintf("%s:gpu:%d", id, i)
+		}
+	}
 	d.LastSeen = time.Now()
 	d.Status = "online"
 	d.Busy = false
@@ -807,6 +812,11 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	// RPCReady is asserted only when a tunnel is authenticated, not by a guest.
 	profile.Runtime.RPCReady = false
+	for i := range profile.GPUs {
+		if profile.GPUs[i].DeviceID == "" {
+			profile.GPUs[i].DeviceID = fmt.Sprintf("%s:gpu:%d", id, i)
+		}
+	}
 	if profile.PeerPubKey == "" {
 		profile.PeerPubKey = n.device.PeerPubKey
 	}

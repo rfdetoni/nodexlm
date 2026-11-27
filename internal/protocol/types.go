@@ -31,8 +31,9 @@ type ChatRequest struct {
 }
 
 type GPUDevice struct {
-	Name   string `json:"name"`
-	Vendor string `json:"vendor"`
+	DeviceID string `json:"device_id,omitempty"`
+	Name     string `json:"name"`
+	Vendor   string `json:"vendor"`
 	// shared means GPU heaps use system RAM; dedicated means separate VRAM.
 	// Empty is legacy/unknown and must not be treated as dedicated.
 	MemoryType    string `json:"memory_type,omitempty"`
