@@ -1,0 +1,9 @@
+# Host-managed Guest updates
+
+Released desktop Hosts enforce their exact source commit for every RPC tunnel and whole-model job. An authenticated Guest receives a typed update directive, containing only an expected revision and version. No command strings, credentials or remote URLs are accepted. The coordinator excludes mismatches from placement and leases. Development binaries lacking a release identity do not enable this policy.
+
+Desktop Guests download the official release for their OS/architecture, verify the GitHub SHA-256 and size, check the embedded commit and version, and replace their existing executable. The native worker is stopped before updating; saved pairing is preserved. If the artifact is not yet published, the Guest retries. Read-only system installations or Windows file locks may require the native package manager. Downgrades and automatic stable-to-edge channel switches are forbidden.
+
+Android Guests obtain the official permanently signed APK from the existing public beta feed, verify the SHA-256, signing certificate, increasing versionCode and signed manifest source commit. An idle Guest requests installation through PackageInstaller. Android 12+ may allow self-update without confirmation when the system's conditions are met; Android 10/11 and other policy cases require system confirmation. Missing install permission or a legacy signing identity requires user action. A notification surfaces the confirmation.
+
+Both pipelines now build from the same main source revision when desktop/application code changes. This deliberately spends an Android build on a desktop code change to preserve strict compatibility; native compiler caching remains enabled. Initial installation of this update-aware version is required on existing old Guests; older builds cannot execute a command they do not implement. Host-managed deployment does not automatically install arbitrary external runtimes or enable unvalidated Trellis tensor RPC.
