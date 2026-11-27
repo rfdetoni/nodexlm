@@ -66,8 +66,14 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
         DESTINATION "${NODEXLM_SPIRV_STAGING}")
     set(NODEXLM_SPIRV_PACKAGE "${CMAKE_BINARY_DIR}/nodexlm-spirv-package")
     file(MAKE_DIRECTORY "${NODEXLM_SPIRV_PACKAGE}")
+    # llama.cpp v1.1.0 links the imported header-only target explicitly.
+    # Point it at staged headers, never a host binary or sysroot library.
     file(WRITE "${NODEXLM_SPIRV_PACKAGE}/SPIRV-HeadersConfig.cmake"
-        "# Validated SPIR-V header-only package staged for Android NDK cross compile\\n")
+        "if(NOT TARGET SPIRV-Headers::SPIRV-Headers)\n"
+        "    add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)\n"
+        "    set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES\n"
+        "        INTERFACE_INCLUDE_DIRECTORIES \"${NODEXLM_SPIRV_STAGING}\")\n"
+        "endif()\n")
     set("SPIRV-Headers_DIR" "${NODEXLM_SPIRV_PACKAGE}" CACHE PATH
         "Android-compatible host SPIR-V headers package" FORCE)
 else()
