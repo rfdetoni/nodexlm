@@ -32,7 +32,7 @@ como p95. Registre todos os resultados, inclusive falhas e casos sem suporte.
 Exporte JSON do painel, revise dados pessoais e acrescente metadados físicos
 em um arquivo Markdown associado. Não publique relatórios privados do script
 sem anonimização. O JSON público do painel exclui IDs e dados de transporte
-brutos. O fingerprint não comprova identidade dos pesos; registre SHA-256
+brutos; deltas agregados por rodada incluem upload e inferência. O fingerprint não comprova identidade dos pesos; registre SHA-256
 separadamente. Use o gerador estático para publicar tabelas dos resultados.
 Não inclua resultados sintéticos na página oficial. Resultados enviados pela
 comunidade são autodeclarados até reprodução independente.

@@ -12,6 +12,7 @@ on:
       - 'internal/llamaruntime/revision.json'
       - 'internal/dashboard/static/**'
       - 'scripts/**'
+      - 'benchmarks/**'
       - 'install.sh'
       - '.github/workflows/pr-checks.yml'
       - '.github/workflows/rpc-platforms.yml'
@@ -75,6 +76,7 @@ jobs:
       - run: sh scripts/test-install.sh
       - run: python3 scripts/test-handoff-systemd.py
       - run: python3 scripts/test-benchmark-cluster.py
+      - run: python3 benchmarks/render.py --output "$RUNNER_TEMP/nodexlm-benchmarks/index.html"
       - run: go build -o nodexlm ./cmd/nodexlm && python3 scripts/smoke.py
       - run: go vet ./...
       - name: Verify pinned upstream and exact patch application

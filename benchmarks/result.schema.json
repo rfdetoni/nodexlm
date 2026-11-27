@@ -95,6 +95,34 @@
                   "exclusiveMinimum": 0
                 }
               }
+            },
+            "relay": {
+              "type": "object",
+              "required": [
+                "bytes_to_guest",
+                "bytes_from_guest",
+                "writes_to_guest",
+                "writes_from_guest"
+              ],
+              "properties": {
+                "bytes_to_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "bytes_from_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "writes_to_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "writes_from_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

@@ -1202,6 +1202,17 @@ function benchmarkComparable(samples){
  const first=samples[0];
  return /^[0-9a-f]{64}$/.test(first.fingerprint||'')&&['native_decode','end_to_end'].includes(first.rate_basis)&&samples.every(s=>s.kind==='benchmark'&&!s.suspect&&s.fingerprint===first.fingerprint&&s.rate_basis===first.rate_basis&&benchmarkNumber(s.tokens_per_second)>0&&s.tokens>0);
 }
+function benchmarkRelayDelta(row){
+ const before=row.rpc_stats_before,after=row.rpc_stats_after;
+ if(!before||!after||typeof before!=='object'||typeof after!=='object'||Object.keys(before).sort().join(',')!==Object.keys(after).sort().join(','))throw Error('Conjunto de relays RPC mudou.');
+ const keys=['bytes_to_guest','bytes_from_guest','writes_to_guest','writes_from_guest'],total=Object.fromEntries(keys.map(k=>[k,0]));
+ for(const id of Object.keys(after)){
+  const a=before[id],b=after[id];
+  if(!Number.isSafeInteger(a.relay_epoch)||a.relay_epoch<=0||a.relay_epoch!==b.relay_epoch)throw Error('Epoch RPC mudou durante a medição.');
+  for(const k of keys){const x=a[k],y=b[k];if(!Number.isSafeInteger(x)||!Number.isSafeInteger(y)||x<0||y<x)throw Error('Contador RPC inválido ou reiniciado.');total[k]+=y-x;if(!Number.isSafeInteger(total[k]))throw Error('Contador RPC excedeu precisão segura.');}
+ }
+ return total;
+}
 function benchmarkMedian(values){
  const v=values.slice().sort((a,b)=>a-b),i=Math.floor(v.length/2);
  return v.length?(v.length%2?v[i]:(v[i-1]+v[i])/2):null;
@@ -1224,10 +1235,13 @@ function benchmarkReportView(report){
    const value=benchmarkNumber(row.sample[key]);return value===null?[]:[{label:row.target,value}];
   });benchmarkChart(area,title,unit,rows);
  }
+ benchmarkChart(area,'RPC enviado por rodada (inclui carga)','MiB',report.rows.filter(r=>r.relay).map(r=>({label:r.target,value:r.relay.bytes_to_guest/1048576})));
+ benchmarkChart(area,'RPC recebido por rodada (inclui carga)','MiB',report.rows.filter(r=>r.relay).map(r=>({label:r.target,value:r.relay.bytes_from_guest/1048576})));
  for(const row of report.rows){
   if(row.sample.measurements?.length)benchmarkChart(area,'Repetições · '+row.target+' · '+report.rate_basis,'t/s',row.sample.measurements.flatMap((s,i)=>benchmarkNumber(s.tokens_per_second)===null?[]:[{label:'Execução '+(i+1),value:s.tokens_per_second}]));
   const workloads=row.sample.workloads||[];
   for(const basis of ['native_decode','end_to_end'])benchmarkChart(area,'Contextos · '+row.target+' · '+basis,'t/s',workloads.filter(w=>w.sample?.rate_basis===basis&&benchmarkNumber(w.sample.tokens_per_second)!==null).map(w=>({label:w.profile+' ('+w.sample.prompt_tokens+' tokens)',value:w.sample.tokens_per_second})));
+  for(const [key,title,unit] of benchmarkMetrics.filter(m=>m[0]!=='tokens_per_second'))benchmarkChart(area,title+' · contextos · '+row.target,unit,workloads.flatMap(w=>{const v=benchmarkNumber(w.sample?.[key]);return v===null?[]:[{label:w.profile,value:v}]}));
   for(const w of workloads)if(w.status!=='measured')area.append(el('p','muted',w.profile+': '+w.status));
  }
  return area;
@@ -1252,7 +1266,7 @@ async function runBenchmarkReport(){
  const controller=new AbortController();benchmarkController=controller;$('benchmarkCancel').disabled=false;
  const status=$('benchmarkStatus'),rows=[],signal=controller.signal;
  const single=(node,extended=false)=>api('/api/bench/inference','POST',{model,node_id:node,extended},signal);
- const add=(sample,name)=>{if(!benchmarkComparable([sample]))throw Error('Medição inválida ou suspeita.');rows.push({target:name,sample});};
+ const add=(sample,name)=>{if(!sample||!(sample.model===model||sample.model.startsWith(model+'@'))||!benchmarkComparable([sample]))throw Error('Medição inválida ou suspeita.');rows.push({target:name,sample});};
  try{
   if(profile==='compare'||profile==='capacity'){
    if(!Number.isInteger(rounds)||rounds<2||rounds>10)throw Error('Use de 2 a 10 rodadas.');
@@ -1262,7 +1276,7 @@ async function runBenchmarkReport(){
    if(!Array.isArray(result)||result.length!==rounds)throw Error('Série incompleta.');
    const samples=result.map(r=>r.inference);
    if(!samples[0]?.benchmark_topology||!samples.every(s=>s.model===model+'@bench-cluster'&&s.benchmark_topology===samples[0].benchmark_topology)||!benchmarkComparable([...rows.map(r=>r.sample),...samples]))throw Error('Modelo, runtime, topologia ou base de tempo mudou.');
-   samples.forEach((s,i)=>add(s,'Cluster '+(i+1)));
+   samples.forEach((s,i)=>{add(s,'Cluster '+(i+1));rows.at(-1).relay=benchmarkRelayDelta(result[i]);});
   }else{
    status.textContent='Medindo '+(target==='cluster'?'cluster':target?'Guest':'Host')+'…';
    add(await single(target,profile==='extended'),target==='cluster'?'Cluster':target?'Guest':'Host');
@@ -1270,7 +1284,7 @@ async function runBenchmarkReport(){
   if(signal.aborted||benchmarkController!==controller)return;
   const host=rows.find(r=>r.target==='Host'),cluster=rows.filter(r=>r.target.startsWith('Cluster'));
   const ratio=host&&cluster.length?benchmarkMedian(cluster.map(r=>r.sample.tokens_per_second))/host.sample.tokens_per_second:null;
-  const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample)}))};
+  const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample),...(r.relay?{relay:r.relay}:{})}))};
   benchmarkReports.push(report);benchmarkReports=benchmarkReports.slice(-10);renderBenchmarkReports();
   status.textContent='Concluído. Exporte os dados antes de sair.';
   await refreshBenchmarkRecent();

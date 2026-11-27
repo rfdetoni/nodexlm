@@ -3,7 +3,14 @@
   "commit": "171527522610996f5f0acf12334e185156ca8f44",
   "rpc_release": "nodexlm-rpc-v1.1.0-r1",
   "rpc_candidate_release": "nodexlm-rpc-v1.1.0-r1",
-  "published": {},
+  "published": {
+    "darwin/arm64/metal": "20e2c0d69bb7c58208832f1b63aeeb26bd069bac0230f68757a0881947cf8d33",
+    "linux/amd64/cpu": "0ef41848f13516c395d0cbc4763f77ab392fb46c94c84c2e584907fc1005a657",
+    "linux/amd64/vulkan": "62db5f129b532946f4247901609bdea6fe67d5e328551ad5f9dbc5edfc29c8d9",
+    "linux/arm64/cpu": "96634fbced667484690150d26aa22eb34132fbc31c0653c12fd38b461d527afb",
+    "windows/amd64/cpu": "9fc51d48dc4c1ebb96ed0e314fce3f492dec2ab1eb6a12514db10de73f0b6395",
+    "windows/amd64/vulkan": "527670537a26da850ed3fc7c4a46046671611ccee21c6ef389cd8d9b6769ed26"
+  },
   "unix_rpc": true,
   "parallel_rpc_uploads": true,
   "rpc_protocol_major": 10,
