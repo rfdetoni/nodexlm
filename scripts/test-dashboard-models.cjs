@@ -361,3 +361,6 @@ async function main(){
   console.log('Console navigation and model catalog: keyboard, workspaces, download, progress, auto-apply, filters PASS');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
+
+assert.equal(vm.runInContext("fmtRPC(128)",sandbox),'128 B');
+assert.equal(vm.runInContext("fmtRPC(1024)",sandbox),'1.00 KiB');

@@ -154,6 +154,14 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 			report.Candidates = append(report.Candidates, row)
 			return
 		}
+		if fixed != nil && fixed.ready && row.Name != "baseline" {
+			if err := fixed.waitForRPCIdle(ctx, provider); err != nil {
+				row.Error = err.Error()
+				report.Candidates = append(report.Candidates, row)
+				return
+			}
+		}
+		benchmarkPhase(ctx, "tune_candidate", row.Name)
 		sample, err := m.measureInference(ctx, row.Settings, model, node, false, provider, fixed)
 		if err != nil {
 			row.Error = err.Error()
@@ -173,50 +181,27 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 	if node != "" && first != nil {
 		link = m.prefillLink(first.BenchmarkTopology)
 	}
-	for _, row := range tuneCandidates(s, hardware.PhysicalCPUCount(), slowRPC, link)[1:] {
+	candidates := tuneCandidates(s, hardware.PhysicalCPUCount(), slowRPC, link)[1:]
+	if node != "" {
+		candidate := s
+		candidate.RPCNativeScheduler = !s.RPCNativeScheduler
+		candidates = append(candidates, TuneCandidate{Name: "native_scheduler", Settings: candidate})
+		candidate = s
+		if s.FlashAttention == "on" {
+			candidate.FlashAttention = "off"
+		} else {
+			candidate.FlashAttention = "on"
+		}
+		candidates = append(candidates, TuneCandidate{Name: "flash_attention", Settings: candidate})
+	}
+	for _, row := range candidates {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
 		measure(row)
 	}
-	// Prefer a real decode gain with no material prefill regression, not an
-	// invented aggregate score. Require matching measurement basis.
-	baseline := report.Candidates[0].Sample
-	if baseline != nil && baseline.RateBasis == "native_decode" {
-		best := baseline.TokensPerSecond * 1.05
-		bestPrefill := baseline.PrefillTokensPerSecond
-		var prefillRecommendation *Settings
-		for _, row := range report.Candidates[1:] {
-			sample := row.Sample
-			if sample == nil || sample.RateBasis != baseline.RateBasis || sample.BenchmarkTopology != baseline.BenchmarkTopology {
-				continue
-			}
-			if row.Name == "prefill" {
-				if baseline.PrefillTokensPerSecond > 0 && sample.PrefillTokensPerSecond > bestPrefill &&
-					sample.TokensPerSecond >= baseline.TokensPerSecond*0.9 {
-					bestPrefill = sample.PrefillTokensPerSecond
-					candidate := row.Settings
-					prefillRecommendation = &candidate
-				}
-				continue
-			}
-			if sample.TokensPerSecond <= best {
-				continue
-			}
-			if baseline.PrefillTokensPerSecond > 0 && sample.PrefillTokensPerSecond < baseline.PrefillTokensPerSecond*0.9 {
-				continue
-			}
-			if row.Settings.SpeculativeMode == "ngram" && (sample.DraftAcceptance == nil || *sample.DraftAcceptance < 0.25) {
-				continue
-			}
-			best = sample.TokensPerSecond
-			candidate := row.Settings
-			report.Recommended = &candidate
-		}
-		if report.Recommended == nil {
-			report.Recommended = prefillRecommendation
-		}
-	}
+	// Optimize actual latency, including prefill, on identical workloads.
+	report.Recommended = recommendLatencySettings(report.Candidates)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if fingerprint != m.benchmarkSignature(m.settings, model) {
@@ -232,4 +217,33 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 		filename = fmt.Sprintf("autotune-%x.json", sha256.Sum256([]byte(node)))
 	}
 	return report, writePrivate(filepath.Join(m.dir, filename), raw)
+}
+
+func recommendLatencySettings(rows []TuneCandidate) *Settings {
+	if len(rows) == 0 || rows[0].Sample == nil {
+		return nil
+	}
+	baseline := rows[0].Sample
+	if baseline.ElapsedMilliseconds <= 0 || baseline.Tokens <= 0 || baseline.Suspect {
+		return nil
+	}
+	best := baseline.ElapsedMilliseconds * 0.95
+	var result *Settings
+	for _, row := range rows[1:] {
+		sample := row.Sample
+		if sample == nil || sample.Suspect || sample.RateBasis != baseline.RateBasis ||
+			sample.BenchmarkTopology != baseline.BenchmarkTopology || sample.Tokens != baseline.Tokens ||
+			sample.PromptTokens != baseline.PromptTokens || sample.ElapsedMilliseconds <= 0 || sample.ElapsedMilliseconds >= best ||
+			sample.TokensPerSecond < baseline.TokensPerSecond*0.9 ||
+			(baseline.PromptMilliseconds > 0 && (sample.PromptMilliseconds <= 0 || sample.PromptMilliseconds > baseline.PromptMilliseconds*1.1)) {
+			continue
+		}
+		if row.Settings.SpeculativeMode == "ngram" && (sample.DraftAcceptance == nil || *sample.DraftAcceptance < 0.25) {
+			continue
+		}
+		best = sample.ElapsedMilliseconds
+		candidate := row.Settings
+		result = &candidate
+	}
+	return result
 }

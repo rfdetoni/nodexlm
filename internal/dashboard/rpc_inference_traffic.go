@@ -12,6 +12,9 @@ type nodeInferenceTraffic struct {
 	NodeID string `json:"node_id"`
 	Name   string `json:"name"`
 	Bytes  uint64 `json:"bytes"`
+
+	EstimatedLayers *int `json:"estimated_layers,omitempty"`
+
 	// Bytes and writes are completed relay transfers, not native GPU work.
 	BytesToGuest            uint64  `json:"bytes_to_guest"`
 	BytesFromGuest          uint64  `json:"bytes_from_guest"`
@@ -30,6 +33,10 @@ type InferenceRPCTraffic struct {
 	WritesFromGuest      uint64                 `json:"writes_from_guest"`
 	BytesPerOutput       float64                `json:"request_bytes_per_output_token"`
 	RequestWindowSeconds float64                `json:"request_window_seconds,omitempty"`
+
+	// SSE-observed boundary, not an exact native phase.
+	PrefillWindow *InferenceRPCTraffic `json:"until_first_event,omitempty"`
+	DecodeWindow  *InferenceRPCTraffic `json:"after_first_event,omitempty"`
 }
 
 func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
@@ -87,6 +94,8 @@ func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string
 			for i := range traffic.Nodes {
 				if traffic.Nodes[i].NodeID == node.NodeID {
 					traffic.Nodes[i].Name = node.Name
+					layers := node.Layers
+					traffic.Nodes[i].EstimatedLayers = &layers
 				}
 			}
 		}
