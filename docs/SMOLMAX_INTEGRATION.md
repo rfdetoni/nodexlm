@@ -19,7 +19,7 @@ b1b770d90d94cad9e9ea5b993bdbc383a522fb28. Licenças acompanham o binário.
 - Vulkan está no código candidato, mas o build inicial verifica CPU ARM64;
   Android, outros alvos e integração RPC não são aceitos automaticamente.
 
-O candidato não substitui o runtime RPC10 r5 nem o port FP32 isolado. O
+O candidato não substitui o runtime RPC10 ativo (`nodexlm-rpc-v1.0.0-r6`, conforme `internal/llamaruntime/revision.json`) nem o port FP32 isolado. O
 pager/streaming opera somente em um processo local com GPU layers 0 e sem
 Guests RPC. O script recusa uma mudança de revisão do llama.cpp até revisão
 do port. A aceitação física e numérica de todos os kernels e arquiteturas
@@ -68,7 +68,7 @@ contagem de threads do cluster de maior capacidade; não fixa afinidade.
 
 O CI `smolmax-full.yml` roda um único build ARM64 após o PR sair do draft,
 verifica o patch completo, os três executáveis, a inferência determinística
-contra o bundle CPU r5 publicado e o streaming denso com zona não vazia,
+contra o bundle CPU ativo publicado (`r6`; originalmente validado contra `r5`) e o streaming denso com zona não vazia,
 checagem dos bytes e comparação da saída. O artefato é preservado somente
 se os testes passarem. O teste pequeno não cobre todos os caminhos:
 pager com MoE real, quantizações, MTP, Vulkan, Android, páginas de tamanho
