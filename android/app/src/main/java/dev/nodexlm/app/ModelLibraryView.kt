@@ -373,6 +373,11 @@ internal class ModelLibraryView(
                 if (error.isBlank() && scratch.renameTo(staging)) {
                     // Rust streamed, hashed and fsynced the verified bytes.
                     finishDownload()
+                } else if (NativeRustDownload.isFatalIntegrityError(error)) {
+                    // Integrity, identity or size mismatches must fail visibly instead of silent fallback.
+                    discardRustStage(fileName)
+                    clearDownload()
+                    status.text = activity.getString(R.string.download_rejected, error)
                 } else {
                     prefs.edit().putLong("id", 0L).commit()
                     try {

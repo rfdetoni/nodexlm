@@ -60,3 +60,12 @@ discovery, Android Xet CAS, or automatic Host promotion. Four connections
 are an upper bound, not a guarantee of increased performance: benchmark
 on physical Android/Linux/RTX nodes and inspect disk contention, battery,
 network rates and temperature before asserting faster loads.
+
+## XET-01 Android Native Xet CAS Spike Findings (2026-11-27)
+
+- Inspected official `huggingface/xet-core` crates (`xet-client = "1.8.1"`, `xet-data = "1.8.1"`, Apache-2.0) against NDK `27.2.12479018`.
+- Cross-compile spike (`aarch64-linux-android` + `armv7-linux-androideabi` with `rustls-tls`) succeeded under `rustc 1.97.1` (zero OpenSSL, 218 transitive crates, 441 KiB probe `cdylib` on ARM64).
+- **Verified gaps blocking default Android integration**:
+  1. `xet-runtime 1.8.1` pulls `sysinfo 0.39.x`, whose MSRV is `rustc >= 1.95`, failing under NodexLM's pinned `cargo +1.94.0` Android build script (`android/rpc-rust/build-android.sh`).
+  2. `xet-client 1.8.1` pulls `reqwest 0.13.5` with `rustls-platform-verifier 0.7.1`, which requires Java class `org.rustls.platformverifier.CertificateVerifier` and `rustls_platform_verifier::android::init_hosted(env, context)` at runtime on Android (not bundled in NodexLM APK).
+- **Decision**: Keep `android/rpc-rust/Cargo.toml` free of unverified 218-crate bloat and expose honest per-ABI unavailability via `NativeRustDownload.xetStatus()`, explicit telemetry via `NativeRustDownload.telemetry()`, strict fail-visible handling for integrity/identity errors, and priority order `PeerModelCache` -> `HostModelCache` -> `NativeRustDownload` HTTPS parallel Ranges -> `DownloadManager`.

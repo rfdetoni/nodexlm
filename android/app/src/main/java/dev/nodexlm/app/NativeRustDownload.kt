@@ -14,4 +14,14 @@ internal object NativeRustDownload {
     external fun bytesPerSecond(): Long
     /** Snapshot per native connection: id, bytes, bytesPerSecond and error count. */
     external fun connectionStats(): String
+    /** Explicit per-ABI Xet CAS capability status JSON. */
+    external fun xetStatus(): String
+    /** Native transfer telemetry JSON (source, verifiedBytes, wanBytes, cacheHit, fallbackReason). */
+    external fun telemetry(): String
+
+    fun isFatalIntegrityError(error: String): Boolean {
+        val lower = error.lowercase(java.util.Locale.ROOT)
+        return "sha-256" in lower || "checksum" in lower || "content length mismatch" in lower ||
+            "exceeds expected" in lower || "incomplete" in lower || "invalid pinned" in lower || "gguf" in lower
+    }
 }

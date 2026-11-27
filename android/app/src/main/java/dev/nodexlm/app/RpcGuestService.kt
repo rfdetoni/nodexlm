@@ -483,6 +483,7 @@ class RpcGuestService : Service() {
             .put("platform", "android")
             .put("architecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
             .put("cpu_count", Runtime.getRuntime().availableProcessors())
+            .put("peer_pub_key", PeerModelCache.publicKeyHex(this))
             .put("ram_bytes", memory.totalMem)
             .put("ram_used_bytes", (memory.totalMem - memory.availMem).coerceAtLeast(0L))
             // Physical RAM is still available when compute is GPU-only;
