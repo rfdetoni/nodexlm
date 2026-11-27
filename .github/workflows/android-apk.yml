@@ -26,6 +26,18 @@ on:
     branches: [main]
     paths:
       - 'android/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'install.sh'
+      - '.github/workflows/desktop-binaries.yml'
+      - 'scripts/test-dashboard-models.cjs'
+      - 'scripts/test-install.sh'
+      - 'scripts/sbom.py'
+      - 'scripts/package-*.py'
+      - 'scripts/sign-windows.ps1'
+      - 'scripts/finalize-release.py'
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/unix-rpc.patch'
       - 'internal/llamaruntime/patches/arm32-rpc-wire.patch'
@@ -69,7 +81,7 @@ jobs:
           else
             native="$(python3 scripts/native-revision-changed.py --android)"
             app_changes="$(git diff --name-only HEAD^ HEAD -- android/ internal/llamaruntime/patches/unix-rpc.patch internal/llamaruntime/patches/arm32-rpc-wire.patch scripts/apply-rpc-patch.cmake scripts/verify-android-pages.sh scripts/fetch-android-tokenizer.py scripts/native-revision-changed.py .github/workflows/android-apk.yml)"
-            if [[ "$native" == "true" || -n "$app_changes" ]]; then
+            if [[ "$native" == "true" || -n "$app_changes" || "$GITHUB_REF" == refs/heads/main ]]; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
               {
                 echo '### Android APK build requested'

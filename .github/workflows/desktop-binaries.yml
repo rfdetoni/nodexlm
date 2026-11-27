@@ -20,6 +20,8 @@ on:
       - 'scripts/sign-windows.ps1'
       - 'scripts/finalize-release.py'
       - 'install.sh'
+      - 'android/**'
+      - '.github/workflows/android-apk.yml'
     tags:
       - 'v*'
 
@@ -96,7 +98,7 @@ jobs:
             if [[ "$os" == windows ]]; then exe=nodexlm.exe; fi
             rm -rf stage/*
             CGO_ENABLED=0 GOOS="$os" GOARCH="$goarch" GOARM="$goarm" \
-              go build -trimpath -ldflags="-s -w -X main.version=$version" -o "stage/$exe" ./cmd/nodexlm
+              go build -trimpath -ldflags="-s -w -X main.version=$version -X main.buildCommit=$GITHUB_SHA" -o "stage/$exe" ./cmd/nodexlm
             cp LICENSE stage/LICENSE
             if [[ "$os" == windows ]]; then
               (cd stage && zip -q "../dist/nodexlm_${target}.zip" "$exe" LICENSE)

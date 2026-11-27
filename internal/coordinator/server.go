@@ -46,6 +46,8 @@ type nodeState struct {
 
 type Server struct {
 	mu                 sync.Mutex
+	buildCommit        string
+	buildVersion       string
 	admin              [32]byte
 	enrollment         [32]byte
 	clusterID          string
@@ -100,6 +102,20 @@ func New(adminToken, enrollmentToken string) (*Server, error) {
 		rpcHub:             rpcmesh.NewHub(),
 		modelCacheSlots:    make(chan struct{}, 4),
 	}, nil
+}
+
+// RequireBuild binds released workers to the exact Host source revision.
+// Local developer/test builds without a release identity remain testable.
+func (s *Server) RequireBuild(commit, version string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if protocol.ValidBuildCommit(commit) {
+		s.buildCommit, s.buildVersion = commit, version
+	}
+}
+
+func (s *Server) updateDirective(commit string) protocol.UpdateDirective {
+	return protocol.UpdateDirective{RequiredBuildCommit: s.buildCommit, RequiredVersion: s.buildVersion, UpdateRequired: s.buildCommit != "" && commit != s.buildCommit}
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.
@@ -226,7 +242,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 // Validates every externally supplied resource field before it is persisted
 // or included in memory planning. Server-owned identity/status are overwritten.
 func validDevice(d protocol.Device) bool {
-	if len(d.Name) == 0 || len(d.Name) > 100 ||
+	if len(d.Name) == 0 || len(d.Name) > 100 || len(d.AppVersion) > 80 || (d.BuildCommit != "" && !protocol.ValidBuildCommit(d.BuildCommit)) ||
 		len(d.Platform) == 0 || len(d.Platform) > 30 ||
 		len(d.Architecture) > 100 || len(d.Models) > 128 || len(d.DecisionModels) > 32 ||
 		len(d.GPUs) > 16 || d.CPUCount < 1 || d.CPUCount > 4096 ||
@@ -358,7 +374,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	if !parse(w, r, &req) {
 		return
 	}
-	if len(req.Models) > 128 || len(req.DecisionModels) > 32 || len(req.GPUs) > 16 ||
+	if len(req.AppVersion) > 80 || (req.BuildCommit != "" && !protocol.ValidBuildCommit(req.BuildCommit)) || len(req.Models) > 128 || len(req.DecisionModels) > 32 || len(req.GPUs) > 16 ||
 		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
 		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(req) || !validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
@@ -404,7 +420,17 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		n.device.LastSeen = time.Now()
+		n.device.BuildCommit, n.device.AppVersion = req.BuildCommit, req.AppVersion
+		directive := s.updateDirective(req.BuildCommit)
+		if directive.UpdateRequired {
+			n.device.Status = "updating"
+			n.device.UnavailableReason = "build_mismatch"
+			s.mu.Unlock()
+			respond(w, 200, directive)
+			return
+		}
 		n.device.Status = "online"
+		n.device.UnavailableReason = ""
 		n.device.Models = append([]string(nil), req.Models...)
 		n.device.DecisionModels = append([]string(nil), req.DecisionModels...)
 		if len(req.DecisionModels) > 0 {
@@ -587,6 +613,10 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
 		}
+		if d.Status != "offline" && s.updateDirective(d.BuildCommit).UpdateRequired {
+			d.Status = "updating"
+			d.UnavailableReason = "build_mismatch"
+		}
 		_, d.Runtime.RPCReady = ready[d.ID]
 		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"
 		out = append(out, d)
@@ -765,6 +795,10 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 	// An already-draining Guest cannot re-advertise itself as healthy just
 	// because an in-flight tunnel reconnects after its withdrawal heartbeat.
 	// Existing claimed tunnels are unaffected until the Guest closes them.
+	if s.updateDirective(n.device.BuildCommit).UpdateRequired {
+		fail(w, http.StatusServiceUnavailable, "Guest update required")
+		return
+	}
 	if n.device.Status == "draining" {
 		fail(w, http.StatusServiceUnavailable, "RPC Guest draining")
 		return
@@ -808,6 +842,11 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		profile.Status = "online"
 		profile.UnavailableReason = ""
 	}
+	directive := s.updateDirective(profile.BuildCommit)
+	if directive.UpdateRequired {
+		profile.Status = "updating"
+		profile.UnavailableReason = "build_mismatch"
+	}
 	profile.Busy = n.device.Busy
 	// An RPC-only heartbeat must not erase a concurrently running decision
 	// worker; its capability still expires when its own lease stops.
@@ -838,13 +877,16 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Nodex-RPC-Jitter", fmt.Sprintf("%.2f", measurement.RTTSpreadMS))
 		w.Header().Set("X-Nodex-RPC-Measured", measurement.MeasuredAt.UTC().Format(time.RFC3339Nano))
 	}
-	if profile.Status == "draining" && drain != nil {
+	if (profile.Status == "draining" || directive.UpdateRequired) && drain != nil {
 		drain(id)
-	} else if start != nil {
+	} else if start != nil && !directive.UpdateRequired {
 		go start(id)
 	}
 	respond(w, 200, map[string]any{
-		"status":           "online",
+		"status":                profile.Status,
+		"required_build_commit": directive.RequiredBuildCommit,
+		"required_version":      directive.RequiredVersion,
+		"update_required":       directive.UpdateRequired,
 		"cluster_id":       authInfo.ClusterID,
 		"epoch":            authInfo.Epoch,
 		"authority_pubkey": authInfo.AuthorityPubKey,
@@ -867,6 +909,10 @@ func (s *Server) DevicesSnapshot() []protocol.Device {
 		d.Runtime.RPCDevices = append([]string(nil), d.Runtime.RPCDevices...)
 		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
+		}
+		if d.Status != "offline" && s.updateDirective(d.BuildCommit).UpdateRequired {
+			d.Status = "updating"
+			d.UnavailableReason = "build_mismatch"
 		}
 		_, d.Runtime.RPCReady = ready[d.ID]
 		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"

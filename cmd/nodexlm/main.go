@@ -44,6 +44,7 @@ import (
 )
 
 var version = "0.1.0-alpha"
+var buildCommit string
 
 func main() {
 	if os.Getenv("NODEXLM_LOG_FORMAT") == "json" {
@@ -62,6 +63,9 @@ func run(args []string) error {
 	switch args[0] {
 	case "version":
 		fmt.Println("nodexlm", version)
+		return nil
+	case "build-commit":
+		fmt.Println(buildCommit)
 		return nil
 	case "doctor":
 		return doctor(args[1:])
@@ -240,6 +244,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	s.RequireBuild(buildCommit, version)
 	defer s.CloseRPC()
 	if *rpcTransport != "auto" && *rpcTransport != "unix" && *rpcTransport != "tcp" {
 		return errors.New("invalid rpc-transport")
@@ -847,7 +852,9 @@ func node(args []string) error {
 	}
 	c, cancel := ctx()
 	defer cancel()
-	return (&worker.Runner{Client: cli, Engine: engine, Model: *model, DecisionModel: *decisionModel, Decider: decider, Runtime: *engineName}).Run(c)
+	return (&worker.Runner{Client: cli, Engine: engine, Model: *model, DecisionModel: *decisionModel, Decider: decider, Runtime: *engineName, BuildCommit: buildCommit, AppVersion: version, OnUpdate: func(ctx context.Context, directive protocol.UpdateDirective) error {
+		return applyGuestUpdate(ctx, directive, append([]string{"node"}, args...))
+	}}).Run(c)
 }
 func nodes(args []string) error {
 	f := fs("nodes")
@@ -1132,13 +1139,20 @@ func rpcNode(args []string) error {
 	// runtime. A 401 needs a new authenticated pairing, not a CPU/GPU change.
 	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	profile := hardware.Collect(agent.Node.NodeID, nil)
-	status, preflightErr := cli.Request(preflightCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+	profile.BuildCommit, profile.AppVersion = buildCommit, version
+	var directive protocol.UpdateDirective
+	status, preflightErr := cli.Request(preflightCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, &directive)
 	preflightCancel()
 	if preflightErr != nil {
 		if status == http.StatusUnauthorized {
 			return fmt.Errorf("Host rejected saved Guest credentials (HTTP 401); get a fresh Host pairing code and run 'nodexlm guest --rejoin --server %s --code NEW_CODE --backend %s': %w", agent.Coordinator, *backend, preflightErr)
 		}
 		return fmt.Errorf("cannot authenticate Guest with Host; check HTTPS connectivity before starting RPC: %w", preflightErr)
+	}
+	if directive.UpdateRequired {
+		c, stop := ctx()
+		defer stop()
+		return applyGuestUpdate(c, directive, append([]string{"rpc-node"}, args...))
 	}
 	executable := *bin
 	selectedBackend := *backend
@@ -1209,10 +1223,12 @@ func rpcNode(args []string) error {
 		"dedicated_gpu", guestDedicatedGPU(profile))
 	c, cancel := ctx()
 	defer cancel()
+	updates := make(chan protocol.UpdateDirective, 1)
 	// A lightweight heartbeat informs the Host of real hardware availability.
 	name, _ := os.Hostname()
 	heartbeat := func() {
 		profile := hardware.Collect(name, nil)
+		profile.BuildCommit, profile.AppVersion = buildCommit, version
 		if *device == "CPU" {
 			profile.GPUs = nil
 		}
@@ -1232,7 +1248,16 @@ func rpcNode(args []string) error {
 		}
 		beatCtx, stop := context.WithTimeout(c, 8*time.Second)
 		defer stop()
-		_, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+		var directive protocol.UpdateDirective
+		_, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, &directive)
+		if err == nil && directive.UpdateRequired {
+			select {
+			case updates <- directive:
+			default:
+			}
+			cancel()
+			return
+		}
 		if err != nil {
 			slog.Warn("Guest RAM/VRAM heartbeat failed", "error", err,
 				"ram_bytes", profile.RAMBytes, "available_ram_bytes", profile.AvailableRAMBytes,
@@ -1258,5 +1283,13 @@ func rpcNode(args []string) error {
 			}
 		}
 	}()
-	return rpcmesh.RunNativeGuestWithThreads(c, cli, executable, *addr, *slots, *rpcCache, *threads, *device)
+	err = rpcmesh.RunNativeGuestWithThreads(c, cli, executable, *addr, *slots, *rpcCache, *threads, *device)
+	select {
+	case directive := <-updates:
+		updateCtx, stop := ctx()
+		defer stop()
+		return applyGuestUpdate(updateCtx, directive, append([]string{"rpc-node"}, args...))
+	default:
+		return err
+	}
 }

@@ -543,7 +543,7 @@ function renderNodeResources(devices,registered=[]){
    add('Revogar acesso','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(id),'DELETE');notice('Nó revogado');await refresh()});
   }
   metrics.replaceChildren();
-  if(id!=='host')metrics.append(el('p','muted',live?(n.runtime?.rpc_ready?'RPC conectado':n.models?.length?'Executor de modelo inteiro':'Sem executor disponível'):'Dispositivo offline'));
+  if(id!=='host')metrics.append(el('p','muted',n.status==='updating'?'Atualização obrigatória · aguardando versão compatível':live?(n.runtime?.rpc_ready?'RPC conectado':n.models?.length?'Executor de modelo inteiro':'Sem executor disponível'):'Dispositivo offline'));
   if(n.runtime?.engine)metrics.append(el('p','muted','Runtime: '+n.runtime.engine+(n.runtime.version?' · '+n.runtime.version:'')+(n.runtime.rpc_protocol_patch!=null?' · RPC '+[n.runtime.rpc_protocol_major,n.runtime.rpc_protocol_minor||0,n.runtime.rpc_protocol_patch].join('.') : '')));
   if(n.models?.length)metrics.append(el('p','muted','Modelos: '+n.models.join(', ')));
   const seen=n.last_seen?Date.parse(n.last_seen):NaN;

@@ -477,6 +477,8 @@ class RpcGuestService : Service() {
             else -> JSONArray()
         }
         val device = JSONObject()
+            .put("build_commit", BuildConfig.NODEX_BUILD_COMMIT)
+            .put("app_version", BuildConfig.VERSION_NAME)
             .put("status", if (draining.get()) "draining" else "online")
             .put("unavailable_reason", if (draining.get()) drainReason else "")
             .put("name", name.take(80))
@@ -568,7 +570,11 @@ class RpcGuestService : Service() {
                 wifiPolicy.observe(elapsed,connection.getHeaderField("X-Nodex-RPC-RTT")?.toDoubleOrNull(),
                     connection.getHeaderField("X-Nodex-RPC-Jitter")?.toDoubleOrNull(),(elapsed-start).toDouble())
             }
-            connection.inputStream.close()
+            val response = connection.inputStream.bufferedReader().use { it.readText() }
+            val directive = JSONObject(response)
+            if (directive.optBoolean("update_required", false)) {
+                HostManagedUpdate.tick(this, directive, activeClaims() == 0L)
+            }
         } finally { connection.disconnect() }
     }
 

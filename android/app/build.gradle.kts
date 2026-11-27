@@ -31,6 +31,9 @@ android {
         buildConfigField("boolean", "HOST_ENABLED", hostEnabled.toString())
         buildConfigField("String", "LLAMA_VERSION", "\"${llamaRevision["version"]}\"")
         buildConfigField("String", "LLAMA_SOURCE_COMMIT", "\"${llamaRevision["commit"]}\"")
+        val buildCommit = System.getenv("GITHUB_SHA")?.takeIf { Regex("[0-9a-f]{40}").matches(it) } ?: ""
+        buildConfigField("String", "NODEX_BUILD_COMMIT", "\"$buildCommit\"")
+        manifestPlaceholders["nodexBuildCommit"] = buildCommit.ifBlank { "development" }
         buildConfigField("int", "LLAMA_RPC_MAJOR", llamaRevision["rpc_protocol_major"].toString())
         buildConfigField("int", "LLAMA_RPC_MINOR", llamaRevision["rpc_protocol_minor"].toString())
         buildConfigField("int", "LLAMA_RPC_PATCH", llamaRevision["rpc_protocol_patch"].toString())

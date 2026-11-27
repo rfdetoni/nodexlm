@@ -32,6 +32,9 @@ type Runner struct {
 	Decider       DecisionEngine
 	Logger        *slog.Logger
 	Runtime       string
+	BuildCommit   string
+	AppVersion    string
+	OnUpdate      func(context.Context, protocol.UpdateDirective) error
 }
 
 func Enroll(ctx context.Context, coordinator, joinToken, name, model string) (config.Agent, error) {
@@ -81,6 +84,7 @@ func (r *Runner) Run(ctx context.Context) error {
 				}
 			}
 			profile = hardware.Collect(deviceName, models)
+			profile.BuildCommit, profile.AppVersion = r.BuildCommit, r.AppVersion
 			profile.Runtime.Installed = true
 			if r.Runtime != "" {
 				profile.Runtime.Engine = r.Runtime
@@ -98,9 +102,12 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 			sampledAt = time.Now()
 		}
-		var work protocol.Job
+		var response struct {
+			protocol.Job
+			protocol.UpdateDirective
+		}
 		queryCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
-		status, err := r.Client.Request(queryCtx, http.MethodPost, "/v1/nodes/lease", profile, &work)
+		status, err := r.Client.Request(queryCtx, http.MethodPost, "/v1/nodes/lease", profile, &response)
 		cancel()
 		if err != nil {
 			r.Logger.Warn("coordinator temporarily unavailable", "error", err)
@@ -115,6 +122,13 @@ func (r *Runner) Run(ctx context.Context) error {
 			continue
 		}
 		delay = time.Second
+		if response.UpdateRequired {
+			if r.OnUpdate == nil {
+				return errors.New("Host requires a newer compatible worker")
+			}
+			return r.OnUpdate(ctx, response.UpdateDirective)
+		}
+		work := response.Job
 		if status == http.StatusNoContent {
 			continue
 		}

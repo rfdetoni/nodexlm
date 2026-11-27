@@ -10,7 +10,8 @@ internal data class BetaArtifact(
     val sha256: String,
     val sizeBytes: Long,
     val versionCode: Long = 0L,
-    val versionName: String? = null
+    val versionName: String? = null,
+    val sourceCommit: String? = null
 )
 
 internal data class BetaBuildInfo(
@@ -18,7 +19,8 @@ internal data class BetaBuildInfo(
     val versionName: String?,
     val buildVariant: String,
     val signature: String,
-    val certificateSha256: String?
+    val certificateSha256: String?,
+    val sourceCommit: String? = null
 )
 
 /** Public beta built as non-debuggable release with permanent signing. Legacy asset name retained for older clients. */
@@ -65,6 +67,7 @@ internal object BetaArtifactPolicy {
         val certSha = values["certificate_sha256"]?.takeIf { it.isNotBlank() }?.also {
             require(certShaPattern.matches(it)) { "Invalid beta certificate_sha256" }
         }?.lowercase(Locale.ROOT)
-        return BetaBuildInfo(versionCode, versionName, variant, signature, certSha)
+        return BetaBuildInfo(versionCode, versionName, variant, signature, certSha,
+            values["source_commit"]?.takeIf { Regex("[0-9a-f]{40}").matches(it) })
     }
 }

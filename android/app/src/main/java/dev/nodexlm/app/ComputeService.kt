@@ -152,6 +152,8 @@ class ComputeService : Service() {
                     val models = JSONArray()
                     if (model?.isFile == true) models.put(modelAlias)
                     val payload=JSONObject().put("models", models)
+                        .put("build_commit", BuildConfig.NODEX_BUILD_COMMIT)
+                        .put("app_version", BuildConfig.VERSION_NAME)
                         .put("runtime",JSONObject().put("engine",if (useLiteRT) "litertlm" else "llama.cpp").put("installed",true).put("rpc_ready",false))
                         .put("decision_models", if (decisionReady) JSONArray().put(decisionModel) else JSONArray())
                         .put("ram_bytes",memory.totalMem).put("available_ram_bytes",memory.availMem)
@@ -169,6 +171,11 @@ class ComputeService : Service() {
                     if (thermal in 0..6) payload.put("thermal_status", thermal)
                     val job=request(coordinator+"/v1/nodes/lease",token,id,payload)
                     if(job.length()==0) {
+                        continue
+                    }
+                    if (job.optBoolean("update_required", false)) {
+                        HostManagedUpdate.tick(this, job, true)
+                        Thread.sleep(15_000)
                         continue
                     }
                     val jid=job.getString("id")

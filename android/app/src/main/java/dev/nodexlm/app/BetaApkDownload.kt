@@ -93,7 +93,7 @@ internal object BetaApkDownload {
                     "Beta APK certificate metadata does not match pinned permanent certificate"
                 }
             }
-            return base.copy(versionCode = info.versionCode, versionName = info.versionName)
+            return base.copy(versionCode = info.versionCode, versionName = info.versionName, sourceCommit = info.sourceCommit)
         } finally {
             connection.disconnect()
         }
