@@ -396,7 +396,7 @@ func SupportsRPC(ctx context.Context, server string) bool {
 func distributedDir(home, backend string) string {
 	dir := installDir(home, backend) + "-rpc"
 	if modelWideRPCBuild() {
-		return dir + "-model-wide-v1-" + revision.RPCRelease
+		return dir + "-model-wide-v2-" + revision.RPCRelease
 	}
 	if nativeTraceBuild() || smolmaxSingleRowBuild(backend) {
 		dir += "-" + revision.RPCRelease

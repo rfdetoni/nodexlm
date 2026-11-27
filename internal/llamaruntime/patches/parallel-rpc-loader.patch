@@ -12,14 +12,13 @@ diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
  #include <map>
  #include <set>
  #include <stdexcept>
-@@ -134,7 +136,14 @@
+@@ -134,7 +136,13 @@
      std::string arch_name;
      LLM_KV      llm_kv    = LLM_KV(LLM_ARCH_UNKNOWN);
  
 -    size_t size_done = 0;
-+    // Model-wide upload scope, owned by the caller of load_all_data.
-+    std::function<bool(ggml_tensor *, const void *, size_t)> rpc_queue;
-+    std::function<bool(ggml_tensor *, llama_file *, size_t, size_t)> rpc_queue_file;
++    // Model-wide, preplanned RPC uploads. All tasks are joined before unmapping.
++    std::set<const ggml_tensor *> rpc_prequeued;
 +    std::mutex rpc_file_mutex;
 +    std::function<void()> rpc_finish;
 +    std::function<size_t()> rpc_pending_bytes;
@@ -31,52 +30,57 @@ diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -1785,9 +1785,11 @@
+@@ -1785,13 +1785,19 @@
+             continue;
          }
  
-         if (progress_callback) {
+-        if (progress_callback) {
 -            if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
 -                return false;
 -            }
+-        }
+-
+-        size_t n_size = ggml_nbytes(cur);
++        if (progress_callback) {
 +            const size_t pending = rpc_pending_bytes ? rpc_pending_bytes() : 0;
 +            if (!progress_callback((float) (size_done - std::min(size_done, pending)) / size_data, progress_callback_user_data)) {
 +                if (rpc_finish) { rpc_finish(); }
 +                return false;
 +            }
-         }
++        }
++
++        size_t n_size = ggml_nbytes(cur);
++        if (rpc_prequeued.count(cur)) {
++            size_done += n_size;
++            continue;
++        }
  
-         size_t n_size = ggml_nbytes(cur);
-@@ -1827,10 +1829,18 @@
-                 auto & mmap_used = mmaps_used[weight->idx];
-                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
-                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
--            } else {
--                ggml_backend_tensor_set(cur, data, 0, n_size);
--            }
--        } else {
-+            } else {
-+                if (!rpc_queue || !rpc_queue(cur, data, n_size)) {
-+                    ggml_backend_tensor_set(cur, data, 0, n_size);
-+                }
-+            }
-+        } else {
-             const auto & file = files.at(weight->idx);
-+            if (rpc_queue_file && rpc_queue_file(cur, file.get(), weight->offs, n_size)) {
-+                size_done += n_size;
-+                continue;
-+            }
-+            // Keep shared file cursor operations ordered with buffered RPC readers.
-+            std::unique_lock<std::mutex> file_lock(rpc_file_mutex);
+         const bool from_mapping = use_mmap || lazy.has(cur);
  
-             if (ggml_backend_buffer_is_host(cur->buffer)) {
-@@ -1949,8 +1959,10 @@
+@@ -1832,9 +1838,12 @@
+                 ggml_backend_tensor_set(cur, data, 0, n_size);
+             }
+         } else {
+-            const auto & file = files.at(weight->idx);
+-
+-            if (ggml_backend_buffer_is_host(cur->buffer)) {
++            const auto & file = files.at(weight->idx);
++            // The buffered RPC workers share these file cursors with the loader.
++            std::unique_lock<std::mutex> file_lock(rpc_file_mutex, std::defer_lock);
++            if (!rpc_prequeued.empty()) { file_lock.lock(); }
++
++            if (ggml_backend_buffer_is_host(cur->buffer)) {
+                 file->seek(weight->offs, SEEK_SET);
+                 file->read_raw(cur->data, n_size);
+                 if (check_tensors) {
+@@ -1954,8 +1963,10 @@
      }
  
      // check if this is the last call and do final cleanup
 -    if (size_done >= size_data) {
 -        // unmap offloaded tensors and metadata
 +    if (size_done >= size_data) {
-+        // All contexts share the same queue. Drain before any mapping is released.
++        // Remote workers still reference model mappings until they are joined.
 +        if (rpc_finish) { rpc_finish(); }
 +        // unmap offloaded tensors and metadata
          if (use_mmap) {
@@ -85,23 +89,22 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -26,6 +26,14 @@
+@@ -25,7 +25,13 @@
+ #include "ggml.h"
  #include "ggml-cpp.h"
  
 -#include <algorithm>
 +#include <algorithm>
 +#include <atomic>
-+#include <condition_variable>
 +#include <cstdlib>
-+#include <deque>
-+#include <memory>
++#include <exception>
++#include <map>
 +#include <mutex>
 +#include <thread>
-+#include <unordered_map>
  #include <cassert>
  #include <cfloat>
  #include <cstdint>
-@@ -2153,12 +2161,173 @@
+@@ -2317,12 +2323,147 @@
          });
      }
  
@@ -111,167 +114,141 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 -            return false;
 -        }
 -    }
-+    // NodexLM: one long-lived worker per RPC device, each with a bounded
-+    // queue of lightweight tensor descriptors (never tensor payload copies).
-+    // GGUF mappings remain valid until all workers finish.
-+    // Uploads to different Guests overlap; commands to the same Guest remain
-+    // ordered. Mapped uploads use no staging copy; buffered uploads use 1 MiB per worker.
-+    struct rpc_upload_worker {
-+        struct task {
-+            ggml_tensor * tensor = nullptr;
-+            const void  * data   = nullptr;
-+            size_t size         = 0;
-+            llama_file * file   = nullptr;
-+            size_t offset       = 0;
-+        };
-+        std::mutex mutex;
-+        std::condition_variable wake;
-+        std::deque<task> pending;
-+        bool stopping = false;
-+        std::exception_ptr failure;
-+        std::atomic<size_t> & active;
-+        std::atomic<size_t> & peak;
-+        std::atomic<size_t> & queued_bytes;
-+        std::mutex & file_mutex;
-+        std::thread worker;
-+
-+        rpc_upload_worker(std::atomic<size_t> & a, std::atomic<size_t> & p, std::atomic<size_t> & q, std::mutex & f) : active(a), peak(p), queued_bytes(q), file_mutex(f), worker([this] {
-+            std::vector<uint8_t> scratch;
-+            for (;;) {
-+                std::unique_lock<std::mutex> lock(mutex);
-+                wake.wait(lock, [this] { return stopping || !pending.empty(); });
-+                if (pending.empty() && stopping) {
-+                    return;
-+                }
-+                const task next = pending.front();
-+                pending.pop_front();
-+                wake.notify_all();
-+                lock.unlock();
-+                const size_t now = active.fetch_add(1) + 1;
-+                size_t seen = peak.load();
-+                while (seen < now && !peak.compare_exchange_weak(seen, now)) {}
-+                try {
-+                    if (next.file) {
-+                        // One bounded scratch buffer per worker; never allocate an
-+                        // entire large tensor for buffered disk reads.
-+                        if (scratch.empty()) { scratch.resize(1024 * 1024); }
-+                        for (size_t off = 0; off < next.size;) {
-+                            const size_t count = std::min(scratch.size(), next.size - off);
-+                            {
-+                                std::lock_guard<std::mutex> file_lock(file_mutex);
-+                                next.file->seek(next.offset + off, SEEK_SET);
-+                                next.file->read_raw(scratch.data(), count);
-+                            }
-+                            ggml_backend_tensor_set(next.tensor, scratch.data(), off, count);
-+                            off += count;
-+                        }
-+                    } else {
-+                        ggml_backend_tensor_set(next.tensor, next.data, 0, next.size);
-+                    }
-+                    queued_bytes.fetch_sub(next.size);
-+                    active.fetch_sub(1);
-+                } catch (...) {
-+                    active.fetch_sub(1);
-+                    lock.lock();
-+                    failure = std::current_exception();
-+                    stopping = true;
-+                    pending.clear();
-+                    wake.notify_all();
-+                    return;
-+                }
-+            }
-+        }) {}
-+
-+        void submit(ggml_tensor * tensor, const void * data, size_t size, llama_file * file, size_t offset) {
-+            std::unique_lock<std::mutex> lock(mutex);
-+            // Bounded metadata queue: even if layers are grouped by Guest,
-+            // the producer can enqueue them before scheduling other Guests.
-+            wake.wait(lock, [this] { return pending.size() < 8192 || failure != nullptr; });
-+            if (failure) {
-+                std::rethrow_exception(failure);
-+            }
-+            if (stopping) {
-+                throw std::runtime_error("RPC tensor worker is stopped");
-+            }
-+            pending.push_back({tensor, data, size, file, offset});
-+            queued_bytes.fetch_add(size);
-+            wake.notify_all();
-+        }
-+
-+        void finish() {
-+            {
-+                std::lock_guard<std::mutex> lock(mutex);
-+                stopping = true;
-+                wake.notify_all();
-+            }
-+            if (worker.joinable()) {
-+                worker.join();
-+            }
-+            if (failure) {
-+                std::rethrow_exception(failure);
-+            }
-+        }
-+
-+        ~rpc_upload_worker() {
-+            try { finish(); } catch (...) { /* destructor must not throw */ }
-+        }
++    // NodexLM: discover every destination before sending a single weight.
++    // The native dispatcher is shared by all CPU/GPU devices on one endpoint.
++    // Use one FIFO per endpoint and no producer-side queue backpressure.
++    // Descriptors are bounded by the model's tensor count; no payload copies.
++    struct rpc_upload_task {
++        ggml_tensor * tensor;
++        const void * data;
++        llama_file * file;
++        size_t offset;
++        size_t size;
 +    };
-+
 +    const char * parallel_setting = std::getenv("NODEXLM_PARALLEL_RPC_UPLOAD");
-+    const bool parallel_rpc = !ml.use_direct_io && !ml.check_tensors && parallel_setting && std::strcmp(parallel_setting, "1") == 0;
-+    std::atomic<size_t> active_uploads{0}, peak_uploads{0}, pending_bytes{0};
-+    std::unordered_map<ggml_backend_dev_t, std::unique_ptr<rpc_upload_worker>> rpc_uploads;
-+    auto enqueue = [&](ggml_tensor * tensor, const void * data, size_t size, llama_file * file, size_t offset) -> bool {
-+        if (!parallel_rpc || !tensor->buffer) {
-+            return false;
-+        }
-+        const auto buft = ggml_backend_buffer_get_type(tensor->buffer);
-+        const auto dev = buft ? ggml_backend_buft_get_device(buft) : nullptr;
-+        if (!dev || std::strncmp(ggml_backend_dev_name(dev), "RPC", 3) != 0) {
-+            return false;
-+        }
-+        auto it = rpc_uploads.find(dev);
-+        if (it == rpc_uploads.end()) {
-+            // Hard cap: no unbounded threads, tensor queues or extra mappings.
-+            if (rpc_uploads.size() >= 8) {
-+                return false;
-+            }
-+            it = rpc_uploads.emplace(dev, std::make_unique<rpc_upload_worker>(active_uploads, peak_uploads, pending_bytes, ml.rpc_file_mutex)).first;
-+        }
-+        it->second->submit(tensor, data, size, file, offset);
-+        return true;
-+    };
-+    ml.rpc_queue = [&](ggml_tensor * t, const void * data, size_t size) { return enqueue(t, data, size, nullptr, 0); };
-+    ml.rpc_queue_file = [&](ggml_tensor * t, llama_file * file, size_t offset, size_t size) {
-+        return !file->has_direct_io() && enqueue(t, nullptr, size, file, offset);
-+    };
-+    ml.rpc_pending_bytes = [&] { return pending_bytes.load(); };
-+    ml.rpc_finish = [&] {
-+        for (auto & entry : rpc_uploads) {
-+            entry.second->finish();
-+        }
-+        if (!rpc_uploads.empty()) {
-+            LLAMA_LOG_INFO("%s: RPC upload workers=%zu peak_concurrent_tensor_calls=%zu\n", __func__, rpc_uploads.size(), peak_uploads.load());
-+        }
-+        rpc_uploads.clear();
-+    };
++    const bool requested_parallel = parallel_setting && std::strcmp(parallel_setting, "1") == 0;
++    const bool parallel_rpc = requested_parallel && !ml.use_direct_io && !ml.check_tensors && !ml.files.empty();
++    std::map<std::string, std::vector<rpc_upload_task>> destinations;
++    std::atomic<size_t> pending_bytes{0}, active_uploads{0}, peak_uploads{0};
++    std::atomic<bool> failed{false};
++    std::mutex failure_mutex;
++    std::exception_ptr failure;
 +    if (parallel_rpc) {
-+        LLAMA_LOG_INFO("%s: bounded parallel RPC tensor uploads enabled (model-wide, max 8 workers)\n", __func__);
++        for (auto & [ctx, bufs] : ctx_bufs) {
++            for (auto * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
++                if (!t->buffer || !t->data || ml.lazy.has(t)) {
++                    continue;
++                }
++                const auto buft = ggml_backend_buffer_get_type(t->buffer);
++                const auto dev = buft ? ggml_backend_buft_get_device(buft) : nullptr;
++                if (!dev || std::strncmp(ggml_backend_dev_name(dev), "RPC", 3) != 0) {
++                    continue;
++                }
++                const auto * weight = ml.get_weight(ggml_get_name(t));
++                if (!weight) {
++                    continue;
++                }
++                const auto & file = ml.files.at(weight->idx);
++                const size_t size = ggml_nbytes(t);
++                if (!size || (!ml.use_mmap && file->has_direct_io())) {
++                    continue;
++                }
++                const void * data = ml.use_mmap ?
++                    static_cast<const uint8_t *>(ml.mappings.at(weight->idx)->addr()) + weight->offs : nullptr;
++                const char * endpoint = ggml_backend_dev_description(dev);
++                if (!endpoint || !*endpoint) {
++                    throw std::runtime_error("RPC device has no endpoint description");
++                }
++                destinations[endpoint].push_back({t, data, ml.use_mmap ? nullptr : file.get(), weight->offs, size});
++                ml.rpc_prequeued.insert(t);
++                pending_bytes.fetch_add(size);
++            }
++        }
++    } else if (requested_parallel && (ml.use_direct_io || ml.check_tensors)) {
++        LLAMA_LOG_WARN("%s: parallel RPC upload disabled by direct IO or tensor validation\n", __func__);
 +    }
 +
-+    // Callbacks reference this scope. Clear them before the loader can be used
-+    // again; the worker map joins all threads during exceptional unwinding.
++    // Join before destroying tasks, mappings, tensors, or buffers, including
++    // when thread creation or local loading throws.
++    struct rpc_upload_threads {
++        std::vector<std::thread> threads;
++        void join() {
++            for (auto & thread : threads) {
++                if (thread.joinable()) { thread.join(); }
++            }
++        }
++        ~rpc_upload_threads() { join(); }
++    } workers;
++    bool drained = false;
++    ml.rpc_pending_bytes = [&] { return pending_bytes.load(); };
++    ml.rpc_finish = [&] {
++        if (drained) { return; }
++        workers.join();
++        drained = true;
++        if (failure) { std::rethrow_exception(failure); }
++        if (!destinations.empty()) {
++            LLAMA_LOG_INFO("%s: RPC upload workers=%zu peak_concurrent_tensor_calls=%zu\n",
++                    __func__, destinations.size(), peak_uploads.load());
++        }
++    };
++    // Clear loader references before the worker scope goes away.
 +    struct clear_upload_callbacks {
 +        llama_model_loader & loader;
 +        ~clear_upload_callbacks() {
-+            loader.rpc_queue = nullptr;
-+            loader.rpc_queue_file = nullptr;
 +            loader.rpc_finish = nullptr;
 +            loader.rpc_pending_bytes = nullptr;
++            loader.rpc_prequeued.clear();
 +        }
 +    } clear_callbacks{ml};
 +
-+    // load tensor data
++    if (destinations.size() > 64) {
++        throw std::runtime_error("parallel RPC upload supports at most 64 independent endpoints");
++    }
++    if (!destinations.empty()) {
++        LLAMA_LOG_INFO("%s: bounded parallel RPC tensor uploads enabled (preplanned endpoints=%zu, bytes=%zu)\n",
++                __func__, destinations.size(), pending_bytes.load());
++    }
++    workers.threads.reserve(destinations.size());
++    for (auto & entry : destinations) {
++        auto * tasks = &entry.second;
++        // The map and task vectors are immutable for the entire upload.
++        workers.threads.emplace_back([&, tasks] {
++            try {
++                std::vector<uint8_t> scratch;
++                for (const auto & task : *tasks) {
++                    if (failed.load()) { return; }
++                    const size_t now = active_uploads.fetch_add(1) + 1;
++                    size_t seen = peak_uploads.load();
++                    while (seen < now && !peak_uploads.compare_exchange_weak(seen, now)) {}
++                    if (task.file) {
++                        if (scratch.empty()) { scratch.resize(1024 * 1024); }
++                        for (size_t off = 0; off < task.size;) {
++                            const size_t count = std::min(scratch.size(), task.size - off);
++                            {
++                                std::lock_guard<std::mutex> lock(ml.rpc_file_mutex);
++                                task.file->seek(task.offset + off, SEEK_SET);
++                                task.file->read_raw(scratch.data(), count);
++                            }
++                            // Never hold the shared file cursor lock during network IO.
++                            ggml_backend_tensor_set(task.tensor, scratch.data(), off, count);
++                            off += count;
++                        }
++                    } else {
++                        ggml_backend_tensor_set(task.tensor, task.data, 0, task.size);
++                    }
++                    pending_bytes.fetch_sub(task.size);
++                    active_uploads.fetch_sub(1);
++                }
++            } catch (...) {
++                failed.store(true);
++                std::lock_guard<std::mutex> lock(failure_mutex);
++                if (!failure) { failure = std::current_exception(); }
++            }
++        });
++    }
++
++    // Load non-RPC weights concurrently with all planned remote destinations.
++    // The loader skips already-scheduled tensors but still accounts for bytes.
 +    for (auto & [ctx, bufs] : ctx_bufs) {
 +        if (!ml.load_all_data(ctx, bufs, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
 +            return false;
