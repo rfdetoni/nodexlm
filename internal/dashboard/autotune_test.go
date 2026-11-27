@@ -119,12 +119,13 @@ func TestPrefillLinkFindsSlowGuestAfterUnmeasuredGuest(t *testing.T) {
 func TestFixedBenchmarkPlacementRetainsSplitForLowerBatch(t *testing.T) {
 	const mib = uint64(1 << 20)
 	meta := local.GGUFInfo{BlockCount: 40, EmbeddingLength: 4096, HeadCount: 32, KVHeadCount: 8}
-	guest := RPCGuest{ID: "guest", Endpoint: "127.0.0.1:1234", CapacityBytes: 1800 * mib, GPUBudgetBytes: 600 * mib, RAMBudgetBytes: 1200 * mib, RPCDeviceKinds: []string{"gpu", "cpu"}}
+	guest := RPCGuest{ID: "guest", Endpoint: "127.0.0.1:1234", CapacityBytes: 1820 * mib, GPUBudgetBytes: 620 * mib, RAMBudgetBytes: 1200 * mib, RPCDeviceKinds: []string{"gpu", "cpu"}}
 	guests := []RPCGuest{guest}
 	selection := clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}
 	baseline := Settings{ContextTokens: 256, BatchSize: 1024, UBatchSize: 1024}
 	candidate := baseline
 	candidate.BatchSize, candidate.UBatchSize = 128, 128
+	// 620 MiB crosses the 19th-layer boundary only with the smaller batch.
 	placement := planRPCDevices(selection, guests, meta, baseline, 1200*mib)
 	alternative := planRPCDevices(selection, guests, meta, candidate, 1200*mib)
 	if placement.TensorSplitArg() == alternative.TensorSplitArg() || len(placement.Devices) != 2 {
