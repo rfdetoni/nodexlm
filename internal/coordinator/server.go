@@ -887,10 +887,10 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		"required_build_commit": directive.RequiredBuildCommit,
 		"required_version":      directive.RequiredVersion,
 		"update_required":       directive.UpdateRequired,
-		"cluster_id":       authInfo.ClusterID,
-		"epoch":            authInfo.Epoch,
-		"authority_pubkey": authInfo.AuthorityPubKey,
-		"revoked_nodes":    authInfo.RevokedNodes,
+		"cluster_id":            authInfo.ClusterID,
+		"epoch":                 authInfo.Epoch,
+		"authority_pubkey":      authInfo.AuthorityPubKey,
+		"revoked_nodes":         authInfo.RevokedNodes,
 	})
 }
 

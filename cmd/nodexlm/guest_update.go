@@ -252,6 +252,16 @@ func applyGuestUpdate(ctx context.Context, directive protocol.UpdateDirective, a
 	if err != nil {
 		return err
 	}
+	unlock, err := safedownload.LockTransfer(filepath.Join(filepath.Dir(current), ".nodexlm-update.lock"))
+	if err != nil {
+		return err
+	}
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
 	stage, err := os.MkdirTemp(filepath.Dir(current), ".nodexlm-update-")
 	if err != nil {
 		return fmt.Errorf("Guest installation is not writable; update using its package manager: %w", err)
@@ -295,5 +305,8 @@ func applyGuestUpdate(ctx context.Context, directive protocol.UpdateDirective, a
 		return errors.Join(err, os.Rename(backup, current))
 	}
 	slog.Info("Guest updated; reconnecting with saved pairing", "version", directive.RequiredVersion)
+	unlock()
+	locked = false
+	// The child can subsequently update the installation independently.
 	return child.Wait()
 }

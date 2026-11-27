@@ -175,6 +175,9 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 		return InferenceSample{}, errors.New("RPC benchmark requires a single inference slot")
 	}
 	if nodeID == "" {
+		if modelExceedsBudget(uint64(size), hostBudget) {
+			return InferenceSample{}, errors.New("model weights exceed Host memory budget")
+		}
 		if err = validatePlacementMemory(meta, settings, uint64(size), hostBudget, nil); err != nil {
 			return InferenceSample{}, err
 		}

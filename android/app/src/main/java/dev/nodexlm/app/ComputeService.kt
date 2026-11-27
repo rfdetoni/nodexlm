@@ -55,7 +55,7 @@ class ComputeService : Service() {
     override fun onBind(intent:Intent?):IBinder?=null
 
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
-        if (intent?.action==STOP) {stopWorker();return START_NOT_STICKY}
+        if (intent?.action==STOP) {HostManagedUpdate.cancelResume(this);stopWorker();return START_NOT_STICKY}
         if (!running.compareAndSet(false,true))return START_STICKY
         val useLiteRT = BuildConfig.LITERT_ENABLED && intent?.getBooleanExtra(EXTRA_LITERT,false) == true
         val useLiteGPU = intent?.getBooleanExtra(EXTRA_LITERT_GPU,false) == true
@@ -174,7 +174,7 @@ class ComputeService : Service() {
                         continue
                     }
                     if (job.optBoolean("update_required", false)) {
-                        HostManagedUpdate.tick(this, job, true)
+                        HostManagedUpdate.tick(this, job, true, if (useLiteRT && useLiteGPU) "litert-gpu" else if (useLiteRT) "litert" else "compute")
                         Thread.sleep(15_000)
                         continue
                     }

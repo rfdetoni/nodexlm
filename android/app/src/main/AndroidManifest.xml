@@ -36,7 +36,9 @@
                 <data android:scheme="nodexlm" android:host="pair" />
             </intent-filter>
         </activity>
-        <receiver android:name=".UpdateInstallReceiver" android:exported="false" />
+        <receiver android:name=".UpdateInstallReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+        </receiver>
         <service android:name=".RpcGuestService" android:exported="false"
             android:process=":rpc" android:foregroundServiceType="connectedDevice" />
         <service android:name=".HostService" android:exported="false" android:process=":host" android:foregroundServiceType="specialUse">

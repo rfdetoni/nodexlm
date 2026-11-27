@@ -105,6 +105,7 @@ class RpcGuestService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) {
+            HostManagedUpdate.cancelResume(this)
             shutdown("stopped", "manual")
             return START_NOT_STICKY
         }

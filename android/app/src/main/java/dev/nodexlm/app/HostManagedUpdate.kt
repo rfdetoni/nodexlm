@@ -22,7 +22,7 @@ internal object HostManagedUpdate {
     private const val NOTIFICATION = 6018
 
     @Synchronized
-    fun tick(context: Context, directive: JSONObject, idle: Boolean) {
+    fun tick(context: Context, directive: JSONObject, idle: Boolean, role: String = "rpc") {
         val commit = directive.optString("required_build_commit")
         if (!Regex("[0-9a-f]{40}").matches(commit) ||
             commit == BuildConfig.NODEX_BUILD_COMMIT) return
@@ -30,7 +30,8 @@ internal object HostManagedUpdate {
         try {
             val state = BetaApkDownload.state(context)
             if (prefs.getString("target", "") != commit ||
-                state.id <= 0L || state.status == DownloadManager.STATUS_FAILED) {
+                state.id <= 0L || state.status == DownloadManager.STATUS_FAILED ||
+                BetaApkDownload.expectedSourceCommit(context) != commit) {
                 val now = System.currentTimeMillis()
                 if (prefs.getString("target", "") == commit &&
                     now - prefs.getLong("attempt", 0L) in 0..59_999L) return
@@ -61,6 +62,8 @@ internal object HostManagedUpdate {
                 return
             }
             if (prefs.getLong("submitted", 0L) == state.id) return
+            val since = System.currentTimeMillis() - prefs.getLong("submit_attempt", 0L)
+            if (since in 0..599_999L) return
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
             params.setAppPackageName(context.packageName)
@@ -78,17 +81,58 @@ internal object HostManagedUpdate {
                         (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
                     val callback = PendingIntent.getBroadcast(context, sessionId,
                         Intent(context, UpdateInstallReceiver::class.java).setAction(UpdateInstallReceiver.ACTION), flags)
-                    prefs.edit().putLong("submitted", state.id).commit()
+                    prefs.edit().putLong("submitted", state.id)
+                        .putLong("submit_attempt", System.currentTimeMillis())
+                        .putString("resume_role", role).commit()
                     session.commit(callback.intentSender)
                 }
             } catch (e: Exception) {
-                prefs.edit().remove("submitted").commit()
+                prefs.edit().remove("submitted").remove("resume_role").commit()
                 installer.abandonSession(sessionId)
                 throw e
             }
         } catch (e: Exception) {
             Log.w("NodexLMHostUpdate", "Waiting for compatible official APK", e)
         }
+    }
+
+    // Invoked only after a package replacement matching the Host's directive.
+    // Preserve the saved pairing and operator's mobile resource policy.
+    fun resume(context: Context) {
+        val update = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val role = update.getString("resume_role", null) ?: return
+        if (update.getString("target", "") != BuildConfig.NODEX_BUILD_COMMIT) return
+        val prefs = context.getSharedPreferences("nodexlm", Context.MODE_PRIVATE)
+        val endpoint = prefs.getString("coordinator", "").orEmpty()
+        val id = prefs.getString("node_id", "").orEmpty()
+        if (endpoint.isBlank() || id.isBlank() || runCatching { NodeSecrets.read(context) }.getOrDefault("").isBlank()) return
+        val intent = if (role == "rpc") {
+            Intent(context, RpcGuestService::class.java).setAction(RpcGuestService.START)
+                .putExtra(RpcGuestService.EXTRA_ENDPOINT, endpoint)
+                .putExtra(RpcGuestService.EXTRA_NODE, id)
+                .putExtra(RpcGuestService.EXTRA_NAME, prefs.getString("name", Build.MODEL))
+                .putExtra(RpcGuestService.EXTRA_MODE, prefs.getString("rpc_mode", "auto"))
+                .putExtra(RpcGuestService.EXTRA_RUST_TRANSPORT, BuildConfig.RUST_RPC_ENABLED && prefs.getBoolean("rpc_rust_transport", false))
+                .putExtra(RpcGuestService.EXTRA_EFFICIENT_CORES, prefs.getBoolean("rpc_efficient_cores", false))
+                .putExtra(RpcGuestService.EXTRA_COMPRESSION, prefs.getBoolean("rpc_compression", false))
+                .putExtra(RpcGuestService.EXTRA_CPU_AFFINITY, prefs.getBoolean("rpc_cpu_affinity", false))
+                .putExtra(RpcGuestService.EXTRA_WEIGHT_CACHE, prefs.getBoolean("rpc_weight_cache", false))
+        } else {
+            Intent(context, ComputeService::class.java).setAction(ComputeService.START)
+                .putExtra(ComputeService.EXTRA_LITERT, role == "litert" || role == "litert-gpu")
+                .putExtra(ComputeService.EXTRA_LITERT_GPU, role == "litert-gpu")
+        }
+        try {
+            context.startForegroundService(intent)
+            update.edit().remove("resume_role").remove("submitted").commit()
+        } catch (e: Exception) {
+            Log.w("NodexLMHostUpdate", "Android deferred Guest restart", e)
+            notify(context, "Atualização concluída. Abra o NodexLM para reconectar.")
+        }
+    }
+
+    fun cancelResume(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("resume_role").apply()
     }
 
     fun notify(context: Context, message: String, action: Intent = Intent(context, MainActivity::class.java)) {

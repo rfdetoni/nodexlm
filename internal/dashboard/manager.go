@@ -682,6 +682,9 @@ func (m *Manager) load(ctx context.Context) error {
 			return budgetErr
 		}
 		loadedMeta, loadedSize, loadedBudget = meta, uint64(size), hostCapacity
+		if modelExceedsBudget(uint64(size), hostCapacity) {
+			return errors.New("model weights exceed Host memory budget; compatible distributed workers are required")
+		}
 		if inspectErr := validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
 			if meta.Trellis {
 				return fmt.Errorf("Trellis requires matching RPC Guests, unavailable in this release; Host-only memory admission: %w", inspectErr)

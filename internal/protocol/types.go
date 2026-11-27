@@ -57,10 +57,9 @@ type RuntimeCapability struct {
 	RPCDevices          []string `json:"rpc_devices,omitempty"`
 	RPCProtocolMajor    int      `json:"rpc_protocol_major,omitempty"`
 	RPCProtocolMinor    int      `json:"rpc_protocol_minor,omitempty"`
-
-	RPCProtocolPatch    int    `json:"rpc_protocol_patch,omitempty"`
-	RPCSourceCommit     string `json:"rpc_source_commit,omitempty"`
-	RPCDirectTensorCopy bool   `json:"rpc_direct_tensor_copy,omitempty"`
+	RPCProtocolPatch    int      `json:"rpc_protocol_patch,omitempty"`
+	RPCSourceCommit     string   `json:"rpc_source_commit,omitempty"`
+	RPCDirectTensorCopy bool     `json:"rpc_direct_tensor_copy,omitempty"`
 }
 
 type Device struct {

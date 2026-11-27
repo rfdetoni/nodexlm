@@ -151,6 +151,7 @@ internal object BetaApkDownload {
         val id = manager.enqueue(request)
         prefs.edit().putLong("id", id)
             .putString("sha256", valid.sha256)
+            .putString("source_commit", artifact.sourceCommit)
             .putLong("expected_bytes", valid.sizeBytes)
             .putLong("expected_version_code", artifact.versionCode)
             .putString("version_name", artifact.versionName)
@@ -199,6 +200,9 @@ internal object BetaApkDownload {
         )
     }
 
+    fun expectedSourceCommit(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("source_commit", null)
+
     fun expectedSha256(context: Context): String? =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("sha256", null)
 
@@ -233,6 +237,7 @@ internal object BetaApkDownload {
      * Called on a worker thread only. Copies DownloadManager bytes into private cache
      * while hashing, then validates package name, versionCode and permanent signing certificate.
      */
+    @Synchronized
     fun verify(context: Context): Boolean {
         val manager = context.getSystemService(DownloadManager::class.java)
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
