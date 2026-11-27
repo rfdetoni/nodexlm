@@ -61,14 +61,48 @@ func TestAuthenticatedModelCacheRejectsUnauthenticatedAndStaleContent(t *testing
 		file.Close()
 		t.Fatal("cancelled cache verification must not read model bytes")
 	}
-	server.modelCacheSlots <- struct{}{}
-	if got := request(true).Code; got != http.StatusTooManyRequests {
-		t.Fatalf("concurrent model cache request accepted: %d", got)
+	for range cap(server.modelCacheSlots) {
+		server.modelCacheSlots <- struct{}{}
 	}
-	<-server.modelCacheSlots
+	busy := request(true)
+	if busy.Code != http.StatusTooManyRequests || busy.Header().Get("Retry-After") != "1" {
+		t.Fatalf("concurrent model cache request should retry later: status=%d retry=%q", busy.Code, busy.Header().Get("Retry-After"))
+	}
+	for range cap(server.modelCacheSlots) {
+		<-server.modelCacheSlots
+	}
 	ok := request(true)
 	if ok.Code != 200 || ok.Body.String() != string(body) || ok.Header().Get("ETag") != fmt.Sprintf("%q", sha) {
 		t.Fatalf("authenticated cache invalid: status=%d body=%q", ok.Code, ok.Body.String())
+	}
+	// HEAD authenticates and validates the local immutable cache before the
+	// mobile client launches at most four concurrent byte-range GET streams.
+	head := httptest.NewRequest(http.MethodHead, path, nil)
+	head.Header.Set("X-Nodex-Node", "node-1")
+	head.Header.Set("Authorization", "Bearer "+token)
+	preflight := httptest.NewRecorder()
+	server.LANHandler().ServeHTTP(preflight, head)
+	if preflight.Code != http.StatusOK || preflight.Body.Len() != 0 ||
+		preflight.Header().Get("ETag") != fmt.Sprintf("%q", sha) {
+		t.Fatalf("authenticated HEAD preflight failed: status=%d body=%q", preflight.Code, preflight.Body.String())
+	}
+	// ServeContent must honor If-Range and return only the requested bytes.
+	partial := httptest.NewRequest(http.MethodGet, path, nil)
+	partial.Header.Set("X-Nodex-Node", "node-1")
+	partial.Header.Set("Authorization", "Bearer "+token)
+	partial.Header.Set("Range", "bytes=0-3")
+	partial.Header.Set("If-Range", fmt.Sprintf("%q", sha))
+	chunk := httptest.NewRecorder()
+	server.LANHandler().ServeHTTP(chunk, partial)
+	if chunk.Code != http.StatusPartialContent || chunk.Body.String() != "GGUF" ||
+		chunk.Header().Get("Content-Range") != fmt.Sprintf("bytes 0-3/%d", len(body)) ||
+		chunk.Header().Get("ETag") != fmt.Sprintf("%q", sha) {
+		t.Fatalf("authenticated byte range invalid: status=%d headers=%v body=%q", chunk.Code, chunk.Header(), chunk.Body.String())
+	}
+	// A fifth concurrent transfer must be refused; four bounded streams are
+	// admitted so Android can overlap actual Host-to-Guest weight reads.
+	if got := cap(server.modelCacheSlots); got != 4 {
+		t.Fatalf("expected bounded four-stream cache admission, got %d", got)
 	}
 	if err := os.WriteFile(file, []byte("GGUF tampered content"), 0600); err != nil {
 		t.Fatal(err)

@@ -6,7 +6,7 @@ The pinned llama.cpp patch previously drained its workers at the end of each loa
 
 CLI and Web sharded Hugging Face downloads share one metadata planner and resolve X-Repo-Commit and per-file sizes, then transfer up to four shards under the shared connection ceiling. All stages verify before the first shard is published last. Unavailable revision metadata retains the legacy sequential path. Admission conservatively requires free disk for the full set, even when some stages exist.
 
-Android model downloads now resolve each shard to a single immutable Hugging Face commit, require SHA-256 and pinned shard sizes from HTTPS HEAD metadata, and verify all bytes before publication. Models without a verifiable digest are rejected instead of being accepted on GGUF magic alone. Android now prefers TLS-pinned Host content sharing, then verified native Rust HTTPS streaming when available, with DownloadManager as compatibility fallback. This does not constitute Xet CAS or parallel ranged Android downloads.
+Android model downloads now resolve each shard to a single immutable Hugging Face commit, require SHA-256 and pinned shard sizes from HTTPS HEAD metadata, and verify all bytes before publication. Models without a verifiable digest are rejected instead of being accepted on GGUF magic alone. Android now prefers TLS-pinned Host content sharing, then verified native Rust HTTPS streaming when available, with DownloadManager as compatibility fallback. This does not constitute Xet CAS or direct Guest-to-Guest P2P. Native Android Rust HTTPS Range downloads already provide parallelism for immutable Hub files.
 
 Optional official Xet CAS acceleration: set NODEXLM_DOWNLOAD_XET=1 on desktop/Host and install the supported Hugging Face `hf` CLI with hf-xet enabled. Only immutable commit-pinned GGUF URLs with content SHA-256 and size metadata are eligible. The CLI writes into an isolated temporary directory and the entire output is rehashed before staging, so failure can safely fall back to the internal HTTPS downloader. No new dependency or Python process is started by default. Xet download progress is currently reported upon verification, not per connection. The APK uses DownloadManager and now reports observed transfer rate and approximate ETA (neither is native per-connection telemetry).
 
@@ -23,3 +23,40 @@ Dashboard: one card per registered device, with native disclosure for management
 Opt-in local SHA-256 deduplication: NODEXLM_MODEL_DEDUP=1 indexes verified published files in the managed library and rehashes an existing candidate before linking the new name. This saves disk space after download, not WAN traffic. Both aliases share an inode; use only immutable trusted model files. No index entry retains a second weight copy.
 
 Chat metrics: native decode uses predicted_n / predicted_ms (all generated tokens, including reasoning). End-to-end rate uses completion_tokens or the runtime's predicted_n when usage is absent. Separate reasoning and non-reasoning counts are shown only if completion_tokens_details.reasoning_tokens is actually supplied and valid. The pinned llama.cpp server-task.cpp currently reports n_decoded as completion_tokens without separate reasoning usage. Observed first output, visible text and reasoning event window are wall-clock SSE timings, not exact per-token phase speeds. Metrics are in a compact disclosure, not a scrolling page.
+
+## Authenticated Host-to-Android cache acceleration (experimental)
+
+When `NODEXLM_MODEL_P2P=1` enables the Host's indexed SHA-256 cache,
+the Android model library first sends an **authenticated, certificate-pinned
+HEAD** to `/v1/nodes/cache/{sha256}`. The Host verifies the published
+content once before opening additional streams. The Host admits **at most
+four parallel** cache readers, rejecting excess requests with HTTP 429 and
+`Retry-After: 1`; Android applies short bounded retries before verified WAN
+fallback. SHA-256 cold validation is serialized by a bounded digest lock to
+avoid multiple multi-GB reads on the same model. A cold HEAD may take minutes
+to verify a large GGUF after a Host restart; its read timeout is longer than
+for ordinary 8 MiB transfer ranges.
+
+For GGUF files of 32 MiB or more, Android requests up to four disjoint
+8 MiB HTTPS byte ranges with `If-Range`, and **requires** HTTP 206, the
+exact strong SHA-256 `ETag`, exact `Content-Range`, and exact range
+`Content-Length`. Model weights are written directly at their offsets
+using at most four 128 KiB buffers. Every completed range is fsynced before
+its journal entry is synced; interrupted sessions can resume only when
+checksum, total size, chunk size and private stage identity match. The
+journal is never trusted as a content-integrity proof: Android re-hashes
+the **complete** GGUF and verifies the signature before publication.
+
+If an older Host ignores Range, the client falls back to its existing
+authenticated sequential copy. On cache unavailability, the verified public
+download transport takes over. On explicit cancellation or successful public
+fallback, the abandoned private partial and journal are removed. After
+process death, only committed chunks can be reused at the next explicit
+download. A valid enrollment, pinned Host certificate and node credentials
+are required for **every** connection, and redirects are disabled.
+
+The change does **not** implement decentralized direct Guest-to-Guest
+discovery, Android Xet CAS, or automatic Host promotion. Four connections
+are an upper bound, not a guarantee of increased performance: benchmark
+on physical Android/Linux/RTX nodes and inspect disk contention, battery,
+network rates and temperature before asserting faster loads.
