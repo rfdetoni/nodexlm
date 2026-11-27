@@ -57,6 +57,7 @@ func (m *Manager) benchmarkSeriesDuration(ctx context.Context, model, nodeID str
 	if rounds < 1 || rounds > 10 || rounds > 1 && (nodeID != "cluster" || extended) {
 		return nil, errors.New("benchmark series requires 1–10 rounds; multiple rounds require cluster without extended workloads")
 	}
+	benchmarkPhase(ctx, "queue", "")
 	m.poolMu.Lock()
 	defer m.poolMu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
@@ -88,7 +89,9 @@ func (m *Manager) benchmarkSeriesDuration(ctx context.Context, model, nodeID str
 		}
 		return stats()
 	}
-	for range rounds {
+	for i := range rounds {
+		roundCtx := context.WithValue(ctx, benchmarkRoundKey{}, [2]int{i + 1, rounds})
+		benchmarkPhase(roundCtx, "round_start", "")
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -97,12 +100,13 @@ func (m *Manager) benchmarkSeriesDuration(ctx context.Context, model, nodeID str
 			// round. The Guest may need a moment to replenish idle tunnels.
 			// Preserve the exact authenticated device identity and placement;
 			// do not misclassify a transient busy tunnel as topology drift.
+			benchmarkPhase(roundCtx, "reconnect", "")
 			if err := fixed.waitForRPCIdle(ctx, provider); err != nil {
 				return nil, err
 			}
 		}
 		row := benchmarkRound{RPCStatsBefore: snapshot()}
-		sample, err := m.measureInferenceDuration(ctx, settings, model, nodeID, extended, provider, duration, fixed)
+		sample, err := m.measureInferenceDuration(roundCtx, settings, model, nodeID, extended, provider, duration, fixed)
 		if err != nil {
 			return nil, err
 		}
@@ -111,7 +115,9 @@ func (m *Manager) benchmarkSeriesDuration(ctx context.Context, model, nodeID str
 			return nil, errors.New("benchmark topology, rate basis or fingerprint changed between rounds")
 		}
 		rows = append(rows, row)
+		benchmarkMeasured(roundCtx, "round_done", "", i+1, rounds, sample)
 	}
+	benchmarkPhase(ctx, "validate", "")
 	sample := rows[len(rows)-1].Inference
 	key := sample.Model
 	m.mu.Lock()
@@ -137,6 +143,7 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 }
 
 func (m *Manager) measureInferenceDuration(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest, duration time.Duration, frozen ...*benchmarkPlacement) (InferenceSample, error) {
+	benchmarkPhase(ctx, "inspect", "")
 	if settings.VisionProjector != "" {
 		return InferenceSample{}, errors.New("text inference benchmarks require vision projector disabled")
 	}
@@ -153,6 +160,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	if err != nil {
 		return InferenceSample{}, err
 	}
+	benchmarkPhase(ctx, "memory", fmt.Sprintf("%d blocks; %.2f GiB", meta.BlockCount, float64(size)/(1<<30)))
 	hostBudget, err := m.hostBudget(settings, hardware.Collect("Host", nil))
 	if err != nil {
 		return InferenceSample{}, err
@@ -165,6 +173,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 			return InferenceSample{}, err
 		}
 	}
+	benchmarkPhase(ctx, "runtime", "")
 	binary := m.binary
 	if local.EffectiveBackend(settings.Backend) == local.BackendMistralRS {
 		if nodeID != "" {
@@ -196,6 +205,8 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	}
 	engine := managedFromSettings(settings, binary, path, model, draftPath)
 	var topology string
+	var loadGuests []RPCGuest
+	benchmarkPhase(ctx, "placement", "")
 	if nodeID == "cluster" {
 		if provider == nil {
 			return InferenceSample{}, errors.New("no RPC Guests")
@@ -237,6 +248,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 			for _, guest := range guests {
 				if selected.ID == guest.ID {
 					engine.RPCServers = append(engine.RPCServers, guest.Endpoint)
+					loadGuests = append(loadGuests, guest)
 					topology += guest.ID + ":"
 					break
 				}
@@ -245,6 +257,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 		if len(engine.RPCServers) != len(selection.Guests) {
 			return InferenceSample{}, errors.New("RPC placement changed")
 		}
+		benchmarkPhase(ctx, "preflight", fmt.Sprintf("%d Guest(s)", len(selection.Guests)))
 		if err = preflightRPCGuests(ctx, selection.Guests, engine.RPCServers, guests...); err != nil {
 			return InferenceSample{}, err
 		}
@@ -267,6 +280,8 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 					return InferenceSample{}, err
 				}
 				engine.RPCServers = []string{guest.Endpoint}
+				loadGuests = append(loadGuests, guest)
+				benchmarkPhase(ctx, "preflight", "1 Guest")
 				topology = guest.ID
 				if err = preflightRPCGuests(ctx, []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}, engine.RPCServers, guest); err != nil {
 					return InferenceSample{}, err
@@ -289,7 +304,11 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 			return InferenceSample{}, errors.New("requested Guest is not RPC ready")
 		}
 	}
-	defer engine.Close()
+	defer func() {
+		benchmarkPhase(ctx, "cleanup", "")
+		engine.Close()
+	}()
+	m.benchmarkLoadProgress(ctx, loadGuests, size)
 	loadStart := time.Now()
 	if err := engine.Load(ctx); err != nil {
 		return InferenceSample{}, err
@@ -301,6 +320,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	}, MaxTokens: 64, Temperature: 0, CachePrompt: &cache}
 	// An unmeasured warmup avoids treating first-use backend initialization as
 	// steady-state decode; keep the same request for comparable model runs.
+	benchmarkPhase(ctx, "warmup", fmt.Sprintf("%.1f s load", loadMilliseconds/1000))
 	warmup := request
 	warmup.MaxTokens = 8
 	if _, err := engine.Complete(ctx, warmup); err != nil {
@@ -327,6 +347,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 		return sample, nil
 	}
 	for i := 0; i < runs; i++ {
+		benchmarkProgress(ctx, benchmarkProgressEvent{Phase: "measure", Current: i, Total: runs})
 		start := time.Now()
 		raw, err := engine.Complete(ctx, request)
 		if err != nil {
@@ -340,6 +361,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 			return InferenceSample{}, errors.New("benchmark runtime timing basis changed between runs")
 		}
 		measurements = append(measurements, sample)
+		benchmarkMeasured(ctx, "sample", "", i+1, runs, sample)
 	}
 	// A median resists a single noisy network, thermal or scheduling outlier.
 	sample := medianInferenceSample(slices.Clone(measurements))

@@ -34,3 +34,13 @@ the entire file with bounded RAM.
 GitHub Pages can deploy the static report using the Benchmarks Pages
 workflow once repository Settings → Pages → GitHub Actions is enabled.
 No hardware results are uploaded automatically.
+
+### Live progress
+
+The dashboard uses an authenticated NDJSON request stream. Each stage is
+reported by the actual benchmark executor, with one-second heartbeats during
+long operations. Model loading remains indeterminate; selected Guest RPC
+traffic is measured as monotonic relay deltas, not unique model bytes.
+Round and sample progress use completed counts. Stability shows elapsed
+planned duration, not a prediction of completion. Partial measurements are
+not exported as completed reports. Existing JSON endpoints remain supported.

@@ -14,6 +14,7 @@ class Element {
   addEventListener(name,callback) {this.handlers[name]=callback;}
   focus() {this.focused=true;}
   setAttribute(name,value) {this[name]=String(value);}
+  removeAttribute(name) {delete this[name];}
 }
 const elements=new Map();
 const get=id=>{if(!elements.has(id))elements.set(id,new Element(id));return elements.get(id)};
@@ -61,6 +62,14 @@ vm.createContext(sandbox);
 const script=fs.readFileSync(path.join(__dirname,'../internal/dashboard/static/app.js'),'utf8');
 vm.runInContext(script,sandbox,{filename:'app.js'});
 assert.equal(vm.runInContext('benchmarkMedian([9,3,6,12])',sandbox),7.5);
+vm.runInContext("benchmarkLiveBegin(3); benchmarkLiveEvent({type:'progress',phase:'sample',round:1,current:1,total:3,rate:9,rate_basis:'native_decode'}); benchmarkLiveEvent({type:'progress',phase:'round_done',round:1,rounds:3,current:1,total:3})",sandbox);
+assert.equal(get('benchmarkOverallBar').value,1);
+assert.match(get('benchmarkLiveCharts').textContent,/9\.00 t\/s/);
+vm.runInContext("benchmarkLiveEvent({type:'progress',phase:'load',round:2}); benchmarkLiveEvent({type:'heartbeat',phase:'load',phase_ms:4000,traffic:[{name:'Guest A',sent_bytes:1048576,received_bytes:0}]})",sandbox);
+assert.equal(get('benchmarkPhaseBar').value,undefined);
+assert.match(get('benchmarkLiveTraffic').textContent,/Guest A/);
+vm.runInContext("benchmarkLiveEvent({type:'progress',phase:'failed',detail:'test'}); resetBenchmarkSession()",sandbox);
+assert.equal(get('benchmarkLive').hidden,true);
 assert.throws(()=>vm.runInContext('benchmarkRelayDelta({rpc_stats_before:{a:{relay_epoch:1}},rpc_stats_after:{a:{relay_epoch:2}}})',sandbox),/Epoch RPC/);
 assert.equal(vm.runInContext('benchmarkRelayDelta({rpc_stats_before:{a:{relay_epoch:1,bytes_to_guest:10,bytes_from_guest:0,writes_to_guest:0,writes_from_guest:0}},rpc_stats_after:{a:{relay_epoch:1,bytes_to_guest:20,bytes_from_guest:0,writes_to_guest:1,writes_from_guest:0}}}).bytes_to_guest',sandbox),10);
 assert.equal(vm.runInContext('benchmarkComparable([{kind:"benchmark",fingerprint:"a".repeat(64),rate_basis:"native_decode",tokens_per_second:9,tokens:64},{kind:"benchmark",fingerprint:"a".repeat(64),rate_basis:"end_to_end",tokens_per_second:9,tokens:64}])',sandbox),false);

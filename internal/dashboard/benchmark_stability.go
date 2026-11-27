@@ -14,6 +14,7 @@ import (
 func measureStability(ctx context.Context, engine *local.Managed, key string, request protocol.ChatRequest, duration time.Duration) (InferenceSample, error) {
 	started := time.Now()
 	deadline := started.Add(duration)
+	benchmarkProgress(ctx, benchmarkProgressEvent{Phase: "stability", DurationMS: duration.Milliseconds()})
 	var first, last InferenceSample
 	var count, tokens int
 	var elapsed float64
@@ -44,6 +45,7 @@ func measureStability(ctx context.Context, engine *local.Managed, key string, re
 		last = sample
 		if !began.Before(nextWindow) && len(windows) < 60 {
 			windows = append(windows, sample)
+			benchmarkMeasured(ctx, "stability_sample", "", count, 0, sample)
 			nextWindow = began.Add(time.Minute)
 		}
 	}
