@@ -546,7 +546,8 @@ function renderNodeResources(devices,registered=[]){
    add('Revogar acesso','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(id),'DELETE');notice('Nó revogado');await refresh()});
   }
   metrics.replaceChildren();
-  if(id!=='host')metrics.append(el('p','muted',live?(n.runtime?.rpc_ready?'RPC conectado':'RPC desconectado'):'Dispositivo offline'));
+  if(id!=='host')metrics.append(el('p','muted',live?(n.runtime?.rpc_ready?'RPC conectado':n.models?.length?'Executor de modelo inteiro':'Sem executor disponível'):'Dispositivo offline'));
+  if(n.runtime?.engine)metrics.append(el('p','muted','Runtime: '+n.runtime.engine+(n.runtime.version?' · '+n.runtime.version:'')));
   if(n.models?.length)metrics.append(el('p','muted','Modelos: '+n.models.join(', ')));
   const seen=n.last_seen?Date.parse(n.last_seen):NaN;
   const age=Number.isFinite(seen)?Math.max(0,Math.round((Date.now()-seen)/1000)):null;
@@ -617,6 +618,11 @@ async function refreshSnapshot(){
  renderLocalModels(models,status);renderCatalog();
  const primary=$('primaryNode'),selectedPrimary=primary.dataset.initialized==='yes'?primary.value:(s.primary_node==='auto'?'':s.primary_node||'');
  const guests=nodes.filter(n=>n.status==='online'&&n.runtime?.rpc_ready&&cluster.rpc_guests?.[n.id]);
+ const previousTarget=$('chatTarget').value;
+ const wholeWorkers=nodes.filter(n=>n.status==='online'&&n.models?.length&&!n.runtime?.rpc_ready);
+ chatWorkerModels=new Map(wholeWorkers.map(n=>[n.id,n.models]));
+ setOptions('chatTarget',[['','Host · modelos residentes'],...wholeWorkers.map(n=>[n.id,displayNodeName(n.id,n.name)+' · '+(n.runtime?.engine||'modelo inteiro')])],previousTarget);
+ updateChatModelOptions();
  const primaryOptions=[['','Automático'],['host','Host'],...guests.map(n=>[n.id,n.name||n.id])];
  if(selectedPrimary&&!primaryOptions.some(([id])=>id===selectedPrimary))primaryOptions.push([selectedPrimary,'Guest indisponível: '+selectedPrimary]);
  setOptions('primaryNode',primaryOptions,selectedPrimary);primary.dataset.initialized='yes';
@@ -760,7 +766,9 @@ async function sendChat(){
  const prompt=$('prompt').value.trim();if(!prompt)return;
  const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];const chatSession=sessionEpoch;
  const allowFallback=$('allowExternalFallback').checked;$('allowExternalFallback').checked=false;
- const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
+ const targetNode=$('chatTarget').value;
+ if(targetNode&&(imageFile||allowFallback))throw Error('Guest de modelo inteiro: somente texto, sem fallback externo.');
+ const model=$('chatModel').value||(!targetNode?latestStatus?.runtime?.model:'')||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
  const start=performance.now();let first=null,lastText=null,firstGenerated=null,firstReasoning=null,lastReasoning=null,interleaved=false,timings=null;let answer='',reasoning='',usage=null,rpcTraffic=null,done=false,reader;
  renderChat();const output=$('chatOutput');
@@ -785,7 +793,7 @@ async function sendChat(){
   if(controller.signal.aborted)throw Error('Geração interrompida.');
   if(new TextEncoder().encode(prompt+documentText).length>65536)throw Error('Mensagem com documento excede 64 KiB.');
   const content=imageURL?[{type:'text',text:prompt+documentText},{type:'image_url',image_url:{url:imageURL}}]:prompt+documentText;
-  const payload={model,messages:[...chatHistory.slice(-62),{role:'user',content}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
+  const payload={model,...(targetNode?{target_node:targetNode}:{}),messages:[...chatHistory.slice(-62),{role:'user',content}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
   if(effort!=='auto')payload.reasoning_effort=effort;
   if(thinkingBudget>0)payload.reasoning_budget_tokens=thinkingBudget;
   const response=await fetch(imageURL?'/v1/chat/completions':'/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify(payload)});
@@ -1113,11 +1121,18 @@ $('catalogForm').addEventListener('submit',event=>{
  });
 });
 
+let chatWorkerModels=new Map();
+function updateChatModelOptions(){
+ const prior=$('chatModel').value,target=$('chatTarget').value;
+ const models=target?chatWorkerModels.get(target)||[]:residentModelNames;
+ setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
+}
+$('chatTarget').addEventListener('change',updateChatModelOptions);
 function renderResidentModels(models){
- const list=$('residentModels'),prior=$('chatModel').value;
+ const list=$('residentModels');
  const changed=JSON.stringify(residentModelNames)!==JSON.stringify(models)||!list.children.length;
  residentModelNames=models;
- setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
+ updateChatModelOptions();
  if(!changed)return;
  list.replaceChildren();
  if(!models.length){list.append(emptyState('Nenhum modelo residente. Carregue um GGUF para começar.'));return;}

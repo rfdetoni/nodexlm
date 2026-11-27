@@ -25,6 +25,7 @@ import (
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
 	compat "github.com/rfdetoni/nodexlm/internal/openai"
+	"github.com/rfdetoni/nodexlm/internal/local"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/requestlog"
 )
@@ -224,6 +225,9 @@ func (d *Dashboard) Handler() http.Handler {
 			return
 		}
 		reply(w, 200, plan)
+	}))
+	mux.HandleFunc("GET /api/runtimes", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, local.RuntimeRegistry())
 	}))
 	mux.HandleFunc("GET /api/status", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"runtime": d.Manager.State(), "settings": d.Manager.Settings(), "download": d.Manager.DownloadState()})

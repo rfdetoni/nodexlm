@@ -31,6 +31,7 @@ type Runner struct {
 	DecisionModel string
 	Decider       DecisionEngine
 	Logger        *slog.Logger
+	Runtime       string
 }
 
 func Enroll(ctx context.Context, coordinator, joinToken, name, model string) (config.Agent, error) {
@@ -68,9 +69,21 @@ func (r *Runner) Run(ctx context.Context) error {
 			models := []string(nil)
 			if r.Model != "" && r.Engine != nil {
 				models = []string{r.Model}
+				if r.Runtime != "" {
+					probeCtx, done := context.WithTimeout(ctx, 4*time.Second)
+					check, ok := r.Engine.(interface{ CheckModel(context.Context, string) error })
+					if !ok || check.CheckModel(probeCtx, r.Model) != nil {
+						models = nil
+					}
+					done()
+				}
 			}
 			profile = hardware.Collect(deviceName, models)
 			profile.Runtime.Installed = true
+			if r.Runtime != "" {
+				profile.Runtime.Engine = r.Runtime
+				profile.Runtime.Installed = len(models) > 0
+			}
 			if r.Decider != nil && r.DecisionModel != "" {
 				probeCtx, done := context.WithTimeout(ctx, 4*time.Second)
 				check, ok := r.Decider.(interface {
@@ -143,6 +156,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		} else if work.Kind != "" && work.Kind != "chat" {
 			generateErr = errors.New("unsupported worker job kind")
+		} else if r.Engine == nil || work.Request.Model != r.Model {
+			generateErr = errors.New("worker cannot run requested model")
 		} else if work.Request.Stream {
 			if engine, ok := r.Engine.(interface {
 				GenerateStream(context.Context, protocol.ChatRequest, func([]byte) error) error

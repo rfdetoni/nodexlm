@@ -30,7 +30,7 @@ type Engine struct {
 
 func New(backend string) (*Engine, error) {
 	u, err := url.Parse(backend)
-	if err != nil || u.Scheme != "http" || u.Host == "" {
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
 		return nil, errors.New("backend must be a loopback HTTP llama-server endpoint")
 	}
 	host := u.Hostname()
@@ -40,7 +40,7 @@ func New(backend string) (*Engine, error) {
 	// Model generation may legitimately exceed three minutes on a slow
 	// multi-Guest RPC cluster. A client-wide timeout aborts even an actively
 	// streaming response; callers already own bounded, cancellable contexts.
-	return &Engine{BackendURL: strings.TrimRight(backend, "/"), HTTP: &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConnsPerHost: 1}}}, nil
+	return &Engine{BackendURL: strings.TrimRight(backend, "/"), HTTP: &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConnsPerHost: 1}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 func encodeChatPayload(request protocol.ChatRequest) ([]byte, error) {

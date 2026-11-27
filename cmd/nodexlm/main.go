@@ -65,6 +65,8 @@ func run(args []string) error {
 		return nil
 	case "doctor":
 		return doctor(args[1:])
+	case "runtimes":
+		return json.NewEncoder(os.Stdout).Encode(local.RuntimeRegistry())
 	case "benchmark":
 		return benchmarkCommand(args[1:])
 	case "bench":
@@ -587,6 +589,9 @@ func traceRoutes(next http.Handler, component string) http.Handler {
 // distributed RPC Guest. The code proves TLS identity; no admin token is used.
 func guest(args []string) error {
 	f := fs("guest")
+	engineName := f.String("engine", "rpc", "rpc or named local inference runtime (see nodexlm runtimes)")
+	inferenceEndpoint := f.String("inference-endpoint", "", "existing local HTTP inference origin for whole-model worker")
+	inferenceModel := f.String("model", "", "model ID advertised by the selected inference runtime")
 	fingerprint := f.String("fingerprint", "", "optional full Host certificate SHA-256 obtained out of band")
 	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
@@ -611,6 +616,13 @@ func guest(args []string) error {
 	}
 	if *threads < 0 || *threads > 256 {
 		return errors.New("--threads must be 0..256")
+	}
+	if *engineName != "rpc" {
+		if !local.IsRegisteredRuntime(*engineName) || *inferenceEndpoint == "" || *inferenceModel == "" || *bin != "" || *rpcCache || *device != "auto" || *threads != 0 || *backend != "auto" {
+			return errors.New("whole-model Guest requires a registered --engine, --inference-endpoint and --model, without RPC overrides")
+		}
+	} else if *inferenceEndpoint != "" || *inferenceModel != "" {
+		return errors.New("choose --engine for a whole-model Guest")
 	}
 	if _, err := smolmax.GuestThreads(*threads, hardware.PhysicalCPUCount(), *threadPolicy); err != nil {
 		return err
@@ -664,6 +676,9 @@ func guest(args []string) error {
 		}
 	} else {
 		fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
+	}
+	if *engineName != "rpc" {
+		return node([]string{"--dir", *dir, "--engine", *engineName, "--backend", *inferenceEndpoint, "--model", *inferenceModel})
 	}
 	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
 	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels), "--threads", fmt.Sprint(*threads), "--thread-policy", *threadPolicy}
@@ -723,6 +738,7 @@ func newPairing(args []string) error {
 
 func node(args []string) error {
 	f := fs("node")
+	engineName := f.String("engine", "", "named local inference runtime (see nodexlm runtimes)")
 	backend := f.String("backend", "", "existing localhost inference server (optional)")
 	liteRT := f.Bool("litert", false, "verify a local LiteRT-LM registry model before joining as a standalone worker")
 	path := f.String("model-path", "", "GGUF file for lazy auto-managed llama-server")
@@ -771,6 +787,15 @@ func node(args []string) error {
 			return err
 		}
 	}
+	if *liteRT {
+		if *engineName != "" && *engineName != "litertlm" {
+			return errors.New("conflicting --engine and --litert")
+		}
+		*engineName = "litertlm"
+	}
+	if *engineName != "" && (!local.IsRegisteredRuntime(*engineName) || *backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
+		return errors.New("registered runtime requires --backend and --model; configure native options in that runtime")
+	}
 	if *liteRT && (*backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 ||
 		*moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
 		return errors.New("--litert requires --backend and --model; configure runtime options in LiteRT-LM")
@@ -779,9 +804,9 @@ func node(args []string) error {
 	var managed *local.Managed
 	if *model != "" {
 		if *backend != "" {
-			if *liteRT {
+			if *engineName != "" {
 				checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				liteEngine, checkErr := local.NewLiteRT(checkCtx, *backend, *model)
+				liteEngine, checkErr := local.NewRegisteredRuntime(checkCtx, *engineName, *backend, *model)
 				cancel()
 				if checkErr != nil {
 					return checkErr
@@ -815,7 +840,7 @@ func node(args []string) error {
 	}
 	c, cancel := ctx()
 	defer cancel()
-	return (&worker.Runner{Client: cli, Engine: engine, Model: *model, DecisionModel: *decisionModel, Decider: decider}).Run(c)
+	return (&worker.Runner{Client: cli, Engine: engine, Model: *model, DecisionModel: *decisionModel, Decider: decider, Runtime: *engineName}).Run(c)
 }
 func nodes(args []string) error {
 	f := fs("nodes")
@@ -951,7 +976,8 @@ func localChat(args []string) error {
 	imagePath := f.String("image", "", "local JPEG/PNG image for vision inference")
 	projector := f.String("mmproj", "", "local GGUF vision projector matching the model")
 	bin := f.String("llama-bin", "llama-server", "llama-server binary")
-	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp, experimental mistralrs or litertlm")
+	engineName := f.String("engine", "llama.cpp", "inference engine (see nodexlm runtimes)")
+	inferenceEndpoint := f.String("inference-endpoint", "", "existing local HTTP inference origin")
 	liteEndpoint := f.String("litert-endpoint", "http://127.0.0.1:9379", "already-running local LiteRT-LM server")
 	mistralBin := f.String("mistralrs-bin", "", "mistral.rs executable; requires NODEXLM_EXPERIMENTAL_MISTRALRS=1")
 	threads := f.Int("threads", 0, "CPU threads")
@@ -966,14 +992,17 @@ func localChat(args []string) error {
 	if *path == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
 	}
-	if *engineName == "litertlm" {
+	if *engineName == "litertlm" && *inferenceEndpoint == "" {
+		*inferenceEndpoint = *liteEndpoint
+	}
+	if *inferenceEndpoint != "" {
 		if *imagePath != "" || *projector != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 ||
 			*threads != 0 || *gpu != "auto" || *contextTokens != 2048 {
-			return errors.New("LiteRT-LM uses its own registry/backend configuration; llama.cpp options are unsupported")
+			return errors.New("registered runtime uses its own configuration; llama.cpp options are unsupported")
 		}
 		c, cancel := ctx()
 		defer cancel()
-		engine, err := local.NewLiteRT(c, *liteEndpoint, *path)
+		engine, err := local.NewRegisteredRuntime(c, *engineName, *inferenceEndpoint, *path)
 		if err != nil {
 			return err
 		}
