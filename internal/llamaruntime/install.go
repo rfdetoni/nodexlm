@@ -30,7 +30,7 @@ var repoURL = "https://github.com/ggml-org/llama.cpp/releases/download/" + Versi
 
 type Artifact struct{ Name, SHA256 string }
 
-// v1.0.0 is a source release whose only attached asset is nightly-tag.txt.
+// The pinned source release has no reviewed official binary asset hashes.
 // Do not reuse nightly archive names or hashes from a different source commit.
 var releases = map[string]Artifact{}
 

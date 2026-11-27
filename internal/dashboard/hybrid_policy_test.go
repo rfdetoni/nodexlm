@@ -186,3 +186,49 @@ func TestMultiGPUPlacementUsesSeparateConservativeBudgets(t *testing.T) {
 		t.Fatalf("unsafe multi-GPU split: %+v", plan)
 	}
 }
+
+func TestHybridSplitUsesLayerCountsAcrossGuests(t *testing.T) {
+	const gib = uint64(1 << 30)
+	hybrid := RPCGuest{ID: "rtx2060", CapacityBytes: 25 * gib, RPCDeviceKinds: []string{"gpu", "cpu"}, GPUBudgetBytes: 5 * gib, RAMBudgetBytes: 20 * gib}
+	cpu := RPCGuest{ID: "cpu", CapacityBytes: 10 * gib, RPCDeviceKinds: []string{"cpu"}, RAMBudgetBytes: 10 * gib}
+	selection := clusterplan.Selection{LocalLayers: 8, Guests: []clusterplan.Candidate{{ID: hybrid.ID, CapacityBytes: hybrid.CapacityBytes}, {ID: cpu.ID, CapacityBytes: cpu.CapacityBytes}}}
+	plan := planRPCDevices(selection, []RPCGuest{hybrid, cpu}, local.GGUFInfo{BlockCount: 40}, Settings{}, 20*gib)
+	if plan.DeviceArg() != "RPC0,RPC1,RPC2" || plan.TensorSplitArg() != "9,13,10" {
+		t.Fatalf("expected 22 layers on hybrid Guest and 10 on CPU Guest: %+v", plan)
+	}
+	if plan.Modes[hybrid.ID] != "gpu+ram" {
+		t.Fatalf("dedicated GPU + RAM not used: %+v", plan)
+	}
+}
+
+func TestHybridSplitDoesNotAssignLayersToEmptyGuest(t *testing.T) {
+	const gib = uint64(1 << 30)
+	first := RPCGuest{ID: "first", CapacityBytes: gib, RPCDeviceKinds: []string{"gpu", "cpu"}, GPUBudgetBytes: gib / 2, RAMBudgetBytes: gib / 2}
+	second := RPCGuest{ID: "second", CapacityBytes: 20 * gib, RPCDeviceKinds: []string{"cpu"}, RAMBudgetBytes: 20 * gib}
+	selection := clusterplan.Selection{LocalLayers: 8, Guests: []clusterplan.Candidate{{ID: first.ID, CapacityBytes: first.CapacityBytes}, {ID: second.ID, CapacityBytes: second.CapacityBytes}}}
+	plan := planRPCDevices(selection, []RPCGuest{first, second}, local.GGUFInfo{BlockCount: 10}, Settings{}, 5*gib)
+	if plan.DeviceArg() != "RPC2" || len(plan.Split) != 1 || plan.Split[0] != 2 {
+		t.Fatalf("zero-layer Guest must not steal split weight: %+v", plan)
+	}
+}
+
+func TestVRAMPriorityUsesIdleGPUInsteadOfGuestCPU(t *testing.T) {
+	const gib = uint64(1 << 30)
+	hybrid := RPCGuest{ID: "hybrid", CapacityBytes: 25 * gib, RPCDeviceKinds: []string{"gpu", "cpu"}, GPUBudgetBytes: 5 * gib, RAMBudgetBytes: 20 * gib}
+	gpu := RPCGuest{ID: "gpu", CapacityBytes: 8 * gib, RPCDeviceKinds: []string{"gpu"}, GPUBudgetBytes: 8 * gib}
+	available := []RPCGuest{hybrid, gpu}
+	selection := clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: hybrid.ID, CapacityBytes: hybrid.CapacityBytes}, {ID: gpu.ID, CapacityBytes: gpu.CapacityBytes}}}
+	meta := local.GGUFInfo{BlockCount: 20}
+	original := planRPCDevices(selection, available, meta, Settings{}, 10*gib)
+	if original.Modes[hybrid.ID] != "gpu+ram" {
+		t.Fatalf("fixture needs avoidable CPU work: %+v", original)
+	}
+	got := preferGPUAcrossGuests(selection, available, meta, Settings{}, 10*gib)
+	plan := planRPCDevices(got, available, meta, Settings{}, 10*gib)
+	if len(got.GuestLayers) != 2 || plan.DeviceArg() != "RPC0,RPC2" || plan.Modes[hybrid.ID] != "gpu" || got.GuestLayers[0]+got.GuestLayers[1] != 20 {
+		t.Fatalf("idle GPU not used: %+v %+v", got, plan)
+	}
+	if fixed := preferGPUAcrossGuests(selection, available, meta, Settings{PrimaryNode: hybrid.ID}, 10*gib); len(fixed.GuestLayers) != 0 {
+		t.Fatal("explicit primary placement must not be changed")
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/catalog"
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 )
 
@@ -24,6 +25,18 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 	if err != nil || !info.Mode().IsRegular() {
 		return ""
 	}
+	names, err := catalog.ShardNames(filepath.Base(path))
+	if err != nil {
+		return ""
+	}
+	var parts [][2]int64
+	for _, name := range names {
+		part, err := os.Lstat(filepath.Join(filepath.Dir(path), name))
+		if err != nil || !part.Mode().IsRegular() {
+			return ""
+		}
+		parts = append(parts, [2]int64{part.Size(), part.ModTime().UnixNano()})
+	}
 	s.Model, s.Distributed, s.PlacementStrategy = "", false, ""
 	if s.PrimaryNode == "auto" {
 		s.PrimaryNode = ""
@@ -35,7 +48,9 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 		Runtime  string   `json:"runtime"`
 		Bundle   string   `json:"bundle"`
 		Schema   int      `json:"schema"`
-	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version, llamaruntime.BundledRPCRelease(), 2})
+
+		Parts [][2]int64 `json:"parts"`
+	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version, llamaruntime.BundledRPCRelease(), 3, parts})
 	if err != nil {
 		return ""
 	}

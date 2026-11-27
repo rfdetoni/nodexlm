@@ -54,8 +54,11 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 
 func (m *Manager) chooseRPCWithMeasurements(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest, measurements placementMeasurements) (result clusterplan.Selection, resultErr error) {
 	defer func() {
-		if resultErr == nil && selectedMultiGPU(result, guests) && len(planRPCDevices(result, guests, meta, s, size).Devices) == 0 {
-			result, resultErr = clusterplan.Selection{}, errors.New("multi-GPU split exceeds per-device budget; reduce context or add capacity")
+		if resultErr == nil {
+			result = preferGPUAcrossGuests(result, guests, meta, s, size)
+		}
+		if resultErr == nil && (selectedMultiGPU(result, guests) || knownRPCPlacement(result, guests)) && len(planRPCDevices(result, guests, meta, s, size).Devices) == 0 {
+			result, resultErr = clusterplan.Selection{}, errors.New("RPC split exceeds individual CPU/GPU budget; reduce context or add capacity")
 		}
 	}()
 	if explicitPrimary(s.PrimaryNode) {
@@ -295,4 +298,23 @@ func applyLayerBytes(meta local.GGUFInfo, s Settings, size, host uint64, availab
 	*selection = candidate
 	selection.Reason += "; estimated actual GGUF tensor bytes"
 	return nil
+}
+
+func knownRPCPlacement(selection clusterplan.Selection, available []RPCGuest) bool {
+	if len(selection.Guests) == 0 {
+		return false
+	}
+	for _, chosen := range selection.Guests {
+		found := false
+		for _, guest := range available {
+			if guest.ID == chosen.ID && validRPCDeviceKinds(guest) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

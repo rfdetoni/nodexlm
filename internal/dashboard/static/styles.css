@@ -229,3 +229,15 @@ th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-size:
  #consoleMain:has(#view-chat:not([hidden])) .topline .workspace-eyebrow,#consoleMain:has(#view-chat:not([hidden])) #workspaceDescription{display:none}
  .chat-composer>.check-field small{display:none}
 }
+
+/* Benchmark: native progress bars respect CSP and use no chart dependency. */
+.benchmark-results{display:grid;gap:14px}
+.benchmark-report{min-width:0;border:1px solid var(--border);padding:14px;border-radius:var(--radius-card)}
+.benchmark-report h3{overflow-wrap:anywhere}
+.benchmark-chart{margin:12px 0;min-width:0}
+.benchmark-chart h3{font-size:13px;margin-bottom:6px}
+.benchmark-chart-row{display:grid;grid-template-columns:minmax(76px,1fr) minmax(60px,3fr) minmax(76px,auto);gap:8px;align-items:center;font-size:12px;margin:5px 0}
+.benchmark-chart-row span{overflow-wrap:anywhere}
+.benchmark-chart-row strong{text-align:right;font-variant-numeric:tabular-nums}
+.benchmark-bar{width:100%;min-width:0;height:12px;accent-color:var(--accent)}
+.benchmark-ratio{font-size:18px;font-weight:650}

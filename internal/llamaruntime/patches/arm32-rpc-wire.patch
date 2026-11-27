@@ -2,11 +2,11 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
 @@ -327,7 +327,11 @@ static uint64_t fnv_hash(const uint8_t * data, size_t len, uint64_t hash = 0xcb
- }
+ };
  
  static bool send_msg(socket_ptr sock, const void * msg, size_t msg_size) {
 -    if (!sock->send_data(&msg_size, sizeof(msg_size))) {
-+    // GGML RPC v9 has a fixed 8-byte little-endian response length.
++    // GGML RPC has a fixed 8-byte little-endian response length.
 +    // size_t is only four bytes on Android armeabi-v7a: sending it directly
 +    // corrupts HELLO, DEVICE_COUNT, ALLOC_BUFFER and tensor responses.
 +    const uint64_t wire_size = static_cast<uint64_t>(msg_size);

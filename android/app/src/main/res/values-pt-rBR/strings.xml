@@ -289,6 +289,8 @@
     <string name="android_host_unavailable">Inicie o Host primeiro</string>
     <string name="litert_worker_start">Iniciar worker LiteRT-LM no cluster</string>
     <string name="litert_worker_requires_pairing">Importe um modelo e pareie com o Host primeiro</string>
+    <string name="pair_qr_camera_unavailable">Câmera indisponível. Digite o código de pareamento manualmente.</string>
+    <string name="pair_qr_camera_permission">Permita o acesso à câmera nas configurações do aplicativo ou digite o código manualmente.</string>
     <string name="scan_pairing_qr">Escanear QR de pareamento</string>
     <string name="local_document_chat">Chat local com documentos</string>
     <string name="document_attach">Anexar PDF, DOCX ou texto</string>

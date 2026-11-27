@@ -117,6 +117,41 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, rows)
 	}))
+	mux.HandleFunc("GET /api/bench/model-identity", d.api(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		identity, err := d.Manager.benchmarkModelIdentity(ctx, r.URL.Query().Get("model"))
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, identity)
+	}))
+	mux.HandleFunc("GET /api/bench/metadata", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, d.benchmarkMetadata())
+	}))
+	mux.HandleFunc("POST /api/bench/stability", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model   string `json:"model"`
+			Node    string `json:"node_id"`
+			Minutes int    `json:"minutes"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.Minutes < 1 || input.Minutes > 60 {
+			failure(w, 400, errors.New("stability duration must be 1–60 minutes"))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(input.Minutes+10)*time.Minute)
+		defer cancel()
+		rows, err := d.Manager.benchmarkSeriesDuration(ctx, input.Model, input.Node, false, 1, time.Duration(input.Minutes)*time.Minute)
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, rows[0].Inference)
+	}))
 	mux.HandleFunc("POST /api/bench/autotune", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Model string `json:"model"`

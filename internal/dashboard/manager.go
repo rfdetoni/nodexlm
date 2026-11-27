@@ -565,6 +565,15 @@ func (m *Manager) load(ctx context.Context) error {
 	if _, err = os.Stat(path); err != nil {
 		return err
 	}
+	meta, err := local.InspectGGUF(path)
+	if err != nil {
+		return err
+	}
+	if local.EffectiveBackend(s.Backend) != local.BackendMistralRS && (m.binary == "" || m.binary == "llama-server") {
+		if err := llamaruntime.ValidateArchitecture(meta.Architecture); err != nil {
+			return err
+		}
+	}
 	rpcEndpoints := []string(nil)
 	localLayers := 0
 	var devicePlacement RPCDevicePlacement
@@ -581,10 +590,7 @@ func (m *Manager) load(ctx context.Context) error {
 		if provider != nil {
 			guests = provider()
 		}
-		model, err := local.InspectGGUF(path)
-		if err != nil {
-			return err
-		}
+		model := meta
 		if model.BlockCount == 0 {
 			return errors.New("model lacks GGUF block_count needed for distributed placement")
 		}
@@ -644,10 +650,6 @@ func (m *Manager) load(ctx context.Context) error {
 	} else {
 		// The preview and the actual local load must use the same memory
 		// guard. Do not silently ignore high-context KV on the Host.
-		meta, inspectErr := local.InspectGGUF(path)
-		if inspectErr != nil {
-			return inspectErr
-		}
 		size, sizeErr := local.ModelSize(path)
 		if sizeErr != nil {
 			return sizeErr
@@ -658,7 +660,7 @@ func (m *Manager) load(ctx context.Context) error {
 			return budgetErr
 		}
 		loadedMeta, loadedSize, loadedBudget = meta, uint64(size), hostCapacity
-		if inspectErr = validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
+		if inspectErr := validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
 			return inspectErr
 		}
 	}

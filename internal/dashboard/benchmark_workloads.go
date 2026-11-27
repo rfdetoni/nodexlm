@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,7 +67,8 @@ func benchmarkWorkloads(ctx context.Context, engine *local.Managed, key string, 
 				samples = append(samples, sample)
 			}
 			if len(samples) == 3 {
-				sample := medianInferenceSample(samples)
+				sample := medianInferenceSample(slices.Clone(samples))
+				sample.Measurements = samples
 				sample.Runs = 3
 				row.Sample = &sample
 			}

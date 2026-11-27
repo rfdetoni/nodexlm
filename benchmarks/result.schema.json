@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NodexLM public benchmark reports",
+  "type": "array",
+  "minItems": 1,
+  "maxItems": 10,
+  "items": {
+    "type": "object",
+    "required": [
+      "schema",
+      "model",
+      "profile",
+      "measured_at",
+      "rate_basis",
+      "ratio",
+      "rows"
+    ],
+    "properties": {
+      "schema": {
+        "const": "nodexlm-benchmark-v1"
+      },
+      "model": {
+        "type": "string",
+        "maxLength": 512
+      },
+      "profile": {
+        "enum": [
+          "standard",
+          "extended",
+          "compare",
+          "capacity",
+          "stability"
+        ]
+      },
+      "measured_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "rate_basis": {
+        "enum": [
+          "native_decode",
+          "end_to_end"
+        ]
+      },
+      "ratio": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "rows": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 11,
+        "items": {
+          "type": "object",
+          "required": [
+            "target",
+            "sample"
+          ],
+          "properties": {
+            "target": {
+              "type": "string",
+              "pattern": "^(Host|Guest|Cluster( [1-9][0-9]?)?)$"
+            },
+            "sample": {
+              "type": "object",
+              "required": [
+                "kind",
+                "rate_basis",
+                "fingerprint",
+                "tokens",
+                "tokens_per_second"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "benchmark",
+                    "stability"
+                  ]
+                },
+                "rate_basis": {
+                  "enum": [
+                    "native_decode",
+                    "end_to_end"
+                  ]
+                },
+                "fingerprint": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "tokens": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "tokens_per_second": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            },
+            "relay": {
+              "type": "object",
+              "required": [
+                "bytes_to_guest",
+                "bytes_from_guest",
+                "writes_to_guest",
+                "writes_from_guest"
+              ],
+              "properties": {
+                "bytes_to_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "bytes_from_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "writes_to_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "writes_from_guest": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata_before": {
+        "type": "object"
+      },
+      "metadata_after": {
+        "type": "object"
+      },
+      "energy_wh": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "tokens_per_joule": {
+        "type": "number",
+        "minimum": 0
+      },
+      "model_identity": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "additionalProperties": false
+  }
+}

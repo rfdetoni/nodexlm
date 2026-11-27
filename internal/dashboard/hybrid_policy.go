@@ -89,7 +89,7 @@ func selectedMultiGPU(selection clusterplan.Selection, available []RPCGuest) boo
 // --tensor-split determines layer placement, and runtime buffers vary by
 // architecture. Benchmarks decide whether offloading beats Host-only.
 func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta local.GGUFInfo, s Settings, modelBytes uint64) RPCDevicePlacement {
-	if len(selection.Guests) == 0 || meta.BlockCount == 0 || modelBytes == 0 {
+	if len(selection.Guests) == 0 || meta.BlockCount == 0 || meta.BlockCount > 4096 || modelBytes == 0 || modelBytes > ^uint64(0)/115 || selection.LocalLayers < 0 || selection.LocalLayers >= int(meta.BlockCount) {
 		return RPCDevicePlacement{}
 	}
 	byID := make(map[string]RPCGuest, len(available))
@@ -141,112 +141,71 @@ func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta 
 		remainingLayers -= layers
 		remainingBudget -= chosen.CapacityBytes
 
-		// Reserve for approximate weights and KV per assigned layers.
-		if uint64(layers) > 0 && modelBytes > ^uint64(0)/uint64(layers) {
-			return RPCDevicePlacement{}
-		}
-		weight := modelBytes * uint64(layers) / uint64(meta.BlockCount)
-		if detailed || multi {
-			// Use real per-layer weights plus context, with the same 115% margin.
-			fits := func(offset, count int, budget uint64) bool {
-				w := estimatedBlockWeight(meta, modelBytes, offset, count)
-				if w > ^uint64(0)/115 {
-					return false
-				}
-				need := w * 115 / 100
-				if transient != nil {
-					if *transient > ^uint64(0)/uint64(count) {
-						return false
-					}
-					kv := *transient * uint64(count) / uint64(meta.BlockCount)
-					if kv > ^uint64(0)-need {
-						return false
-					}
-					need += kv
-				}
-				return need <= budget
-			}
-			left, offset := layers, start
-			gpuUsed, cpuUsed := false, false
-			for i, kind := range guest.RPCDeviceKinds {
-				budget := rpcDeviceBudget(guest, kind)
-				count := 0
-				for count < left && fits(offset, count+1, budget) {
-					count++
-				}
-				if count == 0 {
-					continue
-				}
-				result.Devices = append(result.Devices, "RPC"+fmt.Sprint(rpcIndex+i))
-				result.Split = append(result.Split, uint64(count))
-				gpuUsed = gpuUsed || kind == "gpu"
-				cpuUsed = cpuUsed || kind == "cpu"
-				offset += count
-				left -= count
-			}
-			if left != 0 || layers == 0 {
-				return RPCDevicePlacement{}
-			}
-			switch {
-			case gpuUsed && cpuUsed:
-				result.Modes[guest.ID] = "gpu+ram"
-			case gpuUsed:
-				result.Modes[guest.ID] = "gpu"
-			default:
-				result.Modes[guest.ID] = "ram"
-			}
+		// Split weights must all have the same unit: layers, not a mixture
+		// of available capacity and estimated allocated MiB. Otherwise the
+		// native normalization silently moves layers across Guests.
+		if layers == 0 {
 			rpcIndex += len(guest.RPCDeviceKinds)
 			continue
 		}
-		if weight > ^uint64(0)/105 {
+		margin := uint64(105)
+		if detailed || multi {
+			margin = 115
+		}
+		fits := func(offset, count int, budget uint64) bool {
+			w := estimatedBlockWeight(meta, modelBytes, offset, count)
+			if w > ^uint64(0)/margin {
+				return false
+			}
+			need := w * margin / 100
+			if transient != nil {
+				if *transient > ^uint64(0)/uint64(count) {
+					return false
+				}
+				kv := *transient * uint64(count) / uint64(meta.BlockCount)
+				if kv > ^uint64(0)-need {
+					return false
+				}
+				need += kv
+			}
+			return need <= budget
+		}
+		left, offset := layers, start
+		gpuUsed, cpuUsed := false, false
+		if !fits(start, layers, chosen.CapacityBytes) {
 			return RPCDevicePlacement{}
 		}
-		// CPU/RAM is not selected unless VRAM cannot cover the model,
-		// explicit KV/batch estimate, and a small tensor overhead.
-		// GPU device budget already reserves headroom separately.
-		required := weight * 105 / 100
-		if transient != nil {
-			if *transient > ^uint64(0)/uint64(layers+1) {
-				return RPCDevicePlacement{}
+		for i, kind := range guest.RPCDeviceKinds {
+			budget := rpcDeviceBudget(guest, kind)
+			count := 0
+			for count < left && fits(offset, count+1, budget) {
+				count++
 			}
-			context := *transient * uint64(layers) / uint64(meta.BlockCount)
-			if context > ^uint64(0)-required {
-				return RPCDevicePlacement{}
+			if count == 0 {
+				continue
 			}
-			required += context
+			result.Devices = append(result.Devices, "RPC"+fmt.Sprint(rpcIndex+i))
+			result.Split = append(result.Split, uint64(count))
+			gpuUsed = gpuUsed || kind == "gpu"
+			cpuUsed = cpuUsed || kind == "cpu"
+			offset += count
+			left -= count
 		}
-		// Weights and context on the GPU are both bounded by the GPU's
-		// own memory reserve, not by total RAM+VRAM reported by the OS.
-		first := "RPC" + fmt.Sprint(rpcIndex)
+		if left != 0 {
+			return RPCDevicePlacement{}
+		}
 		switch {
-		case len(guest.RPCDeviceKinds) == 1 && guest.RPCDeviceKinds[0] == "cpu":
-			result.Devices = append(result.Devices, first)
-			result.Split = append(result.Split, max(uint64(1), guest.RAMBudgetBytes/clusterplan.MiB))
-			result.Modes[guest.ID] = "ram"
-		case len(guest.RPCDeviceKinds) == 1:
-			result.Devices = append(result.Devices, first)
-			result.Split = append(result.Split, max(uint64(1), guest.GPUBudgetBytes/clusterplan.MiB))
-			result.Modes[guest.ID] = "gpu"
-		case required <= guest.GPUBudgetBytes:
-			result.Devices = append(result.Devices, first)
-			result.Split = append(result.Split, max(uint64(1), guest.GPUBudgetBytes/clusterplan.MiB))
+		case gpuUsed && cpuUsed:
+			result.Modes[guest.ID] = "gpu+ram"
+		case gpuUsed:
 			result.Modes[guest.ID] = "gpu"
 		default:
-			// GPU first, RAM for the remainder. Values are proportions,
-			// not byte allocations; the native loader performs the real
-			// placement. Reserve GPU headroom for kernels and scratch.
-			gpuMiB := max(uint64(1), guest.GPUBudgetBytes/clusterplan.MiB)
-			remainingMiB := max(uint64(1), (required-guest.GPUBudgetBytes+clusterplan.MiB-1)/clusterplan.MiB)
-			if remainingMiB > max(uint64(1), guest.RAMBudgetBytes/clusterplan.MiB) {
-				// Planner admission and native capacity disagree; safer
-				// to use the worker's standard split instead.
-				return RPCDevicePlacement{}
-			}
-			result.Devices = append(result.Devices, first, "RPC"+fmt.Sprint(rpcIndex+1))
-			result.Split = append(result.Split, gpuMiB, remainingMiB)
-			result.Modes[guest.ID] = "gpu+ram"
+			result.Modes[guest.ID] = "ram"
 		}
 		rpcIndex += len(guest.RPCDeviceKinds)
+	}
+	if remainingLayers != 0 {
+		return RPCDevicePlacement{}
 	}
 	return result
 }
@@ -358,4 +317,98 @@ func estimatedBlockWeight(meta local.GGUFInfo, size uint64, start, count int) ui
 	}
 	per := size/blocks + min(uint64(1), size%blocks)
 	return per * uint64(count)
+}
+
+// preferGPUAcrossGuests tries one conservative alternative to the existing
+// memory-proportional split. It preserves the selected Guests and Host share,
+// validates actual contiguous layers, and only adopts a larger GPU share.
+// This is a VRAM-priority heuristic, not an estimate of measured tokens/s.
+func preferGPUAcrossGuests(selection clusterplan.Selection, available []RPCGuest, meta local.GGUFInfo, s Settings, size uint64) clusterplan.Selection {
+	n := len(selection.Guests)
+	blocks := int(meta.BlockCount)
+	remote := blocks - selection.LocalLayers
+	if n < 2 || remote < n || blocks <= 0 || blocks > 4096 || size == 0 || size > ^uint64(0)/115 ||
+		explicitPrimary(s.PrimaryNode) || len(selection.GuestLayers) != 0 || !knownRPCPlacement(selection, available) {
+		return selection
+	}
+	unit := size/uint64(blocks) + min(uint64(1), size%uint64(blocks))
+	unit = (unit*115 + 99) / 100
+	if transient := estimateTransientBytes(meta, s); transient != nil {
+		unit += *transient/uint64(blocks) + min(uint64(1), *transient%uint64(blocks))
+	}
+	if unit == 0 {
+		return selection
+	}
+	byID := make(map[string]RPCGuest, len(available))
+	for _, g := range available {
+		byID[g.ID] = g
+	}
+	shares, caps, gpuCaps := make([]int, n), make([]int, n), make([]int, n)
+	for i, chosen := range selection.Guests {
+		guest := byID[chosen.ID]
+		for _, kind := range guest.RPCDeviceKinds {
+			count := int(min(uint64(remote), rpcDeviceBudget(guest, kind)/unit))
+			caps[i] += count
+			if kind == "gpu" {
+				gpuCaps[i] += count
+			}
+		}
+		caps[i] = min(caps[i], int(min(uint64(remote), chosen.CapacityBytes/unit)))
+		gpuCaps[i] = min(gpuCaps[i], caps[i])
+		if caps[i] == 0 {
+			return selection
+		}
+		shares[i] = 1 // keep all admitted Guests participating
+	}
+	left := remote - n
+	for i := range shares {
+		add := min(left, max(0, gpuCaps[i]-shares[i]))
+		shares[i] += add
+		left -= add
+	}
+	// Remaining CPU/RAM layers go to the largest remaining safe capacity.
+	// This avoids arbitrary CPU speed assumptions from VRAM size alone.
+	for left > 0 {
+		best := -1
+		for i := range shares {
+			if caps[i] > shares[i] && (best == -1 || caps[i]-shares[i] > caps[best]-shares[best]) {
+				best = i
+			}
+		}
+		if best < 0 {
+			return selection
+		}
+		add := min(left, caps[best]-shares[best])
+		shares[best] += add
+		left -= add
+	}
+	candidate := selection
+	candidate.GuestLayers = shares
+	next := planRPCDevices(candidate, available, meta, s, size)
+	if len(next.Devices) == 0 {
+		return selection
+	}
+	previous := planRPCDevices(selection, available, meta, s, size)
+	gpuNames := make(map[string]bool)
+	index := 0
+	for _, chosen := range selection.Guests {
+		for _, kind := range byID[chosen.ID].RPCDeviceKinds {
+			gpuNames[fmt.Sprint("RPC", index)] = kind == "gpu"
+			index++
+		}
+	}
+	gpuLayers := func(p RPCDevicePlacement) uint64 {
+		var total uint64
+		for i, name := range p.Devices {
+			if gpuNames[name] {
+				total += p.Split[i]
+			}
+		}
+		return total
+	}
+	if len(previous.Devices) != 0 && gpuLayers(next) <= gpuLayers(previous) {
+		return selection
+	}
+	candidate.Reason += "; VRAM-priority alternative across Guests (estimated; benchmark to verify throughput)"
+	return candidate
 }

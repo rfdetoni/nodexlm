@@ -50,6 +50,10 @@ type benchmarkRound struct {
 // Keep the same admitted native placement across unloaded rounds. Do not
 // persist a partial series or reuse its topology after this request returns.
 func (m *Manager) benchmarkSeries(ctx context.Context, model, nodeID string, extended bool, rounds int) ([]benchmarkRound, error) {
+	return m.benchmarkSeriesDuration(ctx, model, nodeID, extended, rounds, 0)
+}
+
+func (m *Manager) benchmarkSeriesDuration(ctx context.Context, model, nodeID string, extended bool, rounds int, duration time.Duration) ([]benchmarkRound, error) {
 	if rounds < 1 || rounds > 10 || rounds > 1 && (nodeID != "cluster" || extended) {
 		return nil, errors.New("benchmark series requires 1–10 rounds; multiple rounds require cluster without extended workloads")
 	}
@@ -98,7 +102,7 @@ func (m *Manager) benchmarkSeries(ctx context.Context, model, nodeID string, ext
 			}
 		}
 		row := benchmarkRound{RPCStatsBefore: snapshot()}
-		sample, err := m.measureInference(ctx, settings, model, nodeID, extended, provider, fixed)
+		sample, err := m.measureInferenceDuration(ctx, settings, model, nodeID, extended, provider, duration, fixed)
 		if err != nil {
 			return nil, err
 		}
@@ -115,6 +119,9 @@ func (m *Manager) benchmarkSeries(ctx context.Context, model, nodeID string, ext
 	if sample.Fingerprint != m.benchmarkSignature(m.settings, model) {
 		return nil, errors.New("runtime settings changed during benchmark")
 	}
+	if duration > 0 {
+		return rows, nil // Stability is not a placement benchmark.
+	}
 	if _, exists := m.samples[key]; !exists {
 		m.pruneSamplesLocked(time.Now())
 	}
@@ -126,6 +133,10 @@ func (m *Manager) benchmarkSeries(ctx context.Context, model, nodeID string, ext
 }
 
 func (m *Manager) measureInference(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest, frozen ...*benchmarkPlacement) (InferenceSample, error) {
+	return m.measureInferenceDuration(ctx, settings, model, nodeID, extended, provider, 0, frozen...)
+}
+
+func (m *Manager) measureInferenceDuration(ctx context.Context, settings Settings, model, nodeID string, extended bool, provider func() []RPCGuest, duration time.Duration, frozen ...*benchmarkPlacement) (InferenceSample, error) {
 	if settings.VisionProjector != "" {
 		return InferenceSample{}, errors.New("text inference benchmarks require vision projector disabled")
 	}
@@ -261,12 +272,13 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 					return InferenceSample{}, err
 				}
 				engine.RPCLocalLayers = 0
-				if rpcGPUCount(guest) > 1 {
+				if validRPCDeviceKinds(guest) {
 					plan := planRPCDevices(clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}, []RPCGuest{guest}, meta, settings, uint64(size))
 					if len(plan.Devices) == 0 {
-						return InferenceSample{}, errors.New("model does not fit individual GPU budgets")
+						return InferenceSample{}, errors.New("model does not fit individual CPU/GPU budgets")
 					}
 					engine.RPCDeviceNames, engine.RPCTensorSplit = plan.Devices, plan.TensorSplitArg()
+					topology += ":" + plan.DeviceArg() + ":" + plan.TensorSplitArg()
 				}
 				engine.GPULayers = "all"
 				found = true
@@ -304,6 +316,16 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 			key += "@" + nodeID
 		}
 	}
+	if duration > 0 {
+		sample, err := measureStability(ctx, engine, key, request, duration)
+		if err != nil {
+			return InferenceSample{}, err
+		}
+		sample.BenchmarkTopology = topology
+		sample.LoadMilliseconds = loadMilliseconds
+		sample.Fingerprint = m.benchmarkSignature(settings, model)
+		return sample, nil
+	}
 	for i := 0; i < runs; i++ {
 		start := time.Now()
 		raw, err := engine.Complete(ctx, request)
@@ -320,7 +342,8 @@ func (m *Manager) measureInference(ctx context.Context, settings Settings, model
 		measurements = append(measurements, sample)
 	}
 	// A median resists a single noisy network, thermal or scheduling outlier.
-	sample := medianInferenceSample(measurements)
+	sample := medianInferenceSample(slices.Clone(measurements))
+	sample.Measurements = measurements
 	if extended {
 		sample.Workloads = benchmarkWorkloads(ctx, engine, key, request, settings.ContextTokens)
 		if ctx.Err() != nil {
