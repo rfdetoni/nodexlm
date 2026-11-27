@@ -18,6 +18,7 @@ const maxRevokedRecord = 1024
 type persistedAuthority struct {
 	ClusterID     string            `json:"cluster_id"`
 	Epoch         uint64            `json:"epoch"`
+	Fenced        bool              `json:"fenced,omitempty"`
 	PrivateKeyHex string            `json:"private_key_hex"`
 	RevokedNodes  map[string]uint64 `json:"revoked_nodes,omitempty"`
 }
@@ -75,6 +76,10 @@ func (s *Server) loadAuthorityLocked() error {
 	}
 	s.clusterID = meta.ClusterID
 	s.epoch = meta.Epoch
+	s.fenced = meta.Fenced
+	if s.fenced {
+		s.draining = true
+	}
 	s.authorityPriv = priv
 	s.authorityPub = pub
 	s.revokedNodes = make(map[string]uint64, len(meta.RevokedNodes))
@@ -97,6 +102,7 @@ func (s *Server) saveAuthorityLocked() error {
 	meta := persistedAuthority{
 		ClusterID:     s.clusterID,
 		Epoch:         s.epoch,
+		Fenced:        s.fenced,
 		PrivateKeyHex: hex.EncodeToString(s.authorityPriv),
 		RevokedNodes:  s.revokedNodes,
 	}

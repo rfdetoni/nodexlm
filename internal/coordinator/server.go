@@ -69,6 +69,9 @@ type Server struct {
 	rpcDrain           func(string)
 	modelCacheDir      string
 	modelCacheSlots    chan struct{}
+	draining           bool
+	fenced             bool
+	handoff            HandoffState
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
@@ -138,6 +141,12 @@ func (s *Server) handler(administrative bool) http.Handler {
 		mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 		mux.HandleFunc("DELETE /v1/jobs/{id}", s.cancelJob)
 		mux.HandleFunc("POST /v1/chat/completions", s.chat)
+		mux.HandleFunc("POST /v1/handoff/plan", s.handoffPlanHTTP)
+		mux.HandleFunc("POST /v1/handoff/start", s.handoffStartHTTP)
+		mux.HandleFunc("GET /v1/handoff/status", s.handoffStatusHTTP)
+		mux.HandleFunc("POST /v1/handoff/cancel", s.handoffCancelHTTP)
+		mux.HandleFunc("POST /v1/handoff/rollback", s.handoffRollbackHTTP)
+		mux.HandleFunc("POST /v1/handoff/verify", s.handoffVerifyHTTP)
 	}
 	return requestlog.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -382,6 +391,11 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			fail(w, 401, "node authorization revoked")
 			return
 		}
+		if s.fenced {
+			s.mu.Unlock()
+			fail(w, http.StatusConflict, "coordinator fenced at newer epoch")
+			return
+		}
 		n.device.LastSeen = time.Now()
 		n.device.Status = "online"
 		n.device.Models = append([]string(nil), req.Models...)
@@ -438,7 +452,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.Runtime.RPCDevices = append([]string(nil), req.Runtime.RPCDevices...)
 			// RPC readiness is set exclusively by the authenticated tunnel.
 		}
-		if n.active == "" {
+		if n.active == "" && !s.draining && !s.fenced {
 			for i, jid := range s.queue {
 				j := s.jobs[jid]
 				if j == nil || j.Status != "queued" {
@@ -581,6 +595,14 @@ func (s *Server) queueJob(req protocol.ChatRequest) (*protocol.Job, error) {
 	}
 	job := &protocol.Job{ID: id, Request: req, Status: "queued", Created: time.Now()}
 	s.mu.Lock()
+	if s.fenced {
+		s.mu.Unlock()
+		return nil, errors.New("coordinator is fenced at a newer epoch")
+	}
+	if s.draining {
+		s.mu.Unlock()
+		return nil, errors.New("coordinator is draining for handoff")
+	}
 	if len(s.queue) >= 128 || len(s.jobs) >= 4096 {
 		s.mu.Unlock()
 		return nil, errors.New("queue at capacity")
@@ -725,6 +747,10 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 	n := s.nodes[id]
 	if n == nil || !auth(r, n.credential) {
 		fail(w, 401, "node authorization revoked")
+		return
+	}
+	if s.fenced {
+		fail(w, http.StatusConflict, "coordinator fenced at newer epoch")
 		return
 	}
 	// An already-draining Guest cannot re-advertise itself as healthy just
