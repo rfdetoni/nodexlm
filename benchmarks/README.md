@@ -26,3 +26,11 @@ for the entire timed workload; failures abort rather than invent a success.
 Before/after device snapshots are not peak memory readings. Energy is
 optional, manually measured across the entire stability run; no energy
 sensor is simulated.
+
+Enable SHA-256 in the browser or use --hash-model on the CLI to include
+the actual identity of each model shard; hashing is opt-in and streams
+the entire file with bounded RAM.
+
+GitHub Pages can deploy the static report using the Benchmarks Pages
+workflow once repository Settings → Pages → GitHub Actions is enabled.
+No hardware results are uploaded automatically.

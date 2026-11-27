@@ -41,6 +41,7 @@ func benchmarkRun(args []string) error {
 	server := f.String("server", "http://127.0.0.1:8787", "management origin")
 	ca := f.String("ca", "", "trusted Host CA")
 	output := f.String("output", "", "new private JSON file (never overwritten)")
+	hashModel := f.Bool("hash-model", false, "stream SHA-256 of each model shard")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -69,7 +70,12 @@ func benchmarkRun(args []string) error {
 	defer cancel()
 	requestCtx, stop := context.WithTimeout(baseCtx, 100*time.Minute)
 	defer stop()
-	var before, after json.RawMessage
+	var before, after, identity json.RawMessage
+	if *hashModel {
+		if _, err := client.Request(requestCtx, "GET", "/api/bench/model-identity?model="+url.QueryEscape(*model), nil, &identity); err != nil {
+			return err
+		}
+	}
 	if _, err := client.Request(requestCtx, "GET", "/api/bench/metadata", nil, &before); err != nil {
 		return err
 	}
@@ -152,7 +158,7 @@ func benchmarkRun(args []string) error {
 		return err
 	}
 	// CLI report is intentionally private: native samples may contain device IDs.
-	report := map[string]any{"schema": "nodexlm-private-benchmark-v1", "model": *model, "profile": *profile, "rate_basis": basis, "measured_at": time.Now().UTC(), "ratio": ratio, "rows": rows, "metadata_before": before, "metadata_after": after, "client_version": version}
+	report := map[string]any{"schema": "nodexlm-private-benchmark-v1", "model": *model, "profile": *profile, "rate_basis": basis, "measured_at": time.Now().UTC(), "ratio": ratio, "rows": rows, "metadata_before": before, "metadata_after": after, "client_version": version, "model_identity": identity}
 	file, err := os.OpenFile(*output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
@@ -207,7 +213,7 @@ func benchmarkCompare(args []string) error {
 			Model   string `json:"model"`
 			Profile string `json:"profile"`
 
-			Rows    []struct {
+			Rows []struct {
 				Target string                    `json:"target"`
 				Sample dashboard.InferenceSample `json:"sample"`
 			} `json:"rows"`

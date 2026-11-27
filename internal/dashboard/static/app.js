@@ -1269,10 +1269,12 @@ async function runBenchmarkReport(){
  if(residentModelNames.length||latestStatus?.runtime?.loaded||latestStatus?.runtime?.loading)throw Error('Descarregue os modelos antes do benchmark.');
  const controller=new AbortController();benchmarkController=controller;$('benchmarkCancel').disabled=false;
  const status=$('benchmarkStatus'),rows=[],signal=controller.signal;
+ let identity=null;
  const minutes=Number($('benchmarkMinutes').value),energy=$('benchmarkEnergy').value===''?null:Number($('benchmarkEnergy').value);
  const single=(node,extended=false)=>api('/api/bench/inference','POST',{model,node_id:node,extended},signal);
  const add=(sample,name)=>{if(!sample||!(sample.model===model||sample.model.startsWith(model+'@'))||!benchmarkComparable([sample]))throw Error('Medição inválida ou suspeita.');rows.push({target:name,sample});};
  try{
+  if($('benchmarkHashModel').checked){status.textContent='Calculando SHA-256 dos shards…';identity=await api('/api/bench/model-identity?model='+encodeURIComponent(model),'GET',undefined,signal);}
   const metadata_before=await api('/api/bench/metadata','GET',undefined,signal);
   if(profile==='stability'){
    if(!Number.isInteger(minutes)||minutes<1||minutes>60)throw Error('Use 1–60 minutos.');
@@ -1298,7 +1300,7 @@ async function runBenchmarkReport(){
   const ratio=host&&cluster.length?benchmarkMedian(cluster.map(r=>r.sample.tokens_per_second))/host.sample.tokens_per_second:null;
   const metadata_after=await api('/api/bench/metadata','GET',undefined,signal);
   const totalTokens=rows.reduce((sum,r)=>sum+(r.sample.measurements?.length&&r.sample.kind!=='stability'?r.sample.measurements.reduce((n,m)=>n+m.tokens,0):r.sample.tokens),0);
-  const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,metadata_before,metadata_after,...(energy>0&&profile==='stability'?{energy_wh:energy,tokens_per_joule:totalTokens/(energy*3600)}:{}),rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample),...(r.relay?{relay:r.relay}:{})}))};
+  const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,metadata_before,metadata_after,model_identity:identity,...(energy>0&&profile==='stability'?{energy_wh:energy,tokens_per_joule:totalTokens/(energy*3600)}:{}),rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample),...(r.relay?{relay:r.relay}:{})}))};
   benchmarkReports.push(report);benchmarkReports=benchmarkReports.slice(-10);renderBenchmarkReports();
   status.textContent='Concluído. Exporte os dados antes de sair.';
   await refreshBenchmarkRecent();

@@ -89,7 +89,7 @@ func selectedMultiGPU(selection clusterplan.Selection, available []RPCGuest) boo
 // --tensor-split determines layer placement, and runtime buffers vary by
 // architecture. Benchmarks decide whether offloading beats Host-only.
 func planRPCDevices(selection clusterplan.Selection, available []RPCGuest, meta local.GGUFInfo, s Settings, modelBytes uint64) RPCDevicePlacement {
-	if len(selection.Guests) == 0 || meta.BlockCount == 0 || modelBytes == 0 {
+	if len(selection.Guests) == 0 || meta.BlockCount == 0 || meta.BlockCount > 4096 || modelBytes == 0 || modelBytes > ^uint64(0)/115 || selection.LocalLayers < 0 || selection.LocalLayers >= int(meta.BlockCount) {
 		return RPCDevicePlacement{}
 	}
 	byID := make(map[string]RPCGuest, len(available))
@@ -317,4 +317,98 @@ func estimatedBlockWeight(meta local.GGUFInfo, size uint64, start, count int) ui
 	}
 	per := size/blocks + min(uint64(1), size%blocks)
 	return per * uint64(count)
+}
+
+// preferGPUAcrossGuests tries one conservative alternative to the existing
+// memory-proportional split. It preserves the selected Guests and Host share,
+// validates actual contiguous layers, and only adopts a larger GPU share.
+// This is a VRAM-priority heuristic, not an estimate of measured tokens/s.
+func preferGPUAcrossGuests(selection clusterplan.Selection, available []RPCGuest, meta local.GGUFInfo, s Settings, size uint64) clusterplan.Selection {
+	n := len(selection.Guests)
+	blocks := int(meta.BlockCount)
+	remote := blocks - selection.LocalLayers
+	if n < 2 || remote < n || blocks <= 0 || blocks > 4096 || size == 0 || size > ^uint64(0)/115 ||
+		explicitPrimary(s.PrimaryNode) || len(selection.GuestLayers) != 0 || !knownRPCPlacement(selection, available) {
+		return selection
+	}
+	unit := size/uint64(blocks) + min(uint64(1), size%uint64(blocks))
+	unit = (unit*115 + 99) / 100
+	if transient := estimateTransientBytes(meta, s); transient != nil {
+		unit += *transient/uint64(blocks) + min(uint64(1), *transient%uint64(blocks))
+	}
+	if unit == 0 {
+		return selection
+	}
+	byID := make(map[string]RPCGuest, len(available))
+	for _, g := range available {
+		byID[g.ID] = g
+	}
+	shares, caps, gpuCaps := make([]int, n), make([]int, n), make([]int, n)
+	for i, chosen := range selection.Guests {
+		guest := byID[chosen.ID]
+		for _, kind := range guest.RPCDeviceKinds {
+			count := int(min(uint64(remote), rpcDeviceBudget(guest, kind)/unit))
+			caps[i] += count
+			if kind == "gpu" {
+				gpuCaps[i] += count
+			}
+		}
+		caps[i] = min(caps[i], int(min(uint64(remote), chosen.CapacityBytes/unit)))
+		gpuCaps[i] = min(gpuCaps[i], caps[i])
+		if caps[i] == 0 {
+			return selection
+		}
+		shares[i] = 1 // keep all admitted Guests participating
+	}
+	left := remote - n
+	for i := range shares {
+		add := min(left, max(0, gpuCaps[i]-shares[i]))
+		shares[i] += add
+		left -= add
+	}
+	// Remaining CPU/RAM layers go to the largest remaining safe capacity.
+	// This avoids arbitrary CPU speed assumptions from VRAM size alone.
+	for left > 0 {
+		best := -1
+		for i := range shares {
+			if caps[i] > shares[i] && (best == -1 || caps[i]-shares[i] > caps[best]-shares[best]) {
+				best = i
+			}
+		}
+		if best < 0 {
+			return selection
+		}
+		add := min(left, caps[best]-shares[best])
+		shares[best] += add
+		left -= add
+	}
+	candidate := selection
+	candidate.GuestLayers = shares
+	next := planRPCDevices(candidate, available, meta, s, size)
+	if len(next.Devices) == 0 {
+		return selection
+	}
+	previous := planRPCDevices(selection, available, meta, s, size)
+	gpuNames := make(map[string]bool)
+	index := 0
+	for _, chosen := range selection.Guests {
+		for _, kind := range byID[chosen.ID].RPCDeviceKinds {
+			gpuNames[fmt.Sprint("RPC", index)] = kind == "gpu"
+			index++
+		}
+	}
+	gpuLayers := func(p RPCDevicePlacement) uint64 {
+		var total uint64
+		for i, name := range p.Devices {
+			if gpuNames[name] {
+				total += p.Split[i]
+			}
+		}
+		return total
+	}
+	if len(previous.Devices) != 0 && gpuLayers(next) <= gpuLayers(previous) {
+		return selection
+	}
+	candidate.Reason += "; VRAM-priority alternative across Guests (estimated; benchmark to verify throughput)"
+	return candidate
 }

@@ -54,6 +54,9 @@ func (m *Manager) chooseRPC(s Settings, meta local.GGUFInfo, size uint64, hostBu
 
 func (m *Manager) chooseRPCWithMeasurements(s Settings, meta local.GGUFInfo, size uint64, hostBudget uint64, guests []RPCGuest, measurements placementMeasurements) (result clusterplan.Selection, resultErr error) {
 	defer func() {
+		if resultErr == nil {
+			result = preferGPUAcrossGuests(result, guests, meta, s, size)
+		}
 		if resultErr == nil && (selectedMultiGPU(result, guests) || knownRPCPlacement(result, guests)) && len(planRPCDevices(result, guests, meta, s, size).Devices) == 0 {
 			result, resultErr = clusterplan.Selection{}, errors.New("RPC split exceeds individual CPU/GPU budget; reduce context or add capacity")
 		}

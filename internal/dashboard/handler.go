@@ -117,6 +117,16 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, rows)
 	}))
+	mux.HandleFunc("GET /api/bench/model-identity", d.api(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		identity, err := d.Manager.benchmarkModelIdentity(ctx, r.URL.Query().Get("model"))
+		if err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 200, identity)
+	}))
 	mux.HandleFunc("GET /api/bench/metadata", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, d.benchmarkMetadata())
 	}))

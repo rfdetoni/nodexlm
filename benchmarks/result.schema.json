@@ -145,6 +145,12 @@
       "tokens_per_joule": {
         "type": "number",
         "minimum": 0
+      },
+      "model_identity": {
+        "type": [
+          "object",
+          "null"
+        ]
       }
     },
     "additionalProperties": false

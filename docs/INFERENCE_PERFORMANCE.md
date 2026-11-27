@@ -171,3 +171,10 @@ de memória. Não é confirmação de bytes nativos alocados.
 Preencher RAM desnecessariamente pode reduzir tokens/s: decode é sequencial.
 A estratégia Capacidade privilegia memória agregada; Velocidade usa medições
 comparáveis do Host e Guests. Validar em hardware real antes de alegar ganhos.
+
+The planner also checks a conservative VRAM-priority alternative between
+selected Guests. It preserves the Host share and manual primary choice,
+requires all selected native device budgets, and accepts the alternative
+only if feasible and more GPU layers are available (or baseline was
+infeasible). Remaining CPU layers use available RAM without guessing CPU
+throughput. Compare A/B in physical hardware; no speed gain is guaranteed.
