@@ -66,7 +66,11 @@ type Settings struct {
 // Use the same preflight for the plan, benchmark and actual load.
 func (m *Manager) inspectInferenceGGUF(path string, s Settings) (local.GGUFInfo, error) {
 	if local.EffectiveBackend(s.Backend) == local.BackendLlama && (m.binary == "" || m.binary == "llama-server") {
-		return local.InspectBundledGGUF(path)
+		meta, err := local.InspectBundledGGUF(path)
+		if !errors.Is(err, llamaruntime.ErrTrellisFormat) {
+			return meta, err
+		}
+		return local.InspectTrellisGGUF(path)
 	}
 	return local.InspectGGUF(path)
 }
@@ -580,6 +584,9 @@ func (m *Manager) load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if meta.Trellis && s.Distributed {
+		return errors.New("Trellis/Gyro runtime is Host-only until matching RPC workers are validated; disable distributed inference explicitly")
+	}
 	rpcEndpoints := []string(nil)
 	localLayers := 0
 	var devicePlacement RPCDevicePlacement
@@ -675,7 +682,9 @@ func (m *Manager) load(ctx context.Context) error {
 	// Speed preference may legitimately choose Host-only while the user
 	// keeps distributed capability enabled in settings.
 	usingRPC := s.Distributed && len(rpcEndpoints) > 0
-	if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {
+	if meta.Trellis {
+		resolved, err = llamaruntime.ResolveTrellis(m.dir, s.HostGPU)
+	} else if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {
 		// This opt-in backend is separately resolved by local.Managed.
 		resolved = ""
 	} else if usingRPC && (m.binary == "" || m.binary == "llama-server") {
@@ -706,6 +715,7 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	m.setPhase("loading_model")
 	engine := managedFromSettings(s, resolved, path, s.Model, draftPath)
+	engine.TrellisRuntime = meta.Trellis
 	if usingRPC {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers

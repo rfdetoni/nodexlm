@@ -160,6 +160,9 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	if err != nil {
 		return InferenceSample{}, err
 	}
+	if meta.Trellis && nodeID != "" {
+		return InferenceSample{}, errors.New("Trellis/Gyro runtime is Host-only; select Host local for the benchmark")
+	}
 	benchmarkPhase(ctx, "memory", fmt.Sprintf("%d blocks; %.2f GiB", meta.BlockCount, float64(size)/(1<<30)))
 	hostBudget, err := m.hostBudget(settings, hardware.Collect("Host", nil))
 	if err != nil {
@@ -175,7 +178,9 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	}
 	benchmarkPhase(ctx, "runtime", "")
 	binary := m.binary
-	if local.EffectiveBackend(settings.Backend) == local.BackendMistralRS {
+	if meta.Trellis {
+		binary, err = llamaruntime.ResolveTrellis(m.dir, settings.HostGPU)
+	} else if local.EffectiveBackend(settings.Backend) == local.BackendMistralRS {
 		if nodeID != "" {
 			return InferenceSample{}, errors.New("mistral.rs benchmark cannot target NodexLM RPC Guests")
 		}
@@ -205,6 +210,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	}
 	engine := managedFromSettings(settings, binary, path, model, draftPath)
 	engine.UnboundedStartup = true
+	engine.TrellisRuntime = meta.Trellis
 	var topology string
 	var loadGuests []RPCGuest
 	benchmarkPhase(ctx, "placement", "")

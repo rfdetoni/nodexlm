@@ -59,6 +59,7 @@ type Managed struct {
 	UnboundedStartup bool
 
 	RPCNativeScheduler bool
+	TrellisRuntime     bool
 
 	// Native RPC devices are selected by the Host before model loading.
 	// RPCDeviceNames contains registered llama.cpp names such as RPC0/RPC1;
@@ -199,6 +200,9 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 	}
 	meta, err := InspectGGUF(m.ModelPath)
+	if m.TrellisRuntime {
+		meta, err = InspectTrellisGGUF(m.ModelPath)
+	}
 	if err != nil {
 		return fmt.Errorf("invalid GGUF model: %w", err)
 	}
@@ -246,7 +250,11 @@ func (m *Managed) ensure(ctx context.Context) error {
 	// Bundled llama.cpp binaries load libggml.so from their own directory.
 	// Without this, startup may fail even when the --help RPC probe passed.
 	if EffectiveBackend(m.Backend) == BackendLlama {
-		smolEnv, err := smolmax.NativeEnvironment(launch.Binary, os.Getenv("NODEXLM_SMOLMAX_MODE"), meta.IsMoE, meta.ExpertCount, gpu, len(m.RPCServers))
+		mode := os.Getenv("NODEXLM_SMOLMAX_MODE")
+		if m.TrellisRuntime && mode != "" && mode != "off" {
+			return errors.New("Smolmax is not validated on the separate Trellis runtime")
+		}
+		smolEnv, err := smolmax.NativeEnvironment(launch.Binary, mode, meta.IsMoE, meta.ExpertCount, gpu, len(m.RPCServers))
 		if err != nil {
 			return fmt.Errorf("smolmax native settings: %w", err)
 		}

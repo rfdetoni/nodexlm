@@ -1,14 +1,27 @@
 package llamaruntime
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ggmlTypeCount and removed IDs mirror ggml/include/ggml.h at SourceCommit.
 // This is a format admission check, not a guarantee of backend kernel support.
 const ggmlTypeCount = 44
 
+var ErrTrellisFormat = errors.New("Trellis GGUF requires a separate native runtime")
+
+func ValidateTrellisTensorType(kind uint32, tensor string) error {
+	if kind >= 144 && kind <= 149 {
+		return nil
+	}
+	return ValidateTensorType(kind, tensor)
+}
+
 func ValidateTensorType(kind uint32, tensor string) error {
-	if kind == 144 {
-		return fmt.Errorf("tensor %q uses GGML type 144 (Agention TQ2_T/Gyro-M); bundled llama.cpp %s does not support it; use a standard GGUF or a compatible custom runtime (distributed Guests must also support the format)", tensor, Version)
+	if kind >= 144 && kind <= 149 {
+		name := [...]string{"TQ2_T", "TQK6", "TQK7", "TQP5", "TQP6", "TQP7"}[kind-144]
+		return fmt.Errorf("%w: tensor %q uses GGML type %d (%s); stock llama.cpp %s is incompatible", ErrTrellisFormat, tensor, kind, name, Version)
 	}
 	switch kind {
 	case 4, 5, 31, 32, 33, 36, 37, 38:

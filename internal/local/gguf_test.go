@@ -175,4 +175,31 @@ func TestBundledGGUFRejectsCustomTensorTypeAfterStandardType(t *testing.T) {
 	if _, err := InspectBundledGGUF(path); err == nil || !strings.Contains(err.Error(), "TQ2_T") {
 		t.Fatalf("expected clear custom-format error, got %v", err)
 	}
+	if meta, err := InspectTrellisGGUF(path); err != nil || !meta.Trellis {
+		t.Fatalf("expected separate trellis format admission: %+v %v", meta, err)
+	}
+}
+
+func TestTrellisTypeSizes(t *testing.T) {
+	for i, size := range []uint64{34, 26, 30, 42, 50, 58} {
+		if block, got := tensorTypeSize(uint32(144 + i)); block != 128 || got != size {
+			t.Fatalf("unexpected trellis block layout for type %d: %d/%d", 144+i, block, got)
+		}
+	}
+}
+
+func TestTrellisPLERequiresDocumentedSidecar(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Qwen3.8-Flash-Next-Gyro-M-TQ2_0-noPLE.gguf")
+	meta := GGUFInfo{Architecture: "qwen4exp"}
+	if _, err := TrellisPLE(path, meta); err == nil {
+		t.Fatal("accepted missing PLE")
+	}
+	sidecar := filepath.Join(dir, flashNextPLE)
+	if err := os.WriteFile(sidecar, ggufTestFile("qwen4exp", 0, 0), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := TrellisPLE(path, meta); err != nil || got != sidecar {
+		t.Fatalf("PLE path %q: %v", got, err)
+	}
 }
