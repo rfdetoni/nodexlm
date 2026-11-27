@@ -35,8 +35,21 @@ type InferenceRPCTraffic struct {
 	RequestWindowSeconds float64                `json:"request_window_seconds,omitempty"`
 
 	// SSE-observed boundary, not an exact native phase.
-	PrefillWindow *InferenceRPCTraffic `json:"until_first_event,omitempty"`
-	DecodeWindow  *InferenceRPCTraffic `json:"after_first_event,omitempty"`
+	PrefillWindow *rpcTrafficWindow `json:"until_first_event,omitempty"`
+	DecodeWindow  *rpcTrafficWindow `json:"after_first_event,omitempty"`
+}
+
+type rpcTrafficWindow struct {
+	BytesToGuest   uint64 `json:"bytes_to_guest"`
+	BytesFromGuest uint64 `json:"bytes_from_guest"`
+}
+
+func trafficWindow(nodes []string, before, after map[string]rpcmesh.TunnelStats) *rpcTrafficWindow {
+	traffic := inferenceTraffic(nodes, before, after)
+	if traffic == nil {
+		return nil
+	}
+	return &rpcTrafficWindow{BytesToGuest: traffic.BytesToGuest, BytesFromGuest: traffic.BytesFromGuest}
 }
 
 func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
@@ -69,10 +82,14 @@ func inferenceTraffic(nodes []string, before, after map[string]rpcmesh.TunnelSta
 	return result
 }
 
-func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string, before, after map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
+func (m *Manager) recordRPCTraffic(model string, start time.Time, nodes []string, before, after map[string]rpcmesh.TunnelStats, first ...map[string]rpcmesh.TunnelStats) *InferenceRPCTraffic {
 	traffic := inferenceTraffic(nodes, before, after)
 	if traffic == nil {
 		return nil
+	}
+	if len(first) > 0 && first[0] != nil {
+		traffic.PrefillWindow = trafficWindow(nodes, before, first[0])
+		traffic.DecodeWindow = trafficWindow(nodes, first[0], after)
 	}
 	// This window includes the request's prefill and decode. Dividing by it
 	// does not claim per-device kernel throughput or per-token RPC latency.

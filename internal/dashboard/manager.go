@@ -81,7 +81,7 @@ func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string)
 		SpeculativeTokens: s.SpeculativeTokens,
 		SpeculativeMode:   s.SpeculativeMode, DraftModelPath: draftPath, KeepLoaded: true,
 		VisionProjectorPath: projector,
-		RPCNativeScheduler: s.RPCNativeScheduler,
+		RPCNativeScheduler:  s.RPCNativeScheduler,
 	}
 }
 

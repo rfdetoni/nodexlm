@@ -92,11 +92,7 @@ func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, 
 		err := generate(generationCtx, engine, req)
 		if err == nil {
 			after := provider()
-			traffic := m.recordRPCTraffic(req.Model, start, nodes, baseline, after)
-			if traffic != nil && first != nil {
-				traffic.PrefillWindow = inferenceTraffic(nodes, baseline, first)
-				traffic.DecodeWindow = inferenceTraffic(nodes, first, after)
-			}
+			traffic := m.recordRPCTraffic(req.Model, start, nodes, baseline, after, first)
 			for _, callback := range onTraffic {
 				callback(traffic)
 			}

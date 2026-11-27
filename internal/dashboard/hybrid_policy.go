@@ -429,7 +429,7 @@ func preferGPUAcrossGuests(selection clusterplan.Selection, available []RPCGuest
 		}
 		return total
 	}
-	if len(previous.Devices) != 0 && gpuLayers(next) <= gpuLayers(previous) {
+	if len(previous.Devices) != 0 && len(next.Modes) <= len(previous.Modes) && gpuLayers(next) <= gpuLayers(previous) {
 		return selection
 	}
 	candidate.Reason += "; VRAM-priority alternative across Guests (estimated; benchmark to verify throughput)"

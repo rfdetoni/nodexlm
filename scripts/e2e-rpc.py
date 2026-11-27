@@ -255,6 +255,18 @@ def main():
                 api('/api/unload','POST',{}).close()
                 api('/api/settings','PUT',settings).close()
                 print('PASS: explicit whole-Guest primary, preview and loaded topology agree')
+            if guest_count == 2 and os.environ.get('NODEXLM_TEST_DEVICE_MICROBENCH') == '1':
+                # Exercise native output/offload mode with small known weights and
+                # two actual independent CPU RPC workers, not just argument tests.
+                native = {**settings, 'rpc_native_scheduler': True}
+                api('/api/settings','PUT',native).close()
+                api('/api/load','POST',{}).close()
+                wait_for(loaded,120)
+                reply=json.load(api('/v1/chat/completions','POST',{'model':model.name,'messages':[{'role':'user','content':'Once upon a time'}],'max_tokens':8},key=env['NODEXLM_API_KEY']))
+                assert reply.get('choices') and reply.get('usage',{}).get('completion_tokens',0)>0,reply
+                api('/api/unload','POST',{}).close()
+                api('/api/settings','PUT',settings).close()
+                print('PASS: native RPC output scheduler on two real Guests')
             # An inference key must not access administrative resources.
             try:
                 api('/api/settings','PUT',settings,key=env['NODEXLM_API_KEY'])
