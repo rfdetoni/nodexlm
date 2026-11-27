@@ -63,7 +63,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	meta, err := local.InspectGGUF(path)
+	meta, err := m.inspectInferenceGGUF(path, settings)
 	if err != nil {
 		return nil, err
 	}

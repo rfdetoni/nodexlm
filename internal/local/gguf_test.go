@@ -149,3 +149,30 @@ func TestInspectGGUFTensorBytes(t *testing.T) {
 		t.Fatalf("unexpected tensor sizes: %+v %v", meta, err)
 	}
 }
+
+func TestBundledGGUFRejectsCustomTensorTypeAfterStandardType(t *testing.T) {
+	raw := ggufTestFile("llama", 0, 0)
+	binary.LittleEndian.PutUint64(raw[8:16], 2)
+	var b bytes.Buffer
+	b.Write(raw)
+	write := func(v any) { _ = binary.Write(&b, binary.LittleEndian, v) }
+	for i, kind := range []uint32{35, 144} {
+		name := fmt.Sprintf("blk.%d.weight", i)
+		write(uint64(len(name)))
+		b.WriteString(name)
+		write(uint32(1))
+		write(uint64(256))
+		write(kind)
+		write(uint64(0))
+	}
+	path := filepath.Join(t.TempDir(), "gyro.gguf")
+	if err := os.WriteFile(path, b.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InspectGGUF(path); err != nil {
+		t.Fatalf("generic metadata inspection must remain available: %v", err)
+	}
+	if _, err := InspectBundledGGUF(path); err == nil || !strings.Contains(err.Error(), "TQ2_T") {
+		t.Fatalf("expected clear custom-format error, got %v", err)
+	}
+}

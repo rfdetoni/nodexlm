@@ -63,6 +63,14 @@ type Settings struct {
 	RPCNativeScheduler bool `json:"rpc_native_scheduler,omitempty"`
 }
 
+// Use the same preflight for the plan, benchmark and actual load.
+func (m *Manager) inspectInferenceGGUF(path string, s Settings) (local.GGUFInfo, error) {
+	if local.EffectiveBackend(s.Backend) == local.BackendLlama && (m.binary == "" || m.binary == "llama-server") {
+		return local.InspectBundledGGUF(path)
+	}
+	return local.InspectGGUF(path)
+}
+
 // managedFromSettings keeps native options identical for loads and benchmarks.
 // RPC placement remains a caller-specific override.
 func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string) *local.Managed {
@@ -568,14 +576,9 @@ func (m *Manager) load(ctx context.Context) error {
 	if _, err = os.Stat(path); err != nil {
 		return err
 	}
-	meta, err := local.InspectGGUF(path)
+	meta, err := m.inspectInferenceGGUF(path, s)
 	if err != nil {
 		return err
-	}
-	if local.EffectiveBackend(s.Backend) != local.BackendMistralRS && (m.binary == "" || m.binary == "llama-server") {
-		if err := llamaruntime.ValidateArchitecture(meta.Architecture); err != nil {
-			return err
-		}
 	}
 	rpcEndpoints := []string(nil)
 	localLayers := 0

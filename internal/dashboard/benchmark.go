@@ -156,7 +156,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	if err != nil {
 		return InferenceSample{}, err
 	}
-	meta, err := local.InspectGGUF(path)
+	meta, err := m.inspectInferenceGGUF(path, settings)
 	if err != nil {
 		return InferenceSample{}, err
 	}

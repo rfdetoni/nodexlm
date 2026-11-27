@@ -175,6 +175,11 @@ func (m *Manager) tuneInferenceTarget(ctx context.Context, model, node string) (
 	}
 	measure(TuneCandidate{Name: "baseline", Settings: s})
 	first := report.Candidates[0].Sample
+	if first == nil {
+		// A failed baseline cannot establish a comparable workload. Do not
+		// reload the same incompatible model for every candidate.
+		return report, ctx.Err()
+	}
 	report.PlacementFixed = fixed != nil && fixed.ready && first != nil && len(fixed.devices.Devices) > 0
 	slowRPC := node != "" && first != nil && m.slowBenchmarkRPC(first.BenchmarkTopology)
 	link := ""
