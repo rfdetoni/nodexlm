@@ -87,6 +87,7 @@ class MainActivity : Activity() {
             uiHandler.postDelayed(this, 2000L)
         }
     }
+    private val cameraPermission = 904
     private val pickModel = 900
     private val pickCertificate = 901
     private val pickDecision = 902
@@ -305,17 +306,43 @@ class MainActivity : Activity() {
         deviceName=field(pairing,getString(R.string.device_name),
             deviceNameDraft ?: (prefs.getString("name",Build.MODEL) ?: Build.MODEL))
         pairing.addView(action(getString(R.string.ui_c06cce69d22b)) {joinCluster()})
-        pairing.addView(action(getString(R.string.scan_pairing_qr)) {
-            com.google.zxing.integration.android.IntentIntegrator(this)
-                .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
-                .setBeepEnabled(false).setOrientationLocked(false).initiateScan()
-        })
+        pairing.addView(action(getString(R.string.scan_pairing_qr)) { scanPairingQr() })
         pairing.addView(action(getString(R.string.ui_5701de13e132)) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type="*/*";addCategory(Intent.CATEGORY_OPENABLE)
             },pickCertificate)
         })
         content.addView(pairing)
+    }
+
+    private fun scanPairingQr() {
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+            setStatus(getString(R.string.pair_qr_camera_unavailable))
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), cameraPermission)
+            return
+        }
+        try {
+            com.google.zxing.integration.android.IntentIntegrator(this)
+                .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+                .setBeepEnabled(false).setOrientationLocked(false).initiateScan()
+        } catch (e: android.content.ActivityNotFoundException) {
+            setStatus(getString(R.string.pair_qr_camera_unavailable))
+        } catch (e: SecurityException) {
+            setStatus(getString(R.string.pair_qr_camera_permission))
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != cameraPermission) return
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            scanPairingQr()
+        } else {
+            setStatus(getString(R.string.pair_qr_camera_permission))
+        }
     }
 
     private fun processingScreen() {
@@ -939,7 +966,11 @@ class MainActivity : Activity() {
         val scan = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(requestCode,resultCode,data)
         if (scan != null) {
             val content = scan.contents
-            if (content != null && content.length <= 2048) {
+            if (content == null && data?.getBooleanExtra("MISSING_CAMERA_PERMISSION", false) == true) {
+                setStatus(getString(R.string.pair_qr_camera_permission))
+            } else if (content != null && content.length > 2048) {
+                setStatus(getString(R.string.pair_qr_invalid))
+            } else if (content != null) {
                 val parsed = runCatching { parsePairingLink(content) }.getOrNull()
                 if (parsed != null) {
                     coordinatorDraft = parsed.first

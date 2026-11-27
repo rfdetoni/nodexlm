@@ -2,6 +2,12 @@ name: Portable RPC bundles
 # Build immutable candidate once, promote reviewed hashes rather than rebuild.
 on:
   workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    paths:
+      - 'internal/llamaruntime/revision.json'
+      - 'internal/llamaruntime/patches/**'
+      - 'scripts/optimized-rpc-backend-search.patch'
 permissions:
   contents: read
 concurrency:
@@ -9,6 +15,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       fail-fast: false
       matrix:

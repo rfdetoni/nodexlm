@@ -297,7 +297,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 	for {
 		select {
 		case <-exit.done:
-			return fmt.Errorf("%s exited while loading the model: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
+			return nativeLoadError(EffectiveBackend(m.Backend), exit.err, stderr.String())
 		default:
 		}
 		// Each /health probe has its own short deadline, independent of the
@@ -337,7 +337,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 		select {
 		case <-exit.done:
-			return fmt.Errorf("%s exited while loading the model: %v; recent native output: %s", EffectiveBackend(m.Backend), exit.err, stderr.String())
+			return nativeLoadError(EffectiveBackend(m.Backend), exit.err, stderr.String())
 		case <-startup.Done():
 			stopProcess()
 			if errors.Is(startup.Err(), context.DeadlineExceeded) {
@@ -507,4 +507,11 @@ func (m *Managed) parallelRPCUploadEligible() bool {
 		}
 	}
 	return count > 1
+}
+
+func nativeLoadError(backend string, err error, output string) error {
+	if strings.Contains(output, "unknown model architecture:") {
+		return fmt.Errorf("%s cannot recognize the GGUF architecture; update the native runtime or use a compatible model: %v; recent native output: %s", backend, err, output)
+	}
+	return fmt.Errorf("%s exited while loading the model: %v; recent native output: %s", backend, err, output)
 }

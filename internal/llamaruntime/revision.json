@@ -1,16 +1,9 @@
 {
-  "version": "v1.0.0",
-  "commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
-  "rpc_release": "nodexlm-rpc-v1.0.0-r6",
-  "rpc_candidate_release": "nodexlm-rpc-v1.0.0-r6",
-  "published": {
-    "darwin/arm64/metal": "d0a1153e92dcd2f57a541ecb53ad18327c061580cafc811aca67961c1577354b",
-    "linux/amd64/cpu": "2cfbd7eef6f0f8dd3f928ea703210c735e9a7ad5c4642d4460577e0965d8da6d",
-    "linux/amd64/vulkan": "dd3f999886214cdc9e5b3e063ec119301303c8b0aeeb5315c1345309dbb0044a",
-    "linux/arm64/cpu": "8490c8010b70bf7b4da553ac241ea5711d7858e2ffc590af57345e2cda95c3cf",
-    "windows/amd64/cpu": "ae41c615d87aa01a4094afd622fdf9510152dfa761569fc8c6fc5a036cfcebc1",
-    "windows/amd64/vulkan": "64e5e14d3a95e2906dbdc6dd15a17fbb26279481ec947ca64c8b48336bb1ff44"
-  },
+  "version": "v1.1.0",
+  "commit": "171527522610996f5f0acf12334e185156ca8f44",
+  "rpc_release": "nodexlm-rpc-v1.1.0-r1",
+  "rpc_candidate_release": "nodexlm-rpc-v1.1.0-r1",
+  "published": {},
   "unix_rpc": true,
   "parallel_rpc_uploads": true,
   "rpc_protocol_major": 10,

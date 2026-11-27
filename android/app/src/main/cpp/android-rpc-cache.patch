@@ -2,8 +2,8 @@ diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
 @@ -1797,21 +1797,68 @@
-         }
-     }
+             __func__, rpc_log_format_tensor(tensor).c_str(), (void*)tensor->buffer, tensor->data, offset,
+             rpc_log_format_size(size).c_str());
  
 -    if (cache_dir && cache_flag) {
 -        // the whole data is needed to compute the hash

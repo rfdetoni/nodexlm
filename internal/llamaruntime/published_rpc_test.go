@@ -73,9 +73,6 @@ func TestPublishedRPCVerifiedInstall(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	if !publishedRPCSupported("cpu") {
-		t.Skip("platform has no published CPU pair")
-	}
 	home := t.TempDir()
 	srv, rpc, err := fetchPublishedRPC(context.Background(), home, "cpu", server.URL)
 	if err != nil {
@@ -96,9 +93,6 @@ func TestPublishedRPCTamperRejected(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	if !publishedRPCSupported("cpu") {
-		t.Skip("platform has no published CPU pair")
-	}
 	if _, _, err := fetchPublishedRPC(context.Background(), t.TempDir(), "cpu", server.URL); err == nil {
 		t.Fatal("accepted corrupted runtime")
 	}

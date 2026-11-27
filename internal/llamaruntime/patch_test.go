@@ -53,6 +53,12 @@ func TestNativeTraceAndExperimentalCUDACaches(t *testing.T) {
 		}
 		return
 	}
+	if Version != "v1.0.0" {
+		if experimentalCUDASelected("cuda") {
+			t.Fatal("experimental CUDA archive must not cross source revisions")
+		}
+		return
+	}
 	if !experimentalCUDASelected("cuda") || experimentalCUDASelected("cpu") {
 		t.Fatal("experimental CUDA must be explicitly selected")
 	}

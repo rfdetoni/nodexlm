@@ -29,7 +29,7 @@ const experimentalCUDABaseURL = "https://github.com/rfdetoni/nodexlm/releases/do
 const experimentalCUDADigest = "73d7c5242c6072cb2bcf8973f63f5dd9e7e680350844ba6ed2ddba7b0ef5beef"
 
 func experimentalCUDASelected(backend string) bool {
-	return backend == "cuda" && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" &&
+	return Version == "v1.0.0" && backend == "cuda" && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" &&
 		os.Getenv("NODEXLM_EXPERIMENTAL_CUDA") == "1" && !nativeTraceBuild()
 }
 
