@@ -120,8 +120,8 @@ func withRPCProbe(ctx context.Context, endpoint string, timeout time.Duration, r
 		return 0, fmt.Errorf("incomplete RPC HELLO response: %w", err)
 	}
 	major, minor := llamaruntime.RPCProtocolVersion()
-	if response[0] != major || response[1] != minor {
-		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires %d.%d); update Host and Guest together", response[0], response[1], response[2], major, minor)
+	if response[0] != major || response[1] != minor || response[2] != llamaruntime.RPCProtocolPatch() {
+		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires %d.%d.%d); update Host and Guest together", response[0], response[1], response[2], major, minor, llamaruntime.RPCProtocolPatch())
 	}
 	var countCommand [9]byte
 	countCommand[0] = 15

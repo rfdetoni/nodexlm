@@ -44,3 +44,5 @@ tensor tests are required before enabling distributed Trellis. No Android,
 Windows, macOS or GPU binary release is claimed by this adapter. The CPU
 candidate workflow checks source compilation and the CLI flag, not actual
 126B-model generation or hardware performance.
+
+Automatic provisioning: selecting a supported Trellis model triggers a pinned native build if the separate runtime is absent, using the installed Git/CMake/C++ toolchain. No administrator privileges are requested. Known noPLE models automatically fetch the reviewed 54.4 GB table, verify its SHA-256 and publish atomically. A Trellis load uses effective Host-only settings, leaving normal GGUF preferences unchanged. The preview does not download or compile anything. Insufficient Host memory fails before provisioning; matching distributed Trellis workers are still required. The stock RPC probe now enforces the patch version as well as major/minor.

@@ -27,9 +27,9 @@ func resolveCLIModelRuntime(ctx context.Context, home, binary, path string, forc
 	if err != nil {
 		return "", false, err
 	}
-	if _, err := local.TrellisPLE(path, meta); err != nil {
+	if _, err := local.EnsureTrellisPLE(ctx, path, meta, nil); err != nil {
 		return "", false, err
 	}
-	resolved, err := llamaruntime.ResolveTrellis(home, "auto")
+	resolved, err := llamaruntime.EnsureTrellis(ctx, home, "auto")
 	return resolved, true, err
 }

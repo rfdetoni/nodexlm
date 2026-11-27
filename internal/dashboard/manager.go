@@ -224,6 +224,10 @@ func (m *Manager) State() map[string]any {
 		phase = "idle"
 	}
 	state := map[string]any{"backend": local.EffectiveBackend(m.settings.Backend), "model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError, "in_flight": len(m.generations)}
+	if m.engine != nil && m.engine.TrellisRuntime {
+		state["backend"] = "trellis"
+		state["runtime_notice"] = "Trellis Host-only: no compatible distributed workers validated"
+	}
 	if m.nativeSystemInfo != "" {
 		state["native_system_info"] = m.nativeSystemInfo
 	}
@@ -437,16 +441,12 @@ func (m *Manager) StartLoad() error {
 	m.mu.Lock()
 	distributed := m.settings.Distributed
 	m.mu.Unlock()
-	limit := 30 * time.Minute
-	if distributed {
-		limit = 90 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	ctx, cancel := context.WithCancel(context.Background())
 	if err := m.beginLoad(cancel); err != nil {
 		cancel()
 		return err
 	}
-	slog.Info("Model load accepted", "distributed", distributed, "timeout_minutes", int(limit.Minutes()))
+	slog.Info("Model load accepted", "distributed", distributed)
 	go func() {
 		defer cancel()
 		m.runLoad(ctx)
@@ -589,12 +589,12 @@ func (m *Manager) load(ctx context.Context) error {
 		return err
 	}
 	if meta.Trellis {
+		// Never send Trellis tensors to stock RPC Guests. The local fallback
+		// remains subject to the ordinary memory admission below.
 		if s.Distributed {
-			return errors.New("Trellis/Gyro runtime is Host-only until matching RPC workers are validated; disable distributed inference explicitly")
+			slog.Warn("Trellis runtime has no validated compatible RPC workers; considering Host-only placement")
 		}
-		if _, err := local.TrellisPLE(path, meta); err != nil {
-			return err
-		}
+		s = trellisHostSettings(s)
 	}
 	rpcEndpoints := []string(nil)
 	localLayers := 0
@@ -683,6 +683,9 @@ func (m *Manager) load(ctx context.Context) error {
 		}
 		loadedMeta, loadedSize, loadedBudget = meta, uint64(size), hostCapacity
 		if inspectErr := validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
+			if meta.Trellis {
+				return fmt.Errorf("Trellis requires matching RPC Guests, unavailable in this release; Host-only memory admission: %w", inspectErr)
+			}
 			return inspectErr
 		}
 	}
@@ -692,7 +695,11 @@ func (m *Manager) load(ctx context.Context) error {
 	// keeps distributed capability enabled in settings.
 	usingRPC := s.Distributed && len(rpcEndpoints) > 0
 	if meta.Trellis {
-		resolved, err = llamaruntime.ResolveTrellis(m.dir, s.HostGPU)
+		resolved, err = llamaruntime.EnsureTrellis(ctx, m.dir, s.HostGPU)
+		if err == nil {
+			m.setPhase("resolving_model_dependencies")
+			_, err = local.EnsureTrellisPLE(ctx, path, meta, nil)
+		}
 	} else if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {
 		// This opt-in backend is separately resolved by local.Managed.
 		resolved = ""
@@ -725,6 +732,9 @@ func (m *Manager) load(ctx context.Context) error {
 	m.setPhase("loading_model")
 	engine := managedFromSettings(s, resolved, path, s.Model, draftPath)
 	engine.TrellisRuntime = meta.Trellis
+	if meta.Trellis {
+		engine.UnboundedStartup = true
+	}
 	if usingRPC {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers

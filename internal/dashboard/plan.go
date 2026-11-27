@@ -68,12 +68,7 @@ func (m *Manager) Plan() (map[string]any, error) {
 		return nil, err
 	}
 	if meta.Trellis {
-		if settings.Distributed {
-			return nil, errors.New("Trellis/Gyro runtime currently requires Host-only placement")
-		}
-		if _, err := local.TrellisPLE(path, meta); err != nil {
-			return nil, err
-		}
+		settings = trellisHostSettings(settings)
 	}
 	size, err := local.ModelSize(path)
 	if err != nil {
@@ -93,6 +88,9 @@ func (m *Manager) Plan() (map[string]any, error) {
 	excluded := []string{}
 	var suggestions []planSuggestion
 	selectionReason := "Local-only inference"
+	if meta.Trellis {
+		selectionReason = "Trellis: runtime especializado e PLE provisionados sob demanda; execução local até existirem Guests RPC compatíveis."
+	}
 	if settings.Distributed {
 		var guests []RPCGuest
 		if provider != nil {

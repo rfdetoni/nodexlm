@@ -44,6 +44,10 @@ func startProbeServer(t *testing.T, behavior string) (string, <-chan error) {
 		var response [36]byte
 		binary.LittleEndian.PutUint64(response[:8], 28)
 		response[8], response[9] = llamaruntime.RPCProtocolVersion()
+		response[10] = llamaruntime.RPCProtocolPatch()
+		if behavior == "patch" {
+			response[10]++
+		}
 		if behavior == "version" {
 			response[8]--
 		}
@@ -51,7 +55,7 @@ func startProbeServer(t *testing.T, behavior string) (string, <-chan error) {
 			done <- err
 			return
 		}
-		if behavior == "version" {
+		if behavior == "version" || behavior == "patch" {
 			done <- nil
 			return
 		}
@@ -106,4 +110,13 @@ func TestProbeHelloNeverDialsExternalIP(t *testing.T) {
 	if _, err := ProbeHello(context.Background(), "192.168.1.10:50052"); err == nil {
 		t.Fatal("probe must require loopback relay")
 	}
+}
+
+func TestProbeHelloRejectsIncompatiblePatch(t *testing.T) {
+	endpoint, done := startProbeServer(t, "patch")
+	_, err := ProbeHello(context.Background(), endpoint)
+	if err == nil || !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("expected incompatible native operation enum: %v", err)
+	}
+	<-done
 }
