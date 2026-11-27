@@ -84,7 +84,7 @@ def valid_sample(data, name: str):
         raise ValueError(f"{name}: unknown token-rate basis")
     if data.get("suspect") is True:
         raise ValueError(f"{name}: benchmark was marked suspect")
-    if not isinstance(data.get("tokens"), int) or data["tokens"] <= 0:
+    if type(data.get("tokens")) is not int or data["tokens"] <= 0:
         raise ValueError(f"{name}: missing runtime token counts")
     return data
 
@@ -97,13 +97,18 @@ def traffic_delta(round_data):
     after = round_data.get("rpc_stats_after")
     if not isinstance(before, dict) or not isinstance(after, dict):
         raise ValueError("missing paired native relay snapshots")
+    if before.keys() != after.keys():
+        raise ValueError("RPC relay membership changed during benchmark")
     results = {}
     for node, current in after.items():
-        if node not in before:
-            continue
         previous = before[node]
         if not isinstance(previous, dict) or not isinstance(current, dict):
             raise ValueError("malformed relay stats")
+        epoch = previous.get("relay_epoch")
+        end_epoch = current.get("relay_epoch")
+        if (type(epoch) is not int or epoch <= 0 or type(end_epoch) is not int
+                or end_epoch != epoch):
+            raise ValueError("RPC relay epoch changed or missing during benchmark")
         counters = {}
         for key in COUNTERS:
             first, last = previous.get(key), current.get(key)

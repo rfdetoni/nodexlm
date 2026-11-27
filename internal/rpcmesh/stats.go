@@ -11,7 +11,7 @@ type TunnelStats struct {
 	LastActivityMS        int64  `json:"last_activity_ms,omitempty"`
 	WritesToGuest         uint64 `json:"writes_to_guest"`
 	WritesFromGuest       uint64 `json:"writes_from_guest"`
-	Epoch                 uint64 `json:"-"`
+	Epoch                 uint64 `json:"relay_epoch,omitempty"`
 	FramedWireToGuest     uint64 `json:"framed_wire_bytes_to_guest,omitempty"`
 	FramedWireFromGuest   uint64 `json:"framed_wire_bytes_from_guest,omitempty"`
 	FramedNativeToGuest   uint64 `json:"framed_native_bytes_to_guest,omitempty"`

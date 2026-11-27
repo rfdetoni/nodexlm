@@ -60,7 +60,7 @@ diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -25,7 +25,10 @@
+@@ -25,7 +25,11 @@
  
  #include <algorithm>
  #include <cstddef>
@@ -68,11 +68,12 @@ diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 +#include <cinttypes>
 +#include <cstdlib>
 +#include <cstdio>
++#include <chrono>
 +#include "ggml-backend.h"
  #include <deque>
  #include <exception>
  #include <memory>
-@@ -1114,7 +1117,10 @@
+@@ -1114,7 +1118,10 @@
  
      std::unique_ptr<server_prompt_cache> prompt_cache;
  
@@ -84,7 +85,7 @@ diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
  
      // queued prompt stats - llama_decode() is async, so the timing is only valid after a sync
      // note: kept out of server_metrics, which is copied as-is into the task result
-@@ -2138,7 +2144,14 @@
+@@ -2138,7 +2145,14 @@
          return true;
      }
  
@@ -100,7 +101,7 @@ diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
          // remember which tokens were sampled - used for repetition penalties during sampling
          const std::string token_str = result.text_to_send;
          slot.sampled = result.tok;
-@@ -4712,13 +4725,31 @@
+@@ -4712,13 +4726,36 @@
  
          // yield to the queue, so we can still handle metrics tasks while decoding
          // note: the sync is done here too, so that the wait is also covered by the yield
@@ -119,6 +120,7 @@ diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 +        nodexlm_trace_batch_id = trace ? ++trace_seq : 0;
 +        nodexlm_trace_single = trace && slots.size() == 1 && !spec && !batch.has_embd() && batch.view.size() == 1 && has_output;
 +        int ret = 0;
++        uint64_t decode_us = 0;
 +        queue_tasks.yield_to_queue([&]() {
 +            struct trace_scope {
 +                bool active;
@@ -127,14 +129,18 @@ diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 +                }
 +                ~trace_scope() { if (active) ggml_backend_set_trace_batch(0); }
 +            } scope(nodexlm_trace_batch_id);
++            const auto started = trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 +            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());
 +            if (ret == 0 && has_output) {
 +                llama_synchronize(ctx_tgt);
 +            }
++            if (trace) {
++                decode_us = (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
++            }
 +        });
 +        if (nodexlm_trace_batch_id != 0) {
-+            fprintf(stderr, "NODEXLM_NATIVE_BATCH batch=%" PRIu64 " inputs=%d status=%d output=%d\n",
-+                    nodexlm_trace_batch_id, (int) batch.view.size(), ret, int(has_output));
++            fprintf(stderr, "NODEXLM_NATIVE_BATCH batch=%" PRIu64 " inputs=%d status=%d output=%d decode_us=%" PRIu64 "\n",
++                    nodexlm_trace_batch_id, (int) batch.view.size(), ret, int(has_output), decode_us);
 +        }
  
          if (ret != 0) {

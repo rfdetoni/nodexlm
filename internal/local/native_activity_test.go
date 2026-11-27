@@ -23,3 +23,21 @@ func TestNativeActivityTrace(t *testing.T) {
 		t.Fatalf("non-attributable batch accepted: %+v", last)
 	}
 }
+
+func TestNativeActivityDecodeDuration(t *testing.T) {
+	trace := &nativeTrace{}
+	for i, suffix := range []string{" decode_us=1234", "", " decode_us=-1", " decode_us=0"} {
+		batch := i + 1
+		s := fmt.Sprintf("NODEXLM_NATIVE_SPLIT batch=%d split=0 nodes=7 backend=CPU\nNODEXLM_NATIVE_BATCH batch=%d inputs=1 status=0 output=1%s\nNODEXLM_NATIVE_TOKEN batch=%d task=0 slot=0 ordinal=2 attributable=1\n", batch, batch, suffix, batch)
+		_, _ = trace.Write([]byte(s))
+	}
+	got := trace.snapshot()
+	if len(got) != 3 || got[0].DecodeMicroseconds == nil || *got[0].DecodeMicroseconds != 1234 ||
+		got[1].DecodeMicroseconds != nil || got[2].Batch != 4 || got[2].DecodeMicroseconds == nil || *got[2].DecodeMicroseconds != 0 {
+		t.Fatalf("unexpected native duration: %+v", got)
+	}
+	*got[0].DecodeMicroseconds = 9
+	if *trace.snapshot()[0].DecodeMicroseconds != 1234 {
+		t.Fatal("snapshot mutated trace")
+	}
+}

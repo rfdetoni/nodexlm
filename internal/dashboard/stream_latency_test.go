@@ -89,3 +89,22 @@ func TestObservedPhaseRatesRejectInterleavingAndSingleChunkAnswer(t *testing.T) 
 		t.Fatalf("single text event has no measurable visible interval: %+v", sample)
 	}
 }
+
+func TestObservedPhaseRatesRejectMultipleChoices(t *testing.T) {
+	start := time.Now()
+	for _, frames := range [][]string{
+		{`{"choices":[{"index":0,"delta":{"reasoning_content":"think"}},{"index":1,"delta":{"content":"other"}}]}`, `{"choices":[{"index":0,"delta":{"content":"answer"}}]}`},
+		{`{"choices":[{"index":0,"delta":{"reasoning_content":"think"}}]}`, `{"choices":[{"index":1,"delta":{"content":"answer"}}]}`},
+	} {
+		latency := streamLatency{start: start}
+		for i, frame := range frames {
+			latency.observe([]byte(frame), start.Add(time.Duration(i+1)*time.Millisecond))
+		}
+		count := 5
+		sample := InferenceSample{ReasoningTokens: &count, NonReasoningTokens: &count}
+		latency.apply(&sample)
+		if sample.PhaseRateBasis != "" || sample.ObservedReasoningTokensPerSecond != nil || sample.ObservedAnswerTokensPerSecond != nil {
+			t.Fatalf("multi-choice usage cannot be attributed: %+v", sample)
+		}
+	}
+}

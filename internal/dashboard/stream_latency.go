@@ -13,12 +13,15 @@ type streamLatency struct {
 	firstText, firstReasoning time.Time
 	lastText                  time.Time
 	interleaved               bool
+	choiceIndex               int
+	choiceSeen                bool
 	gaps                      []float64
 }
 
 func (l *streamLatency) observe(payload []byte, now time.Time) {
 	var event struct {
 		Choices []struct {
+			Index int `json:"index"`
 			Delta struct {
 				Content   string            `json:"content"`
 				Reasoning string            `json:"reasoning_content"`
@@ -29,10 +32,19 @@ func (l *streamLatency) observe(payload []byte, now time.Time) {
 	if json.Unmarshal(payload, &event) != nil {
 		return
 	}
+	if len(event.Choices) > 1 {
+		l.interleaved = true
+	}
+	observed := false
 	for _, choice := range event.Choices {
 		d := choice.Delta
 		if d.Content == "" && d.Reasoning == "" && len(d.Tools) == 0 {
 			continue
+		}
+		if !l.choiceSeen {
+			l.choiceIndex, l.choiceSeen = choice.Index, true
+		} else if l.choiceIndex != choice.Index {
+			l.interleaved = true
 		}
 		// Do not infer separate phase throughput when a stream mixes
 		// visible text and reasoning in the same event, or resumes reasoning
@@ -54,6 +66,9 @@ func (l *streamLatency) observe(payload []byte, now time.Time) {
 		if len(d.Tools) != 0 {
 			l.interleaved = true
 		}
+		observed = true
+	}
+	if observed {
 		if l.first.IsZero() {
 			l.first = now
 		}
@@ -61,7 +76,6 @@ func (l *streamLatency) observe(payload []byte, now time.Time) {
 			l.gaps = append(l.gaps, float64(now.Sub(l.last))/float64(time.Millisecond))
 		}
 		l.last = now
-		break
 	}
 }
 

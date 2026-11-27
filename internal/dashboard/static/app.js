@@ -69,9 +69,10 @@ function renderActivity(data){
   area.append(el('p','','Atividade nativa · últimos '+native.length+' tokens atribuíveis'));
   for(const item of native.slice(-5)){
    const splits=(item.splits||[]).map(split=>{const node=topologySnapshot?.nodes?.find(n=>n.node_id===split.node_id);return (split.node_id?displayNodeName(split.node_id,node?.name)+' / ':'')+split.backend+': '+split.count+' envio(s) de grafo';}).join(' · ');
-   area.append(el('p','muted','Token '+item.ordinal+' · lote '+item.batch+' · '+splits));
+   const duration=Number.isFinite(item.decode_microseconds)&&item.decode_microseconds>=0?' · decode sincronizado '+(item.decode_microseconds/1000).toFixed(2)+' ms':'';
+   area.append(el('p','muted','Token '+item.ordinal+' · lote '+item.batch+duration+' · '+splits));
   }
-  area.append(el('p','muted','Submissões nativas, não utilização, latência ou tempo de GPU. Nomes de backend reportados pelo runtime.'));
+  area.append(el('p','muted','Submissões nativas e tempo de parede do lote sincronizado (inclui RPC e diagnóstico), não tempo de GPU ou utilização. Nomes de backend reportados pelo runtime.'));
  }
  const active=[];
  for(const node of data.nodes||[]){
@@ -798,7 +799,7 @@ async function sendChat(){
   }
   }
   if(controller.signal.aborted||chatSession!==sessionEpoch)return;
-  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();if($('prompt').value.trim()===prompt)$('prompt').value='';if($('chatDocument').files?.[0]===documentFile)$('chatDocument').value='';if($('chatImage').files?.[0]===imageFile)$('chatImage').value='';
+  chatHistory.push({role:'user',content:prompt},{role:'assistant',content:answer});chatHistory=chatHistory.slice(-62);saveChat();
   if(!answer)reply.textContent='Resposta vazia.';
   const elapsed=(performance.now()-start)/1000;
   const relative=stamp=>stamp===null?null:(stamp-start)/1000;
