@@ -32,6 +32,7 @@ type benchmarkProgressEvent struct {
 	Traffic    []benchmarkProgressTraffic `json:"traffic,omitempty"`
 	Result     any                        `json:"result,omitempty"`
 	Error      string                     `json:"error,omitempty"`
+
 	// Internal fields never enter JSON.
 	rpcGuests []RPCGuest
 	baseline  map[string]rpcmesh.TunnelStats

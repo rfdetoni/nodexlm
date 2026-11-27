@@ -20,7 +20,7 @@ import (
 // local relay. Tunnel counts and heartbeats alone do not prove that a Guest can
 // answer the protocol's first request.
 //
-// v1.0.0: HELLO command=14, 24-byte capability payload; the response is
+// v1.1.0: HELLO command=14, 24-byte capability payload; the response is
 // an 8-byte little-endian length followed by 28 bytes. DEVICE_COUNT is
 // command=15, 0-byte payload and an unsigned 32-bit response.
 // Keep this probe in sync with internal/llamaruntime/revision.json.
@@ -47,7 +47,7 @@ func ProbeTensorUpload(ctx context.Context, endpoint string, expectedGPUFree ...
 				binary.LittleEndian.PutUint32(req[:], uint32(device))
 				response, err := rpcProbeRoundtrip(conn, 11, req[:], 16)
 				if err != nil {
-					return err
+					return fmt.Errorf("RPC device %d GET_DEVICE_MEMORY: %w", device, err)
 				}
 				free, total := binary.LittleEndian.Uint64(response[:8]), binary.LittleEndian.Uint64(response[8:])
 				if free < required || free > total {
@@ -55,7 +55,7 @@ func ProbeTensorUpload(ctx context.Context, endpoint string, expectedGPUFree ...
 				}
 			}
 			if err := probeNativeTensor(conn, uint32(device)); err != nil {
-				return err
+				return fmt.Errorf("RPC device %d failed tensor upload/readback: %w", device, err)
 			}
 		}
 		return ctx.Err()
@@ -167,7 +167,7 @@ func writeRPCProbe(conn net.Conn, data []byte) error {
 
 const (
 	rpcProbeTensorBytes = 64 << 10
-	// ggml-rpc.cpp v1.0.0 packs rpc_tensor with 4 dimensions, 10 sources,
+	// ggml-rpc.cpp v1.1.0 packs rpc_tensor with 4 dimensions, 10 sources,
 	// 64 bytes of op parameters and a 64-byte name. The fixed layout is 296 B.
 	// Keep in sync with internal/llamaruntime/revision.json.
 	rpcProbeTensorWireSize = 296
@@ -186,7 +186,7 @@ func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasu
 	binary.LittleEndian.PutUint64(alloc[4:], uint64(tensorBytes))
 	response, err := rpcProbeRoundtrip(conn, 0, alloc[:], 16)
 	if err != nil {
-		return TensorMeasurement{}, fmt.Errorf("ALLOC_BUFFER: %w", err)
+		return TensorMeasurement{}, fmt.Errorf("ALLOC_BUFFER (%d bytes): %w", tensorBytes, err)
 	}
 	buffer := binary.LittleEndian.Uint64(response[:8])
 	size := binary.LittleEndian.Uint64(response[8:])
@@ -208,7 +208,7 @@ func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasu
 		return TensorMeasurement{}, errors.New("BUFFER_GET_BASE returned an invalid native address")
 	}
 
-	// rpc_tensor's packed layout on GGML RPC v10 (see pinned v1.0.0 source):
+	// rpc_tensor's packed layout on GGML RPC v10 (see pinned v1.1.0 source):
 	// id@0; type@8; buffer@12; ne@20; nb@36; op@52;
 	// op_params@56; flags@120; src@124; view_src@204;
 	// view_offs@212; data@220; name@228; use_count@292.

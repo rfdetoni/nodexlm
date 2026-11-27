@@ -48,7 +48,7 @@ func (m *Manager) benchmarkModelIdentity(ctx context.Context, model string) (map
 			return nil, err
 		}
 		parts = append(parts, part)
-		benchmarkProgress(ctx, benchmarkProgressEvent{Phase: "hash", Detail: name, Current: i+1, Total: len(names)})
+		benchmarkProgress(ctx, benchmarkProgressEvent{Phase: "hash", Detail: name, Current: i + 1, Total: len(names)})
 	}
 	return map[string]any{"model": model, "architecture": meta.Architecture, "parts": parts}, nil
 }

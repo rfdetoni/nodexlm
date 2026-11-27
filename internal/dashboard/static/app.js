@@ -1187,6 +1187,8 @@ const benchmarkPhaseText={
  runtime:['Preparando runtime','Localizando ou instalando o motor nativo compatível.'],
  placement:['Planejando camadas','Selecionando Host e dispositivos CPU/GPU adequados.'],
  preflight:['Validando Guests','Testando conexão, alocação e transferência RPC antes da carga.'],
+ preflight_retry:['Recuperando conexão RPC','A conexão foi interrompida. Nova tentativa com túnel autenticado independente.'],
+ preflight_ok:['Guest validado','Alocação, envio e leitura de tensor confirmados.'],
  load:['Carregando modelo','O runtime está alocando buffers e carregando os pesos. O total transferível não é conhecido.'],
  warmup:['Aquecimento','Executando uma requisição de até 8 tokens, excluída da medição.'],
  measure:['Inferência medida','Executando o prompt fixo de até 64 tokens; aguardando a resposta do runtime.'],
