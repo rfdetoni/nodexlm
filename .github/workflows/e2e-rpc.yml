@@ -10,6 +10,7 @@ on:
     paths: ['.github/workflows/e2e-rpc.yml', 'scripts/test-console.cjs', 'internal/llamaruntime/revision.json', 'internal/local/managed.go', 'internal/pairing/**', 'scripts/hardware-acceptance.py', 'internal/openai/**', 'internal/dashboard/openai.go', 'internal/dashboard/handler.go', 'internal/dashboard/benchmark.go', 'internal/dashboard/benchmark_placement.go', 'internal/local/openai.go', 'scripts/test-openai-sdk.py']
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: nodexlm-real-rpc-${{ github.ref }}
   cancel-in-progress: true
@@ -27,17 +28,37 @@ jobs:
           cache: true
       - name: Download pinned native runtime and tiny test model
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib,json,pathlib,urllib.request
+          import hashlib,json,pathlib,subprocess,tempfile,urllib.error,urllib.request
           revision=json.loads(pathlib.Path('internal/llamaruntime/revision.json').read_text())
           downloads=[
               ('rpc.tar.gz',f'https://github.com/rfdetoni/nodexlm/releases/download/{revision["rpc_release"]}/nodexlm-rpc_{revision["version"]}_linux_amd64_cpu.tar.gz',revision['published']['linux/amd64/cpu']),
               ('tiny.gguf','https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf','270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d')]
           for name,url,digest in downloads:
-              with urllib.request.urlopen(url,timeout=60) as response:
-                  data=response.read(64*1024*1024+1)
+              try:
+                  with urllib.request.urlopen(url,timeout=60) as response:
+                      data=response.read(64*1024*1024+1)
+              except urllib.error.HTTPError as error:
+                  if error.code != 404 or name != 'rpc.tar.gz':
+                      raise
+                  # A reviewed candidate may not have been promoted yet. Use
+                  # only its pinned run and archive digest, never an arbitrary run.
+                  build=json.loads(pathlib.Path('internal/llamaruntime/rpc-build.json').read_text())
+                  assert build['tag']==revision['rpc_release']
+                  run=json.loads(subprocess.check_output(['gh','api',f'repos/rfdetoni/nodexlm/actions/runs/{build["run_id"]}']))
+                  assert run['head_sha']==build['commit'] and run['conclusion']=='success'
+                  assert run['path']=='.github/workflows/rpc-platforms.yml'
+                  assert run['head_repository']['full_name']=='rfdetoni/nodexlm'
+                  with tempfile.TemporaryDirectory() as directory:
+                      subprocess.run(['gh','run','download',str(build['run_id']),'--repo','rfdetoni/nodexlm','--name','rpc-linux-amd64-cpu','--dir',directory],check=True)
+                      archive=pathlib.Path(directory)/f'nodexlm-rpc_{revision["version"]}_linux_amd64_cpu.tar.gz'
+                      with archive.open('rb') as stream:
+                          data=stream.read(64*1024*1024+1)
               assert len(data)<=64*1024*1024 and hashlib.sha256(data).hexdigest()==digest,name
               pathlib.Path(name).write_bytes(data)
           PY
