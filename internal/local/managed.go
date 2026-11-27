@@ -57,6 +57,7 @@ type Managed struct {
 	// UnboundedStartup is reserved for explicitly cancellable benchmarks.
 	// Normal interactive model loads retain the backend startup deadline.
 	UnboundedStartup bool
+
 	// Native RPC devices are selected by the Host before model loading.
 	// RPCDeviceNames contains registered llama.cpp names such as RPC0/RPC1;
 	// empty preserves upstream default behavior for legacy Guests.
@@ -352,6 +353,7 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 	}
 }
+
 // Keep parent cancellation and any caller deadline even in benchmark mode.
 func (m *Managed) startupContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if m.UnboundedStartup {

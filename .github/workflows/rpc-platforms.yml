@@ -3,7 +3,7 @@ name: Portable RPC bundles
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, ready_for_review]
     paths:
       - 'internal/llamaruntime/revision.json'
       - 'internal/llamaruntime/patches/**'
