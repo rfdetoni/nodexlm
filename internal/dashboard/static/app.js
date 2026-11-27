@@ -1176,6 +1176,125 @@ bindAction('openModelFolder',async()=>{
 });
 // Controlled benchmark UI: no background sampling, CDN or chart library.
 let benchmarkController=null,benchmarkReports=[];
+let benchmarkLiveState=null;
+const benchmarkPhaseText={
+ prepare:['Preparando','Solicitação aceita pelo Host.'],
+ queue:['Aguardando runtime','Aguardando acesso exclusivo ao motor de inferência.'],
+ round_start:['Iniciando rodada','Uma nova rodada será medida com o mesmo modelo.'],
+ reconnect:['Reconectando RPC','Aguardando os túneis autenticados ficarem disponíveis novamente.'],
+ inspect:['Inspecionando GGUF','Validando arquivo, shards e metadados do modelo.'],
+ memory:['Calculando memória','Verificando RAM, VRAM, contexto e reservas para inferência.'],
+ runtime:['Preparando runtime','Localizando ou instalando o motor nativo compatível.'],
+ placement:['Planejando camadas','Selecionando Host e dispositivos CPU/GPU adequados.'],
+ preflight:['Validando Guests','Testando conexão, alocação e transferência RPC antes da carga.'],
+ preflight_retry:['Recuperando conexão RPC','A conexão foi interrompida. Nova tentativa com túnel autenticado independente.'],
+ preflight_ok:['Guest validado','Alocação, envio e leitura de tensor confirmados.'],
+ load:['Carregando modelo','O runtime está alocando buffers e carregando os pesos. O total transferível não é conhecido.'],
+ warmup:['Aquecimento','Executando uma requisição de até 8 tokens, excluída da medição.'],
+ measure:['Inferência medida','Executando o prompt fixo de até 64 tokens; aguardando a resposta do runtime.'],
+ sample:['Amostra concluída','Tokens e velocidade recebidos do runtime.'],
+ context:['Teste de contexto','Executando o workload de contexto selecionado.'],
+ context_sample:['Amostra de contexto','Medição real de inferência por streaming.'],
+ context_done:['Contexto finalizado','O resultado informa se foi medido, indisponível ou ignorado.'],
+ stability:['Estabilidade','Runtime permanece carregado enquanto requisições sequenciais são executadas.'],
+ stability_sample:['Amostra de estabilidade','Amostra representativa da janela de execução.'],
+ cleanup:['Liberando recursos','Encerrando o runtime temporário e liberando memória.'],
+ round_done:['Rodada concluída','Medições da rodada disponíveis.'],
+ validate:['Validando resultado','Conferindo fingerprint, topologia e base de tempo.'],
+ hash:['Calculando SHA-256','Lendo os shards GGUF para verificar a identidade dos pesos.'],
+ metadata:['Coletando hardware','Registrando configurações e dispositivos disponíveis.'],
+ report:['Gerando relatório','Validando amostras e preparando gráficos e exportação.'],
+ done:['Concluído','Relatório disponível para exportação.'],
+ cancelled:['Cancelado','A execução foi interrompida; resultados parciais não foram publicados.'],
+ failed:['Falha','A execução não produziu um relatório válido.']
+};
+function benchmarkLiveBegin(rounds){
+ benchmarkLiveState={rounds,completed:0,offset:0,target:'',started:performance.now(),samples:[],events:[],key:'',stabilityStart:null,stabilityDuration:0};
+ $('benchmarkLive').hidden=false;$('benchmarkLiveCharts').replaceChildren();$('benchmarkLiveTraffic').replaceChildren();$('benchmarkTimeline').replaceChildren();
+ $('benchmarkOverallBar').max=rounds;$('benchmarkOverallBar').value=0;$('benchmarkRoundLabel').textContent='0 / '+rounds;
+ benchmarkLiveEvent({type:'progress',phase:'prepare'});
+}
+function benchmarkLiveEvent(event){
+ const state=benchmarkLiveState;if(!state)return;
+ const elapsed=Math.max(0,Math.floor((performance.now()-state.started)/1000));
+ $('benchmarkElapsed').textContent=elapsed+' s';
+ if(event.type==='heartbeat'){
+  $('benchmarkPhaseElapsed').textContent=Math.floor((event.phase_ms||0)/1000)+' s nesta etapa';
+  if(event.phase==='stability'||event.phase==='stability_sample')benchmarkStabilityClock(state);
+  if(event.phase==='load'&&Array.isArray(event.traffic)){
+   const area=$('benchmarkLiveTraffic');area.replaceChildren();
+   benchmarkChart(area,'RPC enviado desde o início da carga','MiB',event.traffic.map(t=>({label:t.name,value:t.sent_bytes/1048576})));
+   benchmarkChart(area,'RPC recebido desde o início da carga','MiB',event.traffic.map(t=>({label:t.name,value:t.received_bytes/1048576})));
+  }
+  return;
+ }
+ if(event.type!=='progress')return;
+ const phase=event.phase,info=benchmarkPhaseText[phase]||[phase,''];
+ const round=event.round?state.offset+event.round:0;
+ const heading=(state.target?state.target+' · ':'')+(round?'Rodada '+round+'/'+state.rounds+' · ':'')+info[0];
+ $('benchmarkStage').textContent=heading;$('benchmarkDetail').textContent=info[1]+(event.detail?' '+event.detail:'')+(event.total?' '+(event.current||0)+'/'+event.total+' concluídos.':'')+(event.tokens>0?' '+event.tokens+' tokens.':'');$('benchmarkPhaseElapsed').textContent='0 s nesta etapa';
+ const bar=$('benchmarkPhaseBar');
+ if(phase==='load')$('benchmarkLiveTraffic').replaceChildren();
+ if(phase==='stability'){
+  state.stabilityStart=performance.now();state.stabilityDuration=event.duration_ms||0;
+ }
+ if(phase==='stability'||phase==='stability_sample')benchmarkStabilityClock(state);
+ else if(event.total>0){bar.max=event.total;bar.value=Math.min(event.total,event.current||0);}
+ else if(phase==='done'||phase==='round_done'){bar.max=1;bar.value=1;}
+ else if(phase==='failed'||phase==='cancelled'){bar.max=1;bar.value=0;}
+ else bar.removeAttribute('value');
+ if(phase==='round_done'){state.completed=Math.max(state.completed,round||state.completed+1);$('benchmarkOverallBar').value=state.completed;$('benchmarkRoundLabel').textContent=state.completed+' / '+state.rounds;}
+ if(phase==='done'){$('benchmarkOverallBar').value=state.rounds;$('benchmarkRoundLabel').textContent=state.rounds+' / '+state.rounds;}
+ const key=[heading,event.detail,event.current,event.total].join('|');
+ if(key!==state.key){
+  state.key=key;state.events.push(el('li','',elapsed+' s · '+heading+(event.detail?' · '+event.detail:'')+(event.total?' · '+(event.current||0)+'/'+event.total:'')));
+  if(state.events.length>120)state.events.shift();
+  const timeline=$('benchmarkTimeline');timeline.replaceChildren(...state.events);timeline.scrollTop=timeline.scrollHeight;
+ }
+ if(['sample','context_sample','stability_sample'].includes(phase)&&benchmarkNumber(event.rate)>0){
+  state.samples.push({label:(state.target||'Teste')+' '+(round||1)+' · '+(event.detail||phase)+' '+event.current,value:event.rate,basis:event.rate_basis,prefill:event.prefill,tokens:event.tokens});
+  if(state.samples.length>120)state.samples.shift();
+  const area=$('benchmarkLiveCharts');area.replaceChildren();
+  for(const basis of ['native_decode','end_to_end'])benchmarkChart(area,'Amostras medidas · '+basis,'t/s',state.samples.filter(s=>s.basis===basis).slice(-18));
+  benchmarkChart(area,'Prefill nativo','t/s',state.samples.filter(s=>benchmarkNumber(s.prefill)>0).slice(-18).map(s=>({label:s.label,value:s.prefill})));
+ }
+}
+function benchmarkStabilityClock(state){
+ if(!state.stabilityDuration||state.stabilityStart===null)return;
+ const bar=$('benchmarkPhaseBar'),ms=Math.min(state.stabilityDuration,Math.max(0,performance.now()-state.stabilityStart));
+ bar.max=state.stabilityDuration;bar.value=ms;
+ $('benchmarkPhaseElapsed').textContent=Math.floor(ms/1000)+' / '+Math.floor(state.stabilityDuration/1000)+' s planejados';
+}
+async function benchmarkStream(action,body,signal){
+ const session=token,epoch=sessionEpoch;
+ const response=await fetch('/api/bench/stream',{method:'POST',headers:{Authorization:'Bearer '+session,'Content-Type':'application/json'},body:JSON.stringify({action,...body}),cache:'no-store',signal});
+ if(!response.ok){if(response.status===401&&token===session)endSession();throw Error('Benchmark: HTTP '+response.status+' '+(await response.text()).slice(0,512));}
+ if(!response.body)throw Error('Streaming indisponível.');
+ const reader=response.body.getReader(),decoder=new TextDecoder();
+ let buffer='',result,done=false;
+ try{
+  for(;;){
+   const part=await reader.read();
+   if(epoch!==sessionEpoch||session!==token||signal.aborted)throw Error('Sessão alterada ou cancelada.');
+   buffer+=decoder.decode(part.value||new Uint8Array(),{stream:!part.done});
+   if(buffer.length>4*1024*1024)throw Error('Evento de benchmark excedeu o limite.');
+   let boundary;
+   while((boundary=buffer.indexOf('\n'))>=0){
+    const line=buffer.slice(0,boundary);buffer=buffer.slice(boundary+1);
+    if(!line.trim())continue;
+    const event=JSON.parse(line);
+    if(done)throw Error('Evento após resultado final.');
+    if(event.type==='error')throw Error(event.error||'Falha no benchmark.');
+    if(event.type==='result'){result=event.result;done=true;}
+    else benchmarkLiveEvent(event);
+   }
+   if(part.done)break;
+  }
+  if(!done||buffer.trim())throw Error('Fluxo interrompido antes do resultado final.');
+  return result;
+ }finally{await reader.cancel().catch(()=>{});}
+}
+
 const benchmarkMetrics=[
  ['tokens_per_second','Taxa principal','t/s'],
  ['end_to_end_tokens_per_second','Ponta a ponta','t/s'],
@@ -1271,44 +1390,53 @@ async function runBenchmarkReport(){
  const status=$('benchmarkStatus'),rows=[],signal=controller.signal;
  let identity=null;
  const minutes=Number($('benchmarkMinutes').value),energy=$('benchmarkEnergy').value===''?null:Number($('benchmarkEnergy').value);
- const single=(node,extended=false)=>api('/api/bench/inference','POST',{model,node_id:node,extended},signal);
+ const single=(node,extended=false)=>benchmarkStream('single',{model,node_id:node,extended},signal);
+ benchmarkLiveBegin(profile==='compare'?rounds+1:profile==='capacity'?rounds:1);
  const add=(sample,name)=>{if(!sample||!(sample.model===model||sample.model.startsWith(model+'@'))||!benchmarkComparable([sample]))throw Error('Medição inválida ou suspeita.');rows.push({target:name,sample});};
  try{
-  if($('benchmarkHashModel').checked){status.textContent='Calculando SHA-256 dos shards…';identity=await api('/api/bench/model-identity?model='+encodeURIComponent(model),'GET',undefined,signal);}
+  if($('benchmarkHashModel').checked){status.textContent='Calculando SHA-256 dos shards…';identity=await benchmarkStream('identity',{model},signal);}
+  benchmarkLiveEvent({type:'progress',phase:'metadata'});
   const metadata_before=await api('/api/bench/metadata','GET',undefined,signal);
   if(profile==='stability'){
    if(!Number.isInteger(minutes)||minutes<1||minutes>60)throw Error('Use 1–60 minutos.');
    status.textContent='Estabilidade: inferência contínua por '+minutes+' minutos, sem recarregar o modelo.';
-   const sample=await api('/api/bench/stability','POST',{model,node_id:target,minutes},signal);
+   benchmarkLiveState.target=target==='cluster'?'Cluster':target?'Guest':'Host';
+   const sample=await benchmarkStream('stability',{model,node_id:target,minutes},signal);
    if(sample.kind!=='stability'||!(sample.tokens_per_second>0))throw Error('Medição de estabilidade inválida.');
    rows.push({target:target==='cluster'?'Cluster':target?'Guest':'Host',sample});
   }else if(profile==='compare'||profile==='capacity'){
    if(!Number.isInteger(rounds)||rounds<2||rounds>10)throw Error('Use de 2 a 10 rodadas.');
-   if(profile==='compare'){status.textContent='Medindo Host local…';add(await single(''),'Host');}
+   if(profile==='compare'){benchmarkLiveState.target='Host';status.textContent='Medindo Host local…';add(await single(''),'Host');benchmarkLiveState.offset=1;}
    status.textContent='Medindo cluster com topologia fixada ('+rounds+' rodadas)…';
-   const result=await api('/api/bench/inference-series','POST',{model,rounds},signal);
+   benchmarkLiveState.target='Cluster';
+   const result=await benchmarkStream('series',{model,rounds},signal);
    if(!Array.isArray(result)||result.length!==rounds)throw Error('Série incompleta.');
    const samples=result.map(r=>r.inference);
    if(!samples[0]?.benchmark_topology||!samples.every(s=>s.model===model+'@bench-cluster'&&s.benchmark_topology===samples[0].benchmark_topology)||!benchmarkComparable([...rows.map(r=>r.sample),...samples]))throw Error('Modelo, runtime, topologia ou base de tempo mudou.');
    samples.forEach((s,i)=>{add(s,'Cluster '+(i+1));rows.at(-1).relay=benchmarkRelayDelta(result[i]);});
   }else{
    status.textContent='Medindo '+(target==='cluster'?'cluster':target?'Guest':'Host')+'…';
-   add(await single(target,profile==='extended'),target==='cluster'?'Cluster':target?'Guest':'Host');
+   benchmarkLiveState.target=target==='cluster'?'Cluster':target?'Guest':'Host';
+   add(await single(target,profile==='extended'),benchmarkLiveState.target);
   }
   if(signal.aborted||benchmarkController!==controller)return;
   const host=rows.find(r=>r.target==='Host'),cluster=rows.filter(r=>r.target.startsWith('Cluster'));
   const ratio=host&&cluster.length?benchmarkMedian(cluster.map(r=>r.sample.tokens_per_second))/host.sample.tokens_per_second:null;
+  benchmarkLiveEvent({type:'progress',phase:'metadata'});
   const metadata_after=await api('/api/bench/metadata','GET',undefined,signal);
+  if(signal.aborted||benchmarkController!==controller)return;
+  benchmarkLiveEvent({type:'progress',phase:'report'});
   const totalTokens=rows.reduce((sum,r)=>sum+(r.sample.measurements?.length&&r.sample.kind!=='stability'?r.sample.measurements.reduce((n,m)=>n+m.tokens,0):r.sample.tokens),0);
   const report={schema:'nodexlm-benchmark-v1',model,profile,measured_at:new Date().toISOString(),rate_basis:rows[0].sample.rate_basis,ratio,metadata_before,metadata_after,model_identity:identity,...(energy>0&&profile==='stability'?{energy_wh:energy,tokens_per_joule:totalTokens/(energy*3600)}:{}),rows:rows.map(r=>({target:r.target,sample:benchmarkPublicSample(r.sample),...(r.relay?{relay:r.relay}:{})}))};
   benchmarkReports.push(report);benchmarkReports=benchmarkReports.slice(-10);renderBenchmarkReports();
   status.textContent='Concluído. Exporte os dados antes de sair.';
-  await refreshBenchmarkRecent();
- }catch(error){if(benchmarkController===controller)status.textContent=signal.aborted?'Cancelado.':'Falha: '+error.message;}
+  benchmarkLiveEvent({type:'progress',phase:'done'});
+  await refreshBenchmarkRecent().catch(()=>{});
+ }catch(error){if(benchmarkController===controller){status.textContent=signal.aborted?'Cancelado.':'Falha: '+error.message;benchmarkLiveEvent({type:'progress',phase:signal.aborted?'cancelled':'failed',detail:signal.aborted?'':error.message});}}
  finally{if(benchmarkController===controller){benchmarkController=null;$('benchmarkCancel').disabled=true;}}
 }
 function resetBenchmarkSession(){
- benchmarkController?.abort();benchmarkController=null;benchmarkReports=[];renderBenchmarkReports();$('benchmarkRecent').replaceChildren();$('benchmarkCancel').disabled=true;$('benchmarkStatus').textContent='Pronto para medir.';
+ benchmarkController?.abort();benchmarkController=null;benchmarkLiveState=null;$('benchmarkLive').hidden=true;benchmarkReports=[];renderBenchmarkReports();$('benchmarkRecent').replaceChildren();$('benchmarkCancel').disabled=true;$('benchmarkStatus').textContent='Pronto para medir.';
 }
 function benchmarkCSVCell(value){
  let s=String(value??'');if(/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';

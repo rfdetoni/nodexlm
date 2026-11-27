@@ -20,6 +20,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
@@ -40,6 +41,8 @@ type Dashboard struct {
 	hardwareMu     sync.Mutex
 	hardwareAt     time.Time
 	hardwareReport protocol.Device
+
+	benchmarkStreaming atomic.Bool
 }
 
 // The UI uses one short-lived snapshot for duplicate cluster/catalog polls.
@@ -74,6 +77,7 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, sample)
 	}))
+	mux.HandleFunc("POST /api/bench/stream", d.api(d.benchmarkStream))
 	mux.HandleFunc("POST /api/bench/inference", d.api(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Model    string `json:"model"`

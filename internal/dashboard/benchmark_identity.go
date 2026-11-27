@@ -41,12 +41,14 @@ func (m *Manager) benchmarkModelIdentity(ctx context.Context, model string) (map
 	}
 	parts := make([]map[string]any, 0, len(names))
 	buffer := make([]byte, 128<<10)
-	for _, name := range names {
+	for i, name := range names {
+		benchmarkProgress(ctx, benchmarkProgressEvent{Phase: "hash", Detail: name, Current: i, Total: len(names)})
 		part, err := benchmarkHashPart(ctx, filepath.Join(m.modelDir, name), buffer)
 		if err != nil {
 			return nil, err
 		}
 		parts = append(parts, part)
+		benchmarkProgress(ctx, benchmarkProgressEvent{Phase: "hash", Detail: name, Current: i + 1, Total: len(names)})
 	}
 	return map[string]any{"model": model, "architecture": meta.Architecture, "parts": parts}, nil
 }
