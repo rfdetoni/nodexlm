@@ -78,6 +78,7 @@ type Device struct {
 	Runtime         RuntimeCapability `json:"runtime"`
 	Models          []string          `json:"models,omitempty"`
 	DecisionModels  []string          `json:"decision_models,omitempty"`
+	PeerPubKey      string            `json:"peer_pub_key,omitempty"`
 	LastSeen        time.Time         `json:"last_seen"`
 	// Authenticated Guest may withdraw from new placements (draining).
 	Status            string `json:"status"`
@@ -90,8 +91,11 @@ type Enrollment struct {
 }
 
 type Credential struct {
-	NodeID string `json:"node_id"`
-	Token  string `json:"token"`
+	NodeID          string `json:"node_id"`
+	Token           string `json:"token"`
+	ClusterID       string `json:"cluster_id,omitempty"`
+	Epoch           uint64 `json:"epoch,omitempty"`
+	AuthorityPubKey string `json:"authority_pubkey,omitempty"`
 }
 
 type Job struct {

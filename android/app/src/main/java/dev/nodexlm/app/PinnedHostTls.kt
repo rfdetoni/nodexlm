@@ -29,8 +29,10 @@ internal object PinnedHostTls {
     private fun matches(expected: ByteArray, peer: X509Certificate): Boolean =
         MessageDigest.isEqual(expected, MessageDigest.getInstance("SHA-256").digest(peer.encoded))
 
-    fun context(certDER: ByteArray): SSLContext {
-        val pin = MessageDigest.getInstance("SHA-256").digest(certDER)
+    fun context(certDER: ByteArray): SSLContext =
+        contextForPin(MessageDigest.getInstance("SHA-256").digest(certDER))
+
+    private fun contextForPin(pin: ByteArray): SSLContext {
         val trust = object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
                 throw CertificateException("Client certificates are unsupported")
@@ -49,19 +51,31 @@ internal object PinnedHostTls {
         }
     }
 
-    fun verify(session: SSLSession, certDER: ByteArray): Boolean = try {
-        val expected = MessageDigest.getInstance("SHA-256").digest(certDER)
+    fun verify(session: SSLSession, certDER: ByteArray): Boolean =
+        verifyPin(session, MessageDigest.getInstance("SHA-256").digest(certDER))
+
+    private fun verifyPin(session: SSLSession, expected: ByteArray): Boolean = try {
         matches(expected, session.peerCertificates.first() as X509Certificate)
     } catch (_: Exception) {
         false
     }
 
     fun configure(connection: HttpsURLConnection, certDER: ByteArray) {
-        connection.sslSocketFactory = context(certDER).socketFactory
+        val pin = MessageDigest.getInstance("SHA-256").digest(certDER)
+        connection.sslSocketFactory = contextForPin(pin).socketFactory
         // The same previously authenticated pin is checked during handshake
         // and hostname verification. A DHCP change does not invalidate it.
         connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, session ->
-            verify(session, certDER)
+            verifyPin(session, pin)
+        }
+    }
+
+    fun configureSha256(connection: HttpsURLConnection, sha256Hex: String) {
+        require(sha256Hex.matches(Regex("[0-9a-f]{64}"))) { "Invalid certificate pin" }
+        val pin = sha256Hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        connection.sslSocketFactory = contextForPin(pin).socketFactory
+        connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, session ->
+            verifyPin(session, pin)
         }
     }
 

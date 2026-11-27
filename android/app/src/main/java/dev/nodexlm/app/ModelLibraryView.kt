@@ -297,7 +297,9 @@ internal class ModelLibraryView(
         // Stable private stage allows resuming fsync-committed Host ranges after a restart.
         val scratch = File(root, ".$fileName.p2p.partial")
         thread(name = "nodexlm-host-content-cache") {
-            val available = HostModelCache.fetch(activity, checksum, expected, scratch,
+            val available = PeerModelCache.fetch(activity, checksum, expected, scratch,
+                { cacheCancelled || !ownsTransfer(epoch, -1L, owner) }, { cacheReceived = it }) ||
+                HostModelCache.fetch(activity, checksum, expected, scratch,
                 { cacheCancelled || !ownsTransfer(epoch, -1L, owner) }, { cacheReceived = it })
             activity.runOnUiThread {
                 if (!ownsTransfer(epoch, -1L, owner)) {

@@ -136,13 +136,22 @@ func (s *Server) revokeNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(s.nodes, id)
+	s.recordRevocationLocked(id)
 	select {
 	case n.signal <- struct{}{}:
 	default:
 	}
 	if err := s.saveLocked(); err != nil {
 		s.nodes[id] = n
+		delete(s.revokedNodes, id)
 		fail(w, 500, "could not persist node revocation")
+		return
+	}
+	if err := s.saveAuthorityLocked(); err != nil {
+		s.nodes[id] = n
+		delete(s.revokedNodes, id)
+		_ = s.saveLocked()
+		fail(w, 500, "could not persist revocation epoch")
 		return
 	}
 	if n.active != "" {

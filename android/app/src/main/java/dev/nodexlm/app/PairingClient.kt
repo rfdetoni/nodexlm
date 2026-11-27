@@ -117,6 +117,7 @@ internal class PairingClient(private val context: Context) {
             .put("platform", "android")
             .put("architecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
             .put("cpu_count", Runtime.getRuntime().availableProcessors())
+            .put("peer_pub_key", PeerModelCache.publicKeyHex(context))
             .put("models", JSONArray().apply { if (modelName.isNotBlank()) put(modelName) })
         val payload = JSONObject().put("code", code).put("device", device)
         val c = openPinnedConnection(endpoint + "/v1/pairing/enroll", certificate)
