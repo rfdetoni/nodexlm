@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/catalog"
+	"github.com/rfdetoni/nodexlm/internal/coordinator"
 	"github.com/rfdetoni/nodexlm/internal/safedownload"
 )
 
@@ -217,7 +219,11 @@ func stageHandoff(ctx context.Context, source, target string, m handoffManifest)
 
 func handoff(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: nodexlm handoff manifest|stage")
+		return errors.New("usage: nodexlm handoff manifest|stage|plan|start|status|cancel|rollback")
+	}
+	switch args[0] {
+	case "plan", "start", "status", "cancel", "rollback":
+		return handoffAdmin(args[0], args[1:])
 	}
 	f := fs("handoff " + args[0])
 	source := f.String("source", "", "first GGUF or single model on source/verified mount")
@@ -264,6 +270,62 @@ func handoff(args []string) error {
 		fmt.Println("Verified GGUF set staged. Stop old Host and target Guest before starting the new Host with --dir pointing to the target. Re-pair Guests with the new identity.")
 		return nil
 	default:
-		return errors.New("usage: nodexlm handoff manifest|stage")
+		return errors.New("usage: nodexlm handoff manifest|stage|plan|start|status|cancel|rollback")
 	}
+}
+
+func handoffAdmin(sub string, args []string) error {
+	f := fs("handoff " + sub)
+	server := f.String("server", "http://127.0.0.1:8787", "loopback management API")
+	ca := f.String("ca", "", "trusted certificate")
+	targetNode := f.String("target-node", "", "target enrolled Guest node ID")
+	model := f.String("model", "", "GGUF filename to verify/serve")
+	newURL := f.String("new-url", "", "target Host HTTPS endpoint")
+	newCert := f.String("new-cert", "", "target Host TLS cert SHA-256")
+	newPub := f.String("new-pubkey", "", "optional target Ed25519 authority public key hex")
+	forceAndroid := f.Bool("force-android", false, "explicitly override Android Host promotion policy")
+	confirm := f.Bool("confirm", false, "explicit confirmation to execute role transition")
+	stagedVerified := f.Bool("staged-verified", false, "confirm staged GGUFs passed SHA-256 verification")
+	newFenced := f.Bool("new-authority-fenced", false, "confirm target Host was fenced before post-fence rollback")
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	cli, err := admin(*server, *ca)
+	if err != nil {
+		return err
+	}
+	c, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	var out coordinator.HandoffState
+	switch sub {
+	case "status":
+		_, err = cli.Request(c, "GET", "/v1/handoff/status", nil, &out)
+	case "plan":
+		req := coordinator.HandoffPlanRequest{
+			TargetNodeID:       *targetNode,
+			Model:              *model,
+			NewHostURL:         *newURL,
+			NewHostCertSHA256:  *newCert,
+			NewAuthorityPubKey: *newPub,
+			ForceAndroid:       *forceAndroid,
+		}
+		_, err = cli.Request(c, "POST", "/v1/handoff/plan", req, &out)
+	case "start":
+		_, err = cli.Request(c, "POST", "/v1/handoff/start", map[string]bool{
+			"confirm":         *confirm,
+			"staged_verified": *stagedVerified,
+		}, &out)
+	case "cancel":
+		_, err = cli.Request(c, "POST", "/v1/handoff/cancel", map[string]any{}, &out)
+	case "rollback":
+		_, err = cli.Request(c, "POST", "/v1/handoff/rollback", map[string]bool{
+			"new_authority_fenced": *newFenced,
+		}, &out)
+	}
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }

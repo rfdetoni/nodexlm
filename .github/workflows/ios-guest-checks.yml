@@ -11,7 +11,8 @@ on:
       - 'internal/netclient/**'
       - 'internal/protocol/**'
       - 'internal/llamaruntime/revision.json'
-      - 'internal/llamaruntime/patches/**'
+      - 'internal/llamaruntime/patches/unix-rpc.patch'
+      - 'internal/llamaruntime/patches/arm32-rpc-wire.patch'
       - 'android/app/src/main/cpp/android-rpc-shutdown.patch'
       - 'go.mod'
       - '.github/workflows/ios-guest-checks.yml'
@@ -27,7 +28,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e

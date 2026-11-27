@@ -31,8 +31,9 @@ type ChatRequest struct {
 }
 
 type GPUDevice struct {
-	Name   string `json:"name"`
-	Vendor string `json:"vendor"`
+	DeviceID string `json:"device_id,omitempty"`
+	Name     string `json:"name"`
+	Vendor   string `json:"vendor"`
 	// shared means GPU heaps use system RAM; dedicated means separate VRAM.
 	// Empty is legacy/unknown and must not be treated as dedicated.
 	MemoryType    string `json:"memory_type,omitempty"`
@@ -53,7 +54,10 @@ type RuntimeCapability struct {
 	// RPCDevices lists native device kinds in ggml-rpc-server exposure order.
 	// For example ["gpu","cpu"] means two distinct RPC devices on one Guest.
 	// Empty is a legacy worker whose device topology is unknown.
-	RPCDevices []string `json:"rpc_devices,omitempty"`
+	RPCDevices          []string `json:"rpc_devices,omitempty"`
+	RPCProtocolMajor    int      `json:"rpc_protocol_major,omitempty"`
+	RPCProtocolMinor    int      `json:"rpc_protocol_minor,omitempty"`
+	RPCDirectTensorCopy bool     `json:"rpc_direct_tensor_copy,omitempty"`
 }
 
 type Device struct {
@@ -78,6 +82,7 @@ type Device struct {
 	Runtime         RuntimeCapability `json:"runtime"`
 	Models          []string          `json:"models,omitempty"`
 	DecisionModels  []string          `json:"decision_models,omitempty"`
+	PeerPubKey      string            `json:"peer_pub_key,omitempty"`
 	LastSeen        time.Time         `json:"last_seen"`
 	// Authenticated Guest may withdraw from new placements (draining).
 	Status            string `json:"status"`
@@ -90,8 +95,11 @@ type Enrollment struct {
 }
 
 type Credential struct {
-	NodeID string `json:"node_id"`
-	Token  string `json:"token"`
+	NodeID          string `json:"node_id"`
+	Token           string `json:"token"`
+	ClusterID       string `json:"cluster_id,omitempty"`
+	Epoch           uint64 `json:"epoch,omitempty"`
+	AuthorityPubKey string `json:"authority_pubkey,omitempty"`
 }
 
 type Job struct {

@@ -24,6 +24,12 @@ func (s *Server) SetStore(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.storePath = path
+	if err := s.loadAuthorityLocked(); err != nil {
+		return err
+	}
+	if err := s.loadHandoffLocked(); err != nil {
+		return err
+	}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

@@ -41,3 +41,19 @@ func TestNativeActivityDecodeDuration(t *testing.T) {
 		t.Fatal("snapshot mutated trace")
 	}
 }
+
+func TestNativeActivityRedactsPrivateRelayAndPreservesBasis(t *testing.T) {
+	trace := &nativeTrace{}
+	_, _ = trace.Write([]byte("NODEXLM_NATIVE_SPLIT batch=1 split=0 nodes=3 backend=unix:/tmp/nodexlm-relay-123/rpc.sock\n" +
+		"NODEXLM_NATIVE_BATCH batch=1 inputs=1 status=0 output=1 decode_us=500\n" +
+		"NODEXLM_NATIVE_TOKEN batch=1 task=0 slot=2 ordinal=2 attributable=1\n"))
+	got := trace.snapshot()
+	if len(got) != 1 || got[0].Splits[0].Backend != "unknown/unattributed" ||
+		got[0].SlotID != 2 || got[0].ProcessEpoch == "" || got[0].MeasurementBasis != nativeMeasurementBasis {
+		t.Fatalf("unexpected sanitized activity: %+v", got)
+	}
+	m := &Managed{}
+	if act := m.NativeActivity(); act != nil {
+		t.Fatalf("expected nil NativeActivity when tracing disabled, got %+v", act)
+	}
+}

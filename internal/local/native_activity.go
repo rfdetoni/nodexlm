@@ -3,22 +3,32 @@ package local
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 )
 
-const nativeTraceLimit = 16
+const (
+	nativeTraceLimit       = 16
+	nativeMeasurementBasis = "native_synchronized_wall_us"
+	nativeTraceLimitations = "Includes GGML scheduler, RPC wait, and diagnostic trace overhead; does not represent exclusive GPU execution time or SSE inter-token delay."
+)
 
 // NativeTokenActivity reports successful native graph submissions, not device
 // utilization or per-device execution time. DecodeMicroseconds is the native
 // synchronized decode wall time, including scheduling, RPC and trace overhead.
 type NativeTokenActivity struct {
+	ProcessEpoch       string               `json:"process_epoch,omitempty"`
 	Batch              uint64               `json:"batch"`
+	SlotID             int                  `json:"slot_id"`
 	Ordinal            uint64               `json:"ordinal"`
 	Splits             []NativeBackendSplit `json:"splits"`
 	DecodeMicroseconds *uint64              `json:"decode_microseconds,omitempty"`
+	MeasurementBasis   string               `json:"measurement_basis"`
+	Limitations        string               `json:"limitations,omitempty"`
 }
 
 type NativeBackendSplit struct {
@@ -29,6 +39,7 @@ type NativeBackendSplit struct {
 
 type nativeTrace struct {
 	mu                 sync.Mutex
+	processEpoch       string
 	line               [1024]byte
 	used               int
 	discard            bool
@@ -95,6 +106,7 @@ func (t *nativeTrace) consume(line string) {
 			t.valid = false
 			return
 		}
+		backend = sanitizeTraceBackend(backend)
 		for i := range t.splits {
 			if t.splits[i].Backend == backend {
 				t.splits[i].Count++
@@ -127,7 +139,21 @@ func (t *nativeTrace) consume(line string) {
 			attributable != 1 || ordinal <= 1 || len(t.splits) == 0 {
 			return
 		}
-		entry := NativeTokenActivity{Batch: batch, Ordinal: ordinal, Splits: append([]NativeBackendSplit(nil), t.splits...), DecodeMicroseconds: t.decodeMicroseconds}
+		if t.processEpoch == "" {
+			var b [8]byte
+			_, _ = rand.Read(b[:])
+			t.processEpoch = hex.EncodeToString(b[:])
+		}
+		entry := NativeTokenActivity{
+			ProcessEpoch:       t.processEpoch,
+			Batch:              batch,
+			SlotID:             slot,
+			Ordinal:            ordinal,
+			Splits:             append([]NativeBackendSplit(nil), t.splits...),
+			DecodeMicroseconds: t.decodeMicroseconds,
+			MeasurementBasis:   nativeMeasurementBasis,
+			Limitations:        nativeTraceLimitations,
+		}
 		if len(t.recent) == nativeTraceLimit {
 			copy(t.recent, t.recent[1:])
 			t.recent = t.recent[:nativeTraceLimit-1]
@@ -158,4 +184,15 @@ func (m *Managed) NativeActivity() []NativeTokenActivity {
 		return t.snapshot()
 	}
 	return nil
+}
+
+// sanitizeTraceBackend redacts private relay socket paths or unmapped endpoints
+// so host filesystem locations never leak into telemetry.
+func sanitizeTraceBackend(backend string) string {
+	lower := strings.ToLower(backend)
+	if strings.Contains(lower, "/tmp/") || strings.Contains(lower, "nodexlm-relay-") ||
+		strings.Contains(lower, "unix:") || strings.Contains(lower, "rpc.sock") {
+		return "unknown/unattributed"
+	}
+	return backend
 }

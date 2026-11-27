@@ -19,7 +19,7 @@ b1b770d90d94cad9e9ea5b993bdbc383a522fb28. Licenças acompanham o binário.
 - Vulkan está no código candidato, mas o build inicial verifica CPU ARM64;
   Android, outros alvos e integração RPC não são aceitos automaticamente.
 
-O candidato não substitui o runtime RPC10 r5 nem o port FP32 isolado. O
+O candidato não substitui o runtime RPC10 ativo (`nodexlm-rpc-v1.0.0-r6`, conforme `internal/llamaruntime/revision.json`) nem o port FP32 isolado. O
 pager/streaming opera somente em um processo local com GPU layers 0 e sem
 Guests RPC. O script recusa uma mudança de revisão do llama.cpp até revisão
 do port. A aceitação física e numérica de todos os kernels e arquiteturas
@@ -68,7 +68,7 @@ contagem de threads do cluster de maior capacidade; não fixa afinidade.
 
 O CI `smolmax-full.yml` roda um único build ARM64 após o PR sair do draft,
 verifica o patch completo, os três executáveis, a inferência determinística
-contra o bundle CPU r5 publicado e o streaming denso com zona não vazia,
+contra o bundle CPU ativo publicado (`r6`; originalmente validado contra `r5`) e o streaming denso com zona não vazia,
 checagem dos bytes e comparação da saída. O artefato é preservado somente
 se os testes passarem. O teste pequeno não cobre todos os caminhos:
 pager com MoE real, quantizações, MTP, Vulkan, Android, páginas de tamanho
@@ -89,3 +89,17 @@ initial verification-enabled dense test reported 28.06 tokens/s without
 streaming and 1.27 tokens/s with streaming. Verification performs extra
 reads and byte comparisons, so these are not controlled production throughput
 measurements. No automatic activation based on these results.
+
+## SMOL-01 Patch Catalogue & r6 Conflict Audit (2026-11-27)
+
+`experiments/smolmax/full-v1.patch` contains **36 files / 126 hunks**:
+
+- **MoE Pager & Weight Streaming (4 files, 16 hunks)**: `ggml/src/ggml-cpu/moe-pager-tv.inc`, `ggml/src/ggml-cpu/stream-tv.inc`, `src/llama-model-loader.cpp` (6), `src/llama-model.cpp` (6), `src/llama-model.h` (1).
+- **Repack Cache & Quantization Kernels (10 files, 59 hunks)**: `repack.cpp` (22), `repack-{q1,q1lut,q20c,q2k,tq}-tv.inc` (5), `ops.cpp` (14), `ggml-cpu.c` (7), `ggml-cpu.cpp` (3), `ggml-cpu-impl.h` (2), `ggml-cpu.h` (1), `binary-ops.cpp` (1), `unary-ops.cpp` (1), `ggml/src/ggml.c` (1).
+- **Attention, DeltaNet, Graph & Reduced-Head Architectures (11 files, 42 hunks)**: `llama-arch.{cpp,h}` (3), `llama-context.cpp` (3), `llama-graph.{cpp,h}` (5), `models/{bailingmoe2,bailingmoe3,delta-net-base,granite-hybrid,granite-swa,qwen3,qwen35,qwen35moe,qwen3next}.cpp` (34).
+- **Vulkan & Benchmark Tools (3 files, 9 hunks)**: `ggml-vulkan.cpp` (3), `llama-bench.cpp` (1), `perplexity.cpp` (5).
+
+**Patch apply check (`llama.cpp v1.0.0`, `b1b770d90d94cad9e9ea5b993bdbc383a522fb28`)**:
+- Standalone against pinned upstream: **PASS** (`git apply --check` clean across all 36 files / 126 hunks).
+- Combined with active `r6` patch sequence (`unix-rpc`, `arm32-rpc-wire`, `parallel-rpc-loader`, `rpc-command-batching`, `optimized-rpc-backend-search`, `native-token-activity`): **CONFLICT** at `src/llama-model-loader.cpp:1742` (`parallel-rpc-loader.patch` modifies the same loader section).
+- Therefore, Smolmax remains an isolated opt-in candidate profile (CPU-only, single slot, no RPC, no global promotion) with explicit `InspectCapabilities` and strict `ValidateRepackCache` binding metadata (`gguf_sha256`, `architecture`, `quant`, `runtime_sha256`, `platform`, `mode`, `max_bytes`).

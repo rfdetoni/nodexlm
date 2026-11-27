@@ -116,6 +116,7 @@ const usage = `NodexLM — privacy-first distributed local inference
   nodexlm cert --hosts 127.0.0.1,localhost,192.168.1.10
   nodexlm handoff manifest --source /path/model.gguf # export trusted GGUF hashes
   nodexlm handoff stage --source /mnt/old/model.gguf --manifest handoff.json --target /path/new-host
+  nodexlm handoff plan|start|status|cancel|rollback # coordinated epoch-fenced Host switch
   nodexlm host                       # HTTPS host + LAN discovery + Web UI on localhost:8787
   nodexlm host --debug               # private rotating debug logs under NODEXLM_HOME/logs
   nodexlm host --web-addr off        # headless without the Web UI

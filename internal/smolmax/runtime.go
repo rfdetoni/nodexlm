@@ -23,49 +23,144 @@ type manifest struct {
 	Features []string `json:"features"`
 }
 
-func checkRuntime(binary, feature string) error {
+type Capabilities struct {
+	CPUKernels      bool `json:"cpu_kernels"`
+	MoEPager        bool `json:"moe_pager"`
+	WeightStreaming bool `json:"weight_streaming"`
+	RepackCache     bool `json:"repack_cache"`
+	MTP             bool `json:"mtp"`
+	Vulkan          bool `json:"vulkan"`
+	RPC             bool `json:"rpc"`
+}
+
+type RepackCacheBinding struct {
+	GGUFSHA256    string `json:"gguf_sha256"`
+	Architecture  string `json:"architecture"`
+	Quant         string `json:"quant"`
+	RuntimeSHA256 string `json:"runtime_sha256"`
+	Platform      string `json:"platform"`
+	Mode          string `json:"mode"`
+	MaxBytes      int64  `json:"max_bytes,omitempty"`
+}
+
+func readManifest(binary string) (manifest, error) {
 	f, err := os.Open(binary + ".smolmax.json")
 	if err != nil {
-		return fmt.Errorf("smolmax runtime manifest missing: %w", err)
+		return manifest{}, fmt.Errorf("smolmax runtime manifest missing: %w", err)
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, 4097))
 	if err != nil {
-		return err
+		return manifest{}, err
 	}
 	if len(raw) > 4096 {
-		return errors.New("smolmax manifest too large")
+		return manifest{}, errors.New("smolmax manifest too large")
 	}
 	var m manifest
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return fmt.Errorf("invalid smolmax manifest: %w", err)
+		return manifest{}, fmt.Errorf("invalid smolmax manifest: %w", err)
 	}
 	hash, err := hex.DecodeString(m.SHA256)
 	if err != nil || len(hash) != sha256.Size {
-		return errors.New("smolmax manifest requires a SHA-256 digest")
-	}
-	found := false
-	for _, f := range m.Features {
-		if f == feature {
-			found = true
-		}
-	}
-	if !found {
-		return fmt.Errorf("smolmax binary was not registered for %s", feature)
+		return manifest{}, errors.New("smolmax manifest requires a SHA-256 digest")
 	}
 	in, err := os.Open(binary)
 	if err != nil {
-		return err
+		return manifest{}, err
 	}
 	defer in.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, in); err != nil {
-		return err
+		return manifest{}, err
 	}
 	if !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), m.SHA256) {
-		return errors.New("smolmax native binary changed since its manifest was created")
+		return manifest{}, errors.New("smolmax native binary changed since its manifest was created")
+	}
+	return m, nil
+}
+
+func InspectCapabilities(binary string) (Capabilities, error) {
+	m, err := readManifest(binary)
+	if err != nil {
+		return Capabilities{}, err
+	}
+	caps := Capabilities{CPUKernels: true}
+	for _, f := range m.Features {
+		switch f {
+		case "moe_pager":
+			caps.MoEPager = true
+		case "weight_streaming":
+			caps.WeightStreaming = true
+		case "repack_cache":
+			caps.RepackCache = true
+		case "mtp":
+			caps.MTP = true
+		}
+	}
+	return caps, nil
+}
+
+// ValidateRepackCache verifies a repack cache path is non-symlink, bounded,
+// and bound via sidecar metadata to the exact GGUF hash, architecture, quant,
+// runtime SHA-256, platform, and mode.
+func ValidateRepackCache(cachePath string, binding RepackCacheBinding) error {
+	if !filepath.IsAbs(cachePath) {
+		return errors.New("repack cache path must be absolute")
+	}
+	if len(binding.GGUFSHA256) != 64 || binding.Architecture == "" || binding.Quant == "" ||
+		len(binding.RuntimeSHA256) != 64 || binding.Platform == "" || binding.Mode == "" {
+		return errors.New("incomplete repack cache binding metadata")
+	}
+	metaPath := cachePath + ".meta.json"
+	if info, err := os.Lstat(cachePath); err == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("repack cache must be a regular file, not a directory or symlink")
+		}
+		if binding.MaxBytes > 0 && info.Size() > binding.MaxBytes {
+			return errors.New("repack cache exceeds configured disk budget")
+		}
+		metaInfo, err := os.Lstat(metaPath)
+		if err != nil || !metaInfo.Mode().IsRegular() || metaInfo.Size() > 4096 {
+			return errors.New("repack cache missing valid binding metadata; refuse cross-model reuse")
+		}
+		raw, err := os.ReadFile(metaPath)
+		if err != nil {
+			return err
+		}
+		var saved RepackCacheBinding
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			return err
+		}
+		if saved.GGUFSHA256 != binding.GGUFSHA256 || saved.Architecture != binding.Architecture ||
+			saved.Quant != binding.Quant || saved.RuntimeSHA256 != binding.RuntimeSHA256 ||
+			saved.Platform != binding.Platform || saved.Mode != binding.Mode {
+			return errors.New("repack cache binding mismatch across model/runtime/platform")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	} else {
+		raw, err := json.Marshal(binding)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(metaPath, raw, 0600); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func checkRuntime(binary, feature string) error {
+	m, err := readManifest(binary)
+	if err != nil {
+		return err
+	}
+	for _, f := range m.Features {
+		if f == feature {
+			return nil
+		}
+	}
+	return fmt.Errorf("smolmax binary was not registered for %s", feature)
 }
 
 func intEnv(key string, fallback, min, max int) (int, error) {

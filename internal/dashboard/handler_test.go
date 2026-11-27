@@ -311,3 +311,47 @@ func TestCancelPrimaryLoadDoesNotCancelPoolWork(t *testing.T) {
 		t.Fatal("subsequent load was rejected:", err)
 	}
 }
+
+func TestRestrictedOpenAIKeyCannotAccessAdminOrHandoffOrCacheRoutes(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewManager(dir, filepath.Join(dir, "models"), "llama-server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	adminToken := strings.Repeat("a", 64)
+	joinToken := strings.Repeat("b", 64)
+	inferenceToken := strings.Repeat("k", 64)
+	s, err := coordinator.New(adminToken, joinToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(m, s, adminToken)
+	if err := d.SetAPIKey(inferenceToken); err != nil {
+		t.Fatal(err)
+	}
+	h := d.Handler()
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/v1/handoff/status"},
+		{"POST", "/v1/handoff/plan"},
+		{"POST", "/v1/handoff/start"},
+		{"POST", "/v1/handoff/cancel"},
+		{"POST", "/v1/handoff/rollback"},
+		{"GET", "/v1/nodes"},
+		{"POST", "/v1/pairing/start"},
+		{"POST", "/v1/bench/node-1"},
+		{"GET", "/v1/nodes/cache/peers/" + strings.Repeat("c", 64)},
+		{"GET", "/v1/nodes/cache/" + strings.Repeat("c", 64)},
+		{"POST", "/v1/nodes/cache/announce"},
+		{"GET", "/v1/nodes/authority"},
+		{"GET", "/api/cluster"},
+	} {
+		code := req(h, tc.method, tc.path, inferenceToken, "", nil).Code
+		if code != http.StatusUnauthorized && code != http.StatusForbidden {
+			t.Fatalf("%s %s with restricted OpenAI key: got %d, want 401/403", tc.method, tc.path, code)
+		}
+	}
+}

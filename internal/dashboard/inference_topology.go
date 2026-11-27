@@ -28,24 +28,25 @@ type topologyNode struct {
 }
 
 type inferenceTopology struct {
-	Loaded        bool           `json:"loaded"`
-	Model         string         `json:"model,omitempty"`
-	Blocks        int            `json:"blocks"`
-	ParallelSlots int            `json:"parallel_slots"`
-	Aggregated    bool           `json:"aggregated"`
-	Nodes         []topologyNode `json:"nodes"`
-	NativeDevices []string       `json:"native_devices,omitempty"`
-	TensorSplit   string         `json:"tensor_split,omitempty"`
-	LocalLayers   int            `json:"rpc_local_layers"`
-	Notice        string         `json:"notice"`
-	rpcOwners     map[string]string
+	Loaded          bool           `json:"loaded"`
+	AllocationBasis string         `json:"allocation_basis"`
+	Model           string         `json:"model,omitempty"`
+	Blocks          int            `json:"blocks"`
+	ParallelSlots   int            `json:"parallel_slots"`
+	Aggregated      bool           `json:"aggregated"`
+	Nodes           []topologyNode `json:"nodes"`
+	NativeDevices   []string       `json:"native_devices,omitempty"`
+	TensorSplit     string         `json:"tensor_split,omitempty"`
+	LocalLayers     int            `json:"rpc_local_layers"`
+	Notice          string         `json:"notice"`
+	rpcOwners       map[string]string
 }
 
 // This snapshot is published only after engine.Load succeeds. Native args are
 // factual, block boundaries reconstructed from split ratios are estimates.
 func buildInferenceTopology(s Settings, meta local.GGUFInfo, size, hostBudget uint64, selected clusterplan.Selection, guests []RPCGuest, devices RPCDevicePlacement, engine *local.Managed) *inferenceTopology {
 	blocks := int(meta.BlockCount)
-	out := &inferenceTopology{Loaded: true, Model: s.Model, Blocks: blocks, ParallelSlots: max(1, s.ParallelSlots), Aggregated: s.ParallelSlots > 1, NativeDevices: append([]string(nil), engine.RPCDeviceNames...), TensorSplit: engine.RPCTensorSplit, LocalLayers: engine.RPCLocalLayers, Notice: "Argumentos do runtime carregado; faixas e bytes por nó estimados pela divisão de camadas, não telemetria nativa por bloco."}
+	out := &inferenceTopology{Loaded: true, AllocationBasis: "confirmed_native", Model: s.Model, Blocks: blocks, ParallelSlots: max(1, s.ParallelSlots), Aggregated: s.ParallelSlots > 1, NativeDevices: append([]string(nil), engine.RPCDeviceNames...), TensorSplit: engine.RPCTensorSplit, LocalLayers: engine.RPCLocalLayers, Notice: "Argumentos do runtime carregado; faixas e bytes por nó estimados pela divisão de camadas, não telemetria nativa por bloco."}
 	host := topologyNode{NodeID: "host", Name: "Host", Mode: "host-local", RAMBudget: hostBudget}
 	if s.GPULayers == "0" || len(engine.RPCServers) > 0 {
 		host.Mode = "cpu"

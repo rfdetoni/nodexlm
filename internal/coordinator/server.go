@@ -4,6 +4,7 @@ package coordinator
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -39,34 +41,65 @@ type nodeState struct {
 	active       string
 	decisionSeen time.Time
 	decisionEWMA time.Duration
+	cachePeer    *peerCacheEntry
 }
 
 type Server struct {
-	mu              sync.Mutex
-	admin           [32]byte
-	enrollment      [32]byte
-	nodes           map[string]*nodeState
-	jobs            map[string]*protocol.Job
-	queue           []string
-	events          map[string]*jobEvents
-	measurements    map[string][]rpcmesh.Measurement
-	decisionTimings map[string][]time.Duration
-	logger          *slog.Logger
-	storePath       string
-	pair            *pairing.Session
-	certDER         []byte
-	rpcHub          *rpcmesh.Hub
-	rpcMicrobench   func(string)
-	rpcDrain        func(string)
-	modelCacheDir   string
-	modelCacheSlots chan struct{}
+	mu                 sync.Mutex
+	admin              [32]byte
+	enrollment         [32]byte
+	clusterID          string
+	epoch              uint64
+	authorityPriv      ed25519.PrivateKey
+	authorityPub       ed25519.PublicKey
+	revokedNodes       map[string]uint64
+	allowLoopbackPeers bool
+	nodes              map[string]*nodeState
+	jobs               map[string]*protocol.Job
+	queue              []string
+	events             map[string]*jobEvents
+	measurements       map[string][]rpcmesh.Measurement
+	decisionTimings    map[string][]time.Duration
+	logger             *slog.Logger
+	storePath          string
+	pair               *pairing.Session
+	certDER            []byte
+	rpcHub             *rpcmesh.Hub
+	rpcMicrobench      func(string)
+	rpcDrain           func(string)
+	modelCacheDir      string
+	modelCacheSlots    chan struct{}
+	draining           bool
+	fenced             bool
+	handoff            HandoffState
 }
 
 func New(adminToken, enrollmentToken string) (*Server, error) {
 	if len(adminToken) < 32 || len(enrollmentToken) < 32 || adminToken == enrollmentToken {
 		return nil, errors.New("admin and enrollment tokens must be distinct, at least 32 characters each")
 	}
-	return &Server{admin: sha256.Sum256([]byte(adminToken)), enrollment: sha256.Sum256([]byte(enrollmentToken)), measurements: map[string][]rpcmesh.Measurement{}, decisionTimings: map[string][]time.Duration{}, events: map[string]*jobEvents{}, nodes: map[string]*nodeState{}, jobs: map[string]*protocol.Job{}, logger: slog.Default(), rpcHub: rpcmesh.NewHub(), modelCacheSlots: make(chan struct{}, 4)}, nil
+	clusterID, epoch, pub, priv, err := newAuthorityIdentity()
+	if err != nil {
+		return nil, err
+	}
+	return &Server{
+		admin:              sha256.Sum256([]byte(adminToken)),
+		enrollment:         sha256.Sum256([]byte(enrollmentToken)),
+		clusterID:          clusterID,
+		epoch:              epoch,
+		authorityPriv:      priv,
+		authorityPub:       pub,
+		revokedNodes:       map[string]uint64{},
+		allowLoopbackPeers: os.Getenv("NODEXLM_P2P_ALLOW_LOOPBACK") == "1",
+		measurements:       map[string][]rpcmesh.Measurement{},
+		decisionTimings:    map[string][]time.Duration{},
+		events:             map[string]*jobEvents{},
+		nodes:              map[string]*nodeState{},
+		jobs:               map[string]*protocol.Job{},
+		logger:             slog.Default(),
+		rpcHub:             rpcmesh.NewHub(),
+		modelCacheSlots:    make(chan struct{}, 4),
+	}, nil
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.
@@ -88,7 +121,10 @@ func (s *Server) handler(administrative bool) http.Handler {
 	}
 	mux.HandleFunc("POST /v1/pairing/enroll", s.pairingEnroll)
 	mux.HandleFunc("POST /v1/nodes/heartbeat", s.heartbeat)
+	mux.HandleFunc("GET /v1/nodes/authority", s.nodeAuthority)
 	mux.HandleFunc("GET /v1/nodes/catalog", s.modelCatalog)
+	mux.HandleFunc("POST /v1/nodes/cache/announce", s.announcePeerCache)
+	mux.HandleFunc("GET /v1/nodes/cache/peers/{sha256}", s.peerCacheLookup)
 	mux.HandleFunc("GET /v1/nodes/cache/{sha256}", s.nodeModelCache)
 	mux.HandleFunc("POST /v1/nodes/lease", s.lease)
 	mux.HandleFunc("CONNECT /v1/nodes/rpc/tunnel", s.rpcTunnel)
@@ -105,6 +141,12 @@ func (s *Server) handler(administrative bool) http.Handler {
 		mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 		mux.HandleFunc("DELETE /v1/jobs/{id}", s.cancelJob)
 		mux.HandleFunc("POST /v1/chat/completions", s.chat)
+		mux.HandleFunc("POST /v1/handoff/plan", s.handoffPlanHTTP)
+		mux.HandleFunc("POST /v1/handoff/start", s.handoffStartHTTP)
+		mux.HandleFunc("GET /v1/handoff/status", s.handoffStatusHTTP)
+		mux.HandleFunc("POST /v1/handoff/cancel", s.handoffCancelHTTP)
+		mux.HandleFunc("POST /v1/handoff/rollback", s.handoffRollbackHTTP)
+		mux.HandleFunc("POST /v1/handoff/verify", s.handoffVerifyHTTP)
 	}
 	return requestlog.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -193,6 +235,7 @@ func validDevice(d protocol.Device) bool {
 		!validMobileTelemetry(d) || !validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
 		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 ||
 		!validRPCDeviceTopology(d.Runtime.RPCDevices) ||
+		(d.PeerPubKey != "" && !protocol.ValidPeerPubKey(d.PeerPubKey)) ||
 		len(d.UnavailableReason) > 128 {
 		return false
 	}
@@ -207,7 +250,7 @@ func validDevice(d protocol.Device) bool {
 		}
 	}
 	for _, gpu := range d.GPUs {
-		if len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
+		if len(gpu.DeviceID) > 128 || len(gpu.Name) > 128 || len(gpu.Vendor) > 80 ||
 			(gpu.MemoryType != "" && gpu.MemoryType != "shared" && gpu.MemoryType != "dedicated" && gpu.MemoryType != "unknown") ||
 			gpu.VRAMBytes > 1<<50 || gpu.FreeVRAMBytes > gpu.VRAMBytes ||
 			!validUsage(gpu.UsagePercent) || (gpu.VRAMUsedBytes != nil && *gpu.VRAMUsedBytes > gpu.VRAMBytes) {
@@ -261,6 +304,11 @@ func (s *Server) register(w http.ResponseWriter, d protocol.Device) {
 		return
 	}
 	d.ID = id
+	for i := range d.GPUs {
+		if d.GPUs[i].DeviceID == "" {
+			d.GPUs[i].DeviceID = fmt.Sprintf("%s:gpu:%d", id, i)
+		}
+	}
 	d.LastSeen = time.Now()
 	d.Status = "online"
 	d.Busy = false
@@ -275,8 +323,15 @@ func (s *Server) register(w http.ResponseWriter, d protocol.Device) {
 		fail(w, 500, "could not persist node")
 		return
 	}
+	authInfo := s.authoritySnapshotLocked()
 	s.mu.Unlock()
-	respond(w, 201, protocol.Credential{NodeID: id, Token: secret})
+	respond(w, 201, protocol.Credential{
+		NodeID:          id,
+		Token:           secret,
+		ClusterID:       authInfo.ClusterID,
+		Epoch:           authInfo.Epoch,
+		AuthorityPubKey: authInfo.AuthorityPubKey,
+	})
 }
 
 func (s *Server) identify(r *http.Request) (*nodeState, string) {
@@ -341,6 +396,11 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			fail(w, 401, "node authorization revoked")
 			return
 		}
+		if s.fenced {
+			s.mu.Unlock()
+			fail(w, http.StatusConflict, "coordinator fenced at newer epoch")
+			return
+		}
 		n.device.LastSeen = time.Now()
 		n.device.Status = "online"
 		n.device.Models = append([]string(nil), req.Models...)
@@ -397,7 +457,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.Runtime.RPCDevices = append([]string(nil), req.Runtime.RPCDevices...)
 			// RPC readiness is set exclusively by the authenticated tunnel.
 		}
-		if n.active == "" {
+		if n.active == "" && !s.draining && !s.fenced {
 			for i, jid := range s.queue {
 				j := s.jobs[jid]
 				if j == nil || j.Status != "queued" {
@@ -540,6 +600,14 @@ func (s *Server) queueJob(req protocol.ChatRequest) (*protocol.Job, error) {
 	}
 	job := &protocol.Job{ID: id, Request: req, Status: "queued", Created: time.Now()}
 	s.mu.Lock()
+	if s.fenced {
+		s.mu.Unlock()
+		return nil, errors.New("coordinator is fenced at a newer epoch")
+	}
+	if s.draining {
+		s.mu.Unlock()
+		return nil, errors.New("coordinator is draining for handoff")
+	}
 	if len(s.queue) >= 128 || len(s.jobs) >= 4096 {
 		s.mu.Unlock()
 		return nil, errors.New("queue at capacity")
@@ -686,6 +754,10 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "node authorization revoked")
 		return
 	}
+	if s.fenced {
+		fail(w, http.StatusConflict, "coordinator fenced at newer epoch")
+		return
+	}
 	// An already-draining Guest cannot re-advertise itself as healthy just
 	// because an in-flight tunnel reconnects after its withdrawal heartbeat.
 	// Existing claimed tunnels are unaffected until the Guest closes them.
@@ -740,7 +812,16 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	// RPCReady is asserted only when a tunnel is authenticated, not by a guest.
 	profile.Runtime.RPCReady = false
+	for i := range profile.GPUs {
+		if profile.GPUs[i].DeviceID == "" {
+			profile.GPUs[i].DeviceID = fmt.Sprintf("%s:gpu:%d", id, i)
+		}
+	}
+	if profile.PeerPubKey == "" {
+		profile.PeerPubKey = n.device.PeerPubKey
+	}
 	n.device = profile
+	authInfo := s.authoritySnapshotLocked()
 	start, drain := s.rpcMicrobench, s.rpcDrain
 	var measurement rpcmesh.Measurement
 	history := s.measurements[id]
@@ -758,7 +839,13 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	} else if start != nil {
 		go start(id)
 	}
-	respond(w, 200, map[string]string{"status": "online"})
+	respond(w, 200, map[string]any{
+		"status":           "online",
+		"cluster_id":       authInfo.ClusterID,
+		"epoch":            authInfo.Epoch,
+		"authority_pubkey": authInfo.AuthorityPubKey,
+		"revoked_nodes":    authInfo.RevokedNodes,
+	})
 }
 
 // DevicesSnapshot returns an immutable copy for the localhost dashboard.

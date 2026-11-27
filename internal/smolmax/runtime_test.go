@@ -121,3 +121,41 @@ func TestProfilingAndRepackCacheAreExplicit(t *testing.T) {
 		t.Fatalf("missing explicit profiler/cache settings: %s", joined)
 	}
 }
+
+func TestCapabilitiesAndRepackCacheBinding(t *testing.T) {
+	binary := createRuntime(t, []string{"moe_pager", "repack_cache"})
+	caps, err := InspectCapabilities(binary)
+	if err != nil || !caps.CPUKernels || !caps.MoEPager || !caps.RepackCache || caps.RPC || caps.Vulkan {
+		t.Fatalf("unexpected capabilities: %+v err=%v", caps, err)
+	}
+
+	cachePath := filepath.Join(t.TempDir(), "repack.cache")
+	binding := RepackCacheBinding{
+		GGUFSHA256:    strings.Repeat("a", 64),
+		Architecture:  "qwen3moe",
+		Quant:         "Q4_K_M",
+		RuntimeSHA256: strings.Repeat("b", 64),
+		Platform:      "linux/arm64",
+		Mode:          "moe",
+		MaxBytes:      1024,
+	}
+	if err := ValidateRepackCache(cachePath, binding); err != nil {
+		t.Fatalf("initial repack binding failed: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte("packed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRepackCache(cachePath, binding); err != nil {
+		t.Fatalf("matching repack binding rejected: %v", err)
+	}
+	otherModel := binding
+	otherModel.GGUFSHA256 = strings.Repeat("c", 64)
+	if err := ValidateRepackCache(cachePath, otherModel); err == nil {
+		t.Fatal("accepted repack cache across different GGUF SHA-256")
+	}
+	overBudget := binding
+	overBudget.MaxBytes = 2
+	if err := ValidateRepackCache(cachePath, overBudget); err == nil {
+		t.Fatal("accepted repack cache exceeding disk budget")
+	}
+}
