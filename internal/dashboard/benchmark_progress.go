@@ -101,7 +101,7 @@ func (m *Manager) benchmarkTraffic(event benchmarkProgressEvent) []benchmarkProg
 		if name == "" {
 			name = fmt.Sprintf("Guest %d", i+1)
 		}
-		rows = append(rows, benchmarkProgressTraffic{Name: name, Sent: b.BytesToGuest-a.BytesToGuest, Received: b.BytesFromGuest-a.BytesFromGuest})
+		rows = append(rows, benchmarkProgressTraffic{Name: name, Sent: b.BytesToGuest - a.BytesToGuest, Received: b.BytesFromGuest - a.BytesFromGuest})
 	}
 	return rows
 }
@@ -121,26 +121,26 @@ func (d *Dashboard) benchmarkStream(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	timeout := 5*time.Minute
+	timeout := 5 * time.Minute
 	switch input.Action {
 	case "single":
 		if input.Extended {
-			timeout = 20*time.Minute
+			timeout = 20 * time.Minute
 		}
 	case "series":
 		if input.Rounds < 2 || input.Rounds > 10 {
 			failure(w, 400, errors.New("cluster series requires 2–10 rounds"))
 			return
 		}
-		timeout = 30*time.Minute
+		timeout = 30 * time.Minute
 	case "stability":
 		if input.Minutes < 1 || input.Minutes > 60 {
 			failure(w, 400, errors.New("stability duration must be 1–60 minutes"))
 			return
 		}
-		timeout = time.Duration(input.Minutes+10)*time.Minute
+		timeout = time.Duration(input.Minutes+10) * time.Minute
 	case "identity":
-		timeout = 30*time.Minute
+		timeout = 30 * time.Minute
 	default:
 		failure(w, 400, errors.New("unknown benchmark action"))
 		return
@@ -170,7 +170,7 @@ func (d *Dashboard) benchmarkStream(w http.ResponseWriter, r *http.Request) {
 	controller := http.NewResponseController(w)
 	write := func(event benchmarkProgressEvent) bool {
 		// Bound slow-client writes; ResponseRecorder does not support deadlines.
-		_ = controller.SetWriteDeadline(time.Now().Add(10*time.Second))
+		_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return encoder.Encode(event) == nil && controller.Flush() == nil
 	}
 	go func() {

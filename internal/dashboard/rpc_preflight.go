@@ -7,8 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/clusterplan"
