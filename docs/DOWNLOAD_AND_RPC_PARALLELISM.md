@@ -30,9 +30,12 @@ When `NODEXLM_MODEL_P2P=1` enables the Host's indexed SHA-256 cache,
 the Android model library first sends an **authenticated, certificate-pinned
 HEAD** to `/v1/nodes/cache/{sha256}`. The Host verifies the published
 content once before opening additional streams. The Host admits **at most
-four parallel** cache readers, rejecting excess requests with HTTP 429;
-SHA-256 cold validation is serialized by a bounded digest lock to avoid
-multiple multi-GB reads on the same model.
+four parallel** cache readers, rejecting excess requests with HTTP 429 and
+`Retry-After: 1`; Android applies short bounded retries before verified WAN
+fallback. SHA-256 cold validation is serialized by a bounded digest lock to
+avoid multiple multi-GB reads on the same model. A cold HEAD may take minutes
+to verify a large GGUF after a Host restart; its read timeout is longer than
+for ordinary 8 MiB transfer ranges.
 
 For GGUF files of 32 MiB or more, Android requests up to four disjoint
 8 MiB HTTPS byte ranges with `If-Range`, and **requires** HTTP 206, the

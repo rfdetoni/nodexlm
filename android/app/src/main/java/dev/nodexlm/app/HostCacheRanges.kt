@@ -116,7 +116,7 @@ internal object HostCacheRanges {
                             val chunk = range(pending[item], size)
                             var success = false
                             var lastError: Exception? = null
-                            for (attempt in 0..2) {
+                            for (attempt in 0..3) {
                                 if (aborted.get() || cancelled()) throw IOException("Cancelled")
                                 try {
                                     open(chunk).use { input ->
@@ -147,7 +147,7 @@ internal object HostCacheRanges {
                                 } catch (e: Exception) {
                                     lastError = e
                                     if (cancelled()) break
-                                    if (attempt < 2) Thread.sleep(150L * (attempt + 1))
+                                    if (attempt < 3) Thread.sleep(500L * (attempt + 1))
                                 }
                             }
                             if (!success) throw lastError ?: IOException("Cancelled")

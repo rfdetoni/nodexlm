@@ -50,13 +50,25 @@ internal object HostModelCache {
         // before parallel requests enter the bounded transfer slots. It also
         // prevents allocating multi-GB sparse stages for cache misses.
         val verified = runCatching {
-            val conn = open(url, credential, "HEAD")
-            try {
-                conn.responseCode == 200 && conn.contentLengthLong == size &&
-                    conn.getHeaderField("ETag") == "\"$checksum\""
-            } finally {
-                conn.disconnect()
+            var accepted = false
+            for (attempt in 0..3) {
+                if (cancelled()) break
+                val conn = open(url, credential, "HEAD")
+                val result = try {
+                    val code = conn.responseCode
+                    code to (code == 200 && conn.contentLengthLong == size &&
+                        conn.getHeaderField("ETag") == "\"$checksum\"")
+                } finally {
+                    conn.disconnect()
+                }
+                if (result.second) {
+                    accepted = true
+                    break
+                }
+                if (result.first != 429 || attempt == 3) break
+                Thread.sleep(500L * (attempt + 1))
             }
+            accepted
         }.getOrDefault(false)
         if (!verified || cancelled()) return false
 
@@ -146,7 +158,10 @@ internal object HostModelCache {
             conn.requestMethod = method
             conn.instanceFollowRedirects = false
             conn.connectTimeout = 7_000
-            conn.readTimeout = 20_000
+            // The first authenticated HEAD after a Host restart may hash
+            // tens of GB before returning. Do not spuriously treat its
+            // bounded cold verification as a network failure.
+            conn.readTimeout = if (method == "HEAD") 300_000 else 20_000
             PinnedHostTls.configure(conn, credential.certificate)
             conn.setRequestProperty("Authorization", "Bearer " + credential.token)
             conn.setRequestProperty("X-Nodex-Node", credential.node)

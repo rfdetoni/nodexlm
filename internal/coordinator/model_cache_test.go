@@ -64,8 +64,9 @@ func TestAuthenticatedModelCacheRejectsUnauthenticatedAndStaleContent(t *testing
 	for range cap(server.modelCacheSlots) {
 		server.modelCacheSlots <- struct{}{}
 	}
-	if got := request(true).Code; got != http.StatusTooManyRequests {
-		t.Fatalf("concurrent model cache request accepted: %d", got)
+	busy := request(true)
+	if busy.Code != http.StatusTooManyRequests || busy.Header().Get("Retry-After") != "1" {
+		t.Fatalf("concurrent model cache request should retry later: status=%d retry=%q", busy.Code, busy.Header().Get("Retry-After"))
 	}
 	for range cap(server.modelCacheSlots) {
 		<-server.modelCacheSlots
