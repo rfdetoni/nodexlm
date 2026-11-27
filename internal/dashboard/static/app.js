@@ -371,6 +371,7 @@ async function downloadCandidate(candidate, applyAfter) {
   notice(applyAfter?'Download iniciado; modelo será aplicado após concluir.':'Download iniciado: '+name);
   await refresh();
  } finally {actionBusy=false; if(latestStatus){renderLocalModels(localModels,latestStatus);renderCatalog();}}
+ maybeApplyDownloadedModel(latestStatus?.download);
 }
 async function loadModelFolder() {
  try {
@@ -641,11 +642,16 @@ async function refreshSnapshot(){
   $('handoffMeta').textContent='Época do cluster: '+ep+' · Fase: '+(ho.phase||'idle')+(ho.impact_summary?' · '+ho.impact_summary:'');
  }
  const d=status.download;renderDownload(d);
- if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
-  const name=pendingApply;pendingApply=null;
-  if(d.status==='completed')guard(()=>applyModel(name));
-  else notice('Falha ao baixar '+name+': '+(d.error||'erro desconhecido'));
- }
+ maybeApplyDownloadedModel(d);
+}
+function maybeApplyDownloadedModel(d){
+ if(!pendingApply || !d || d.name!==pendingApply || d.status==='downloading')return;
+ // A very fast download may finish while downloadCandidate still holds actionBusy.
+ // Keep the intent until the action can actually be started.
+ if(d.status==='completed' && actionBusy)return;
+ const name=pendingApply;pendingApply=null;
+ if(d.status==='completed')guard(()=>applyModel(name));
+ else notice('Falha ao baixar '+name+': '+(d.error||'erro desconhecido'));
 }
 async function guard(action){try{await action();}catch(e){notice(e.message)}}
 

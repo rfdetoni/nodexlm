@@ -21,6 +21,7 @@ const get=id=>{if(!elements.has(id))elements.set(id,new Element(id));return elem
 const settings={model:'',threads:2,context_tokens:2048,gpu_layers:'auto',moe_cpu:false,distributed:false,moe_cpu_layers:0,moe_cache_mib:0};
 let loaded=false;
 let download=null;
+let downloadCompletesImmediately=false;
 const locals=[];
 const calls=[];
 let pairingCalls = 0;
@@ -49,7 +50,16 @@ const fetch=async (url,options)=>{
   if(url==='/api/resident-models')return response(loaded?[settings.model]:[]);
   if(url==='/v1/nodes')return response([]);
   if(url==='/api/cluster')return response({resources:{online:1,aggregate_budget_bytes:8*1073741824},rpc_guests:{}});
-  if(url==='/api/download' && method==='POST') {download={name:body.name,status:'downloading',received:0,total:2*1073741824};return response({status:'downloading'});}
+  if(url==='/api/download' && method==='POST') {
+    download={name:body.name,status:'downloading',received:0,total:2*1073741824};
+    if(downloadCompletesImmediately){download.status='completed';download.received=download.total;locals.push({name:download.name,size_bytes:download.total});}
+    return response({status:download.status});
+  }
+  if(url==='/api/models/apply' && method==='POST') {
+    assert.ok(locals.some(m=>m.name===body.model),'automatic apply requires a local model');
+    Object.assign(settings,{model:body.model,distributed:true,gpu_layers:'auto',placement_strategy:'speed'});
+    loaded=true;return response({loaded});
+  }
   if(url==='/api/settings' && method==='PUT'){Object.assign(settings,body);return response(settings);}
   if(url==='/api/load' && method==='POST'){loaded=true;return response({loaded});}
   if(url==='/api/unload' && method==='POST'){loaded=false;return response({loaded});}
@@ -351,13 +361,23 @@ async function main(){
   for(let i=0;i<60 && !loaded;i++)await new Promise(r=>setTimeout(r,5));
   assert.equal(loaded,true,'download completion applies the selected model');
   assert.equal(settings.model,download.name);
-  assert.ok(calls.some(c=>c.url==='/api/settings' && c.body.model===download.name));
-  assert.ok(calls.some(c=>c.url==='/api/load' && c.method==='POST'));
+  assert.equal(calls.filter(c=>c.url==='/api/models/apply' && c.method==='POST' && c.body.model===download.name).length,1);
+  assert.ok(!calls.some(c=>c.url==='/api/settings' && c.body?.model===download.name),'automatic apply must not write legacy manual settings');
+  assert.ok(!calls.some(c=>c.url==='/api/load' && c.method==='POST'),'automatic apply must not call legacy load endpoint');
   assert.ok(get('models').children.some(r=>r.textContent.includes('Em uso')));
   get('catalogFilter').value='downloaded';
   vm.runInContext('renderCatalog()',sandbox);
   assert.equal(get('catalogResults').children.length,1);
   assert.equal(get('catalogResults').children[0].children[1].children[0].textContent,'Aplicar');
+  // Exercise a completed download returned during the initiating refresh.
+  loaded=false;downloadCompletesImmediately=true;
+  const fastModel={...model,filename:'qwen/Fast-Q4_K_M.gguf',url:'https://huggingface.co/owner/quantizations/resolve/main/qwen/Fast-Q4_K_M.gguf'};
+  await vm.runInContext(`downloadCandidate(${JSON.stringify(fastModel)},true)`,sandbox);
+  for(let i=0;i<60 && (!loaded || settings.model!==download.name);i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(loaded,true,'immediate download must not lose automatic apply');
+  assert.equal(settings.model,'Fast-Q4_K_M.gguf');
+  await vm.runInContext('refresh()',sandbox);
+  assert.equal(calls.filter(c=>c.url==='/api/models/apply' && c.body.model==='Fast-Q4_K_M.gguf').length,1,'apply must run exactly once');
   console.log('Console navigation and model catalog: keyboard, workspaces, download, progress, auto-apply, filters PASS');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
