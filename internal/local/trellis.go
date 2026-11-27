@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/rfdetoni/nodexlm/internal/safedownload"
 )
@@ -52,6 +53,9 @@ func EnsureTrellisPLE(ctx context.Context, model string, meta GGUFInfo, progress
 		return path, err
 	}
 	if _, err := os.Lstat(path); err == nil {
+		if err := verifyCachedTrellisPLE(ctx, path); err != nil {
+			return "", err
+		}
 		return TrellisPLE(model, meta)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -66,6 +70,9 @@ func EnsureTrellisPLE(ctx context.Context, model string, meta GGUFInfo, progress
 	}
 	defer unlock()
 	if _, err := os.Lstat(path); err == nil {
+		if err := verifyCachedTrellisPLE(ctx, path); err != nil {
+			return "", err
+		}
 		return TrellisPLE(model, meta)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -73,7 +80,7 @@ func EnsureTrellisPLE(ctx context.Context, model string, meta GGUFInfo, progress
 	if _, err := safedownload.Fetch(ctx, nil, flashNextPLEURL, stage, 60<<30, progress); err != nil {
 		return "", err
 	}
-	if err := verifyTrellisPLE(ctx, stage); err != nil {
+	if err := verifyCachedTrellisPLE(ctx, stage); err != nil {
 		_ = os.Remove(stage)
 		_ = os.Remove(stage + ".json")
 		return "", err
@@ -91,6 +98,52 @@ func EnsureTrellisPLE(ctx context.Context, model string, meta GGUFInfo, progress
 		return "", err
 	}
 	return TrellisPLE(model, meta)
+}
+
+// Cache one verified file identity per process. A rename preserves the
+// identity, so a freshly downloaded 54 GB table is not hashed a second time.
+// The cache is not a substitute for the pinned digest after a restart or edit.
+var trellisPLEVerified struct {
+	mu   sync.Mutex
+	info os.FileInfo
+}
+
+func samePLEFile(a, b os.FileInfo) bool {
+	return a != nil && b != nil && a.Mode().IsRegular() && b.Mode().IsRegular() &&
+		os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+func verifyCachedTrellisPLE(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("external PLE must be a regular file, not a symlink")
+	}
+	trellisPLEVerified.mu.Lock()
+	cached := samePLEFile(trellisPLEVerified.info, info)
+	trellisPLEVerified.mu.Unlock()
+	if cached {
+		return nil
+	}
+	if err := verifyTrellisPLE(ctx, path); err != nil {
+		return err
+	}
+	after, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !samePLEFile(info, after) {
+		return errors.New("external PLE changed during SHA-256 verification")
+	}
+	trellisPLEVerified.mu.Lock()
+	trellisPLEVerified.info = after
+	trellisPLEVerified.mu.Unlock()
+	return nil
 }
 
 func verifyTrellisPLE(ctx context.Context, path string) error {

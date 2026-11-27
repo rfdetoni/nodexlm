@@ -266,7 +266,12 @@ func applyGuestUpdate(ctx context.Context, directive protocol.UpdateDirective, a
 	if err != nil {
 		return fmt.Errorf("Guest installation is not writable; update using its package manager: %w", err)
 	}
-	defer os.RemoveAll(stage)
+	preserveStage := false
+	defer func() {
+		if !preserveStage {
+			_ = os.RemoveAll(stage)
+		}
+	}()
 	var candidate string
 	for ctx.Err() == nil {
 		attempt, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -295,14 +300,22 @@ func applyGuestUpdate(ctx context.Context, directive protocol.UpdateDirective, a
 	if err := os.Rename(current, backup); err != nil {
 		return err
 	}
+	restore := func(cause error) error {
+		if err := os.Rename(backup, current); err != nil {
+			// Do not destroy the only working executable during deferred cleanup.
+			preserveStage = true
+			return errors.Join(cause, fmt.Errorf("restore failed; previous executable retained at %s: %w", backup, err))
+		}
+		return cause
+	}
 	if err := os.Rename(candidate, current); err != nil {
-		return errors.Join(err, os.Rename(backup, current))
+		return restore(err)
 	}
 	child := exec.CommandContext(ctx, current, args...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := child.Start(); err != nil {
-		_ = os.Remove(current)
-		return errors.Join(err, os.Rename(backup, current))
+		removeErr := os.Remove(current)
+		return restore(errors.Join(err, removeErr))
 	}
 	slog.Info("Guest updated; reconnecting with saved pairing", "version", directive.RequiredVersion)
 	unlock()

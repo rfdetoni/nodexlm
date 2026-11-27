@@ -337,12 +337,9 @@ func serve(args []string) error {
 				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
 					continue
 				}
-				// Advertised source revisions are advisory; the actual native
-				// HELLO is still verified before any tensor transfer.
-				if profile.Runtime.RPCSourceCommit != "" && profile.Runtime.RPCSourceCommit != llamaruntime.SourceCommit {
-					continue
-				}
-				if profile.Runtime.RPCProtocolPatch != 0 && profile.Runtime.RPCProtocolPatch != int(llamaruntime.RPCProtocolPatch()) {
+				// Release builds require an exact native ABI advertisement.
+				// The actual native HELLO remains mandatory before transfer.
+				if !compatibleStockRPC(profile.Runtime, protocol.ValidBuildCommit(buildCommit)) {
 					continue
 				}
 				memory := clusterplan.RPCMemory(profile)

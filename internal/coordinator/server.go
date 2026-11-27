@@ -250,6 +250,8 @@ func validDevice(d protocol.Device) bool {
 		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(d) || !validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
 		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 || len(d.Runtime.RPCSourceCommit) > 64 ||
+		d.Runtime.RPCProtocolMajor < 0 || d.Runtime.RPCProtocolMajor > 255 ||
+		d.Runtime.RPCProtocolMinor < 0 || d.Runtime.RPCProtocolMinor > 255 ||
 		d.Runtime.RPCProtocolPatch < 0 || d.Runtime.RPCProtocolPatch > 255 ||
 		!validRPCDeviceTopology(d.Runtime.RPCDevices) ||
 		(d.PeerPubKey != "" && !protocol.ValidPeerPubKey(d.PeerPubKey)) ||
@@ -379,6 +381,8 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(req) || !validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
 		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 || len(req.Runtime.RPCSourceCommit) > 64 ||
+		req.Runtime.RPCProtocolMajor < 0 || req.Runtime.RPCProtocolMajor > 255 ||
+		req.Runtime.RPCProtocolMinor < 0 || req.Runtime.RPCProtocolMinor > 255 ||
 		req.Runtime.RPCProtocolPatch < 0 || req.Runtime.RPCProtocolPatch > 255 ||
 		!validRPCDeviceTopology(req.Runtime.RPCDevices) {
 		fail(w, 400, "invalid node resources")
@@ -482,6 +486,8 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.Runtime.Engine = req.Runtime.Engine
 			n.device.Runtime.Version = req.Runtime.Version
 			n.device.Runtime.RPCSourceCommit = req.Runtime.RPCSourceCommit
+			n.device.Runtime.RPCProtocolMajor = req.Runtime.RPCProtocolMajor
+			n.device.Runtime.RPCProtocolMinor = req.Runtime.RPCProtocolMinor
 			n.device.Runtime.RPCProtocolPatch = req.Runtime.RPCProtocolPatch
 			n.device.Runtime.Benchmark = req.Runtime.Benchmark
 			n.device.Runtime.RPCDevices = append([]string(nil), req.Runtime.RPCDevices...)
