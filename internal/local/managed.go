@@ -58,6 +58,8 @@ type Managed struct {
 	// Normal interactive model loads retain the backend startup deadline.
 	UnboundedStartup bool
 
+	RPCNativeScheduler bool
+
 	// Native RPC devices are selected by the Host before model loading.
 	// RPCDeviceNames contains registered llama.cpp names such as RPC0/RPC1;
 	// empty preserves upstream default behavior for legacy Guests.
@@ -255,6 +257,10 @@ func (m *Managed) ensure(ctx context.Context) error {
 		if m.parallelRPCUploadEligible() && llamaruntime.BundledParallelRPCUploadsSupported() &&
 			os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_PARALLEL_RPC_UPLOAD=1")
+		}
+		// Coalesce only response-free small commands without a collection delay.
+		if len(m.RPCServers) > 0 && llamaruntime.BundledParallelRPCUploadsSupported() && os.Getenv("NODEXLM_RPC_BATCH_COMMANDS") == "" {
+			cmd.Env = append(cmd.Env, "NODEXLM_RPC_BATCH_COMMANDS=1")
 		}
 	} else {
 		if mode := os.Getenv("NODEXLM_SMOLMAX_MODE"); mode != "" && mode != "off" {
@@ -491,9 +497,10 @@ func (m *Managed) args(port, nctx, threads int, gpu string, blocks uint32) []str
 		args = append(args,
 			"--rpc", strings.Join(m.RPCServers, ","),
 			"--split-mode", "layer",
-			"--override-tensor", `^(output|token_embd)\.weight$=CPU`,
-			"--no-op-offload",
 		)
+		if !m.RPCNativeScheduler {
+			args = append(args, "--override-tensor", `^(output|token_embd)\.weight$=CPU`, "--no-op-offload")
+		}
 		if len(m.RPCDeviceNames) > 0 {
 			args = append(args, "--device", strings.Join(m.RPCDeviceNames, ","))
 			if m.RPCTensorSplit != "" {

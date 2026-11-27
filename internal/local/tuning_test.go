@@ -81,3 +81,14 @@ func TestParallelRPCUploadCountsNativeDevices(t *testing.T) {
 		t.Fatal("hybrid Guest should qualify for parallel upload")
 	}
 }
+
+func TestRPCNativeSchedulerOptIn(t *testing.T) {
+	m := &Managed{RPCServers: []string{"127.0.0.1:50052"}, RPCDeviceNames: []string{"RPC0"}}
+	baseline := strings.Join(m.args(8787, 2048, 4, "auto", 24), " ")
+	m.RPCNativeScheduler = true
+	native := strings.Join(m.args(8787, 2048, 4, "auto", 24), " ")
+	if !strings.Contains(baseline, "--no-op-offload") || !strings.Contains(baseline, "--override-tensor") ||
+		strings.Contains(native, "--no-op-offload") || strings.Contains(native, "--override-tensor") {
+		t.Fatalf("unexpected scheduler flags: %s / %s", baseline, native)
+	}
+}

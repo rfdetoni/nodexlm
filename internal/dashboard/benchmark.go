@@ -264,9 +264,9 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 		}
 		engine.RPCLocalLayers = layers
 		engine.RPCDeviceNames = placement.Devices
-		engine.RPCTensorSplit = placement.TensorSplitArg()
+		engine.RPCTensorSplit = placement.NativeTensorSplitArg()
 		engine.GPULayers = "all"
-		topology += fmt.Sprint(layers) + ":" + placement.DeviceArg() + ":" + placement.TensorSplitArg()
+		topology += fmt.Sprint(layers) + ":" + placement.DeviceArg() + ":" + placement.NativeTensorSplitArg()
 	} else if nodeID != "" {
 		if provider == nil {
 			return InferenceSample{}, errors.New("no RPC Guests")
@@ -288,13 +288,16 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 					return InferenceSample{}, err
 				}
 				engine.RPCLocalLayers = 0
+				if settings.RPCNativeScheduler && !validRPCDeviceKinds(guest) {
+					return InferenceSample{}, errors.New("native scheduler requires verified RPC devices")
+				}
 				if validRPCDeviceKinds(guest) {
 					plan := planRPCDevices(clusterplan.Selection{Guests: []clusterplan.Candidate{{ID: guest.ID, CapacityBytes: guest.CapacityBytes}}}, []RPCGuest{guest}, meta, settings, uint64(size))
 					if len(plan.Devices) == 0 {
 						return InferenceSample{}, errors.New("model does not fit individual CPU/GPU budgets")
 					}
-					engine.RPCDeviceNames, engine.RPCTensorSplit = plan.Devices, plan.TensorSplitArg()
-					topology += ":" + plan.DeviceArg() + ":" + plan.TensorSplitArg()
+					engine.RPCDeviceNames, engine.RPCTensorSplit = plan.Devices, plan.NativeTensorSplitArg()
+					topology += ":" + plan.DeviceArg() + ":" + plan.NativeTensorSplitArg()
 				}
 				engine.GPULayers = "all"
 				found = true
