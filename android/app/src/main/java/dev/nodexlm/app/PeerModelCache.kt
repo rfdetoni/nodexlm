@@ -8,7 +8,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.InetAddress
-import java.net.URI
 import java.net.URL
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
@@ -76,7 +75,8 @@ internal object PeerModelCache {
         val port = address.substring(colon + 1).toIntOrNull() ?: return false
         if (port !in 1..65535) return false
         // Must be IP literal, never a DNS hostname.
-        val ipLiteral = host.all { it.isDigit() || it == '.' || it == ':' || it in 'a'..'f' || it in 'A'..'F' }
+        val ipLiteral = (host.contains('.') && host.all { it.isDigit() || it == '.' }) ||
+            (host.contains(':') && host.all { it.isDigit() || it == ':' || it in 'a'..'f' || it in 'A'..'F' })
         if (!ipLiteral) return false
         val addr = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return false
         return !addr.isAnyLocalAddress && !addr.isMulticastAddress && !addr.isLinkLocalAddress &&
@@ -101,7 +101,7 @@ internal object PeerModelCache {
         val priv = runCatching { privateKey(context) }.getOrNull() ?: return false
 
         val peers = queryPeers(base, hostCert, token, nodeId, checksum)
-        if (peers.isEmpty()) return false
+        if (peers.length() == 0) return false
 
         val now = System.currentTimeMillis()
         for (i in 0 until peers.length()) {
@@ -120,6 +120,10 @@ internal object PeerModelCache {
             val ok = try {
                 fetchFromSinglePeer(addr, certSha, nodeId, priv, grant.toString(), grantNonce, checksum, size, temporary, cancelled, progress)
             } catch (_: Exception) {
+                if (quarantinedUntil.size >= 256) {
+                    val expiryCutoff = System.currentTimeMillis()
+                    quarantinedUntil.entries.removeIf { it.value <= expiryCutoff }
+                }
                 quarantinedUntil[peerId] = System.currentTimeMillis() + 5 * 60_000L
                 false
             }

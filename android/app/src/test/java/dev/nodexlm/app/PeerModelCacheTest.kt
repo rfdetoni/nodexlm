@@ -19,6 +19,7 @@ class PeerModelCacheTest {
         assertFalse(PeerModelCache.isPrivatePeerAddress("169.254.169.254:80"))
         assertFalse(PeerModelCache.isPrivatePeerAddress("8.8.8.8:443"))
         assertFalse(PeerModelCache.isPrivatePeerAddress("evil.local:8443"))
+        assertFalse(PeerModelCache.isPrivatePeerAddress("cafe:8443"))
         assertFalse(PeerModelCache.isPrivatePeerAddress("192.168.1.1:0"))
     }
 
