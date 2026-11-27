@@ -332,6 +332,14 @@ func serve(args []string) error {
 				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
 					continue
 				}
+				// Advertised source revisions are advisory; the actual native
+				// HELLO is still verified before any tensor transfer.
+				if profile.Runtime.RPCSourceCommit != "" && profile.Runtime.RPCSourceCommit != llamaruntime.SourceCommit {
+					continue
+				}
+				if profile.Runtime.RPCProtocolPatch != 0 && profile.Runtime.RPCProtocolPatch != int(llamaruntime.RPCProtocolPatch()) {
+					continue
+				}
 				memory := clusterplan.RPCMemory(profile)
 				out = append(out, dashboard.RPCGuest{
 					ID: profile.ID, Name: profile.Name, Endpoint: endpoint,
@@ -1215,6 +1223,13 @@ func rpcNode(args []string) error {
 		profile.Runtime.Benchmark = true
 		profile.Runtime.ReconnectFailures = cli.ReconnectFailures.Load()
 		profile.Runtime.Version = llamaruntime.Version
+		if *bin == "" {
+			major, minor := llamaruntime.RPCProtocolVersion()
+			profile.Runtime.RPCProtocolMajor = int(major)
+			profile.Runtime.RPCProtocolMinor = int(minor)
+			profile.Runtime.RPCProtocolPatch = int(llamaruntime.RPCProtocolPatch())
+			profile.Runtime.RPCSourceCommit = llamaruntime.SourceCommit
+		}
 		beatCtx, stop := context.WithTimeout(c, 8*time.Second)
 		defer stop()
 		_, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)

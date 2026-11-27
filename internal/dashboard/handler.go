@@ -318,6 +318,19 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, s)
 	}))
+	mux.HandleFunc("POST /api/models/apply", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model string `json:"model"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if err := d.Manager.ApplyAutomaticModel(input.Model); err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 202, d.Manager.State())
+	}))
 	mux.HandleFunc("POST /api/load", d.api(func(w http.ResponseWriter, r *http.Request) {
 		if err := d.Manager.StartLoad(); err != nil {
 			failure(w, 400, err)

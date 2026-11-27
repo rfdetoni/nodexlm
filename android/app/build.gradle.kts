@@ -30,6 +30,10 @@ android {
         buildConfigField("boolean", "LITERT_ENABLED", liteRTEnabled.toString())
         buildConfigField("boolean", "HOST_ENABLED", hostEnabled.toString())
         buildConfigField("String", "LLAMA_VERSION", "\"${llamaRevision["version"]}\"")
+        buildConfigField("String", "LLAMA_SOURCE_COMMIT", "\"${llamaRevision["commit"]}\"")
+        buildConfigField("int", "LLAMA_RPC_MAJOR", llamaRevision["rpc_protocol_major"].toString())
+        buildConfigField("int", "LLAMA_RPC_MINOR", llamaRevision["rpc_protocol_minor"].toString())
+        buildConfigField("int", "LLAMA_RPC_PATCH", llamaRevision["rpc_protocol_patch"].toString())
         buildConfigField("String", "PERMANENT_SIGNING_CERT_SHA256", "\"$signingCertSha256\"")
         applicationId = "dev.nodexlm.app"
         minSdk = 29 // Android 10 (API 29) and newer

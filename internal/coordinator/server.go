@@ -233,7 +233,8 @@ func validDevice(d protocol.Device) bool {
 		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
 		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(d) || !validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
-		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 ||
+		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 || len(d.Runtime.RPCSourceCommit) > 64 ||
+		d.Runtime.RPCProtocolPatch < 0 || d.Runtime.RPCProtocolPatch > 255 ||
 		!validRPCDeviceTopology(d.Runtime.RPCDevices) ||
 		(d.PeerPubKey != "" && !protocol.ValidPeerPubKey(d.PeerPubKey)) ||
 		len(d.UnavailableReason) > 128 {
@@ -361,7 +362,8 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
 		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(req) || !validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
-		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 ||
+		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 || len(req.Runtime.RPCSourceCommit) > 64 ||
+		req.Runtime.RPCProtocolPatch < 0 || req.Runtime.RPCProtocolPatch > 255 ||
 		!validRPCDeviceTopology(req.Runtime.RPCDevices) {
 		fail(w, 400, "invalid node resources")
 		return
@@ -453,6 +455,8 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.Runtime.Installed = req.Runtime.Installed
 			n.device.Runtime.Engine = req.Runtime.Engine
 			n.device.Runtime.Version = req.Runtime.Version
+			n.device.Runtime.RPCSourceCommit = req.Runtime.RPCSourceCommit
+			n.device.Runtime.RPCProtocolPatch = req.Runtime.RPCProtocolPatch
 			n.device.Runtime.Benchmark = req.Runtime.Benchmark
 			n.device.Runtime.RPCDevices = append([]string(nil), req.Runtime.RPCDevices...)
 			// RPC readiness is set exclusively by the authenticated tunnel.

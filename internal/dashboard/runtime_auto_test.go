@@ -12,3 +12,10 @@ func TestTrellisEffectiveSettingsDoNotChangeStockPreferences(t *testing.T) {
 		t.Fatal("stock preferences were changed")
 	}
 }
+
+func TestAutomaticModelSettingsIgnorePreviousModelOptions(t *testing.T) {
+	s := automaticModelSettings(Settings{Backend: "mistralrs", ContextTokens: 4096, PrimaryNode: "guest", DraftModel: "other.gguf", VisionProjector: "old-mmproj.gguf", GPULayers: "0", SpeculativeMode: "draft"}, "new.gguf")
+	if s.Model != "new.gguf" || s.Backend != "llama.cpp" || !s.Distributed || s.PlacementStrategy != "speed" || s.PrimaryNode != "" || s.GPULayers != "auto" || s.DraftModel != "" || s.VisionProjector != "" || s.ContextTokens != 4096 {
+		t.Fatalf("unexpected automatic model settings: %+v", s)
+	}
+}

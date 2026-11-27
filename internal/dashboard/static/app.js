@@ -345,13 +345,9 @@ async function applyModel(name) {
   if(status.runtime.loaded && !await confirmAction('Descarregar o modelo atual para aplicar '+name+'?','Descarregar'))return;
   notice('Aplicando '+name+'...');
   if(status.runtime.loaded)await api('/api/unload','POST',{});
-  const config=settingsInitialized?settingsFromForm(name):{...s,model:name};
-  await api('/api/settings','PUT',config);
+  await api('/api/models/apply','POST',{model:name});
   $('modelSelect').value=name;
   settingsInitialized=false;
-  await refresh();
-  notice('Carregando '+name+'...');
-  await api('/api/load','POST',{});
   notice('Carregamento iniciado: '+name);
   await refresh();
  } finally {actionBusy=false; if(latestStatus){renderLocalModels(localModels,latestStatus);renderCatalog();}}
@@ -386,10 +382,11 @@ async function loadModelFolder() {
 function renderLoadStatus(status){
  const box=$('loadingStatus'),runtime=status.runtime||{};
  $('loadedTopology').hidden=!!runtime.loading;$('inferenceActivity').hidden=!!runtime.loading;
- if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled';if(!box.hidden)box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));return;}
+ if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled'&&!runtime.runtime_notice;if(runtime.phase==='cancelled')box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));else if(runtime.runtime_notice)box.append(el('p','muted',runtime.runtime_notice));return;}
  box.hidden=false;box.replaceChildren(el('strong','','Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
  box.append(action(runtime.phase==='cancelling'?'Cancelando…':'Cancelar carregamento','secondary',async()=>{const state=await api('/api/inference/cancel-load','POST',{});notice(state.phase==='ready'?'O modelo já terminou de carregar.':'Cancelamento solicitado; aguardando encerramento do runtime.');await refresh()},runtime.phase==='cancelling'));
  box.append(el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s'));
+ if(runtime.phase==='resolving_model_dependencies')box.append(el('p','muted','Provisionando dependência PLE verificada. O download pode ocupar cerca de 54 GB de disco; cancelamento e retomada disponíveis.'));
  const transfer=runtime.rpc_transfer||{},channels=Object.entries(transfer);
  const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
  if(channels.length){
@@ -436,7 +433,7 @@ function renderLocalModels(models,status) {
   const loaded=residentModelNames.includes(m.name) || (status.runtime.loaded && status.runtime.model===m.name);
   const blocked=loaded || status.runtime.loading || actionBusy;
   if(loaded)controls.append(el('span','model-tag active','Em uso'));
-  else controls.append(action('Aplicar','',()=>applyModel(m.name),blocked));
+  else controls.append(action('Aplicar automaticamente','',()=>applyModel(m.name),blocked));
   controls.append(action('Excluir','secondary danger',async()=>{
    if(!await confirmAction('Excluir definitivamente '+m.name+' e todas as suas partes GGUF?','Excluir'))return;
    await api('/api/models/'+encodeURIComponent(m.name),'DELETE');
@@ -547,7 +544,7 @@ function renderNodeResources(devices,registered=[]){
   }
   metrics.replaceChildren();
   if(id!=='host')metrics.append(el('p','muted',live?(n.runtime?.rpc_ready?'RPC conectado':n.models?.length?'Executor de modelo inteiro':'Sem executor disponível'):'Dispositivo offline'));
-  if(n.runtime?.engine)metrics.append(el('p','muted','Runtime: '+n.runtime.engine+(n.runtime.version?' · '+n.runtime.version:'')));
+  if(n.runtime?.engine)metrics.append(el('p','muted','Runtime: '+n.runtime.engine+(n.runtime.version?' · '+n.runtime.version:'')+(n.runtime.rpc_protocol_patch!=null?' · RPC '+[n.runtime.rpc_protocol_major,n.runtime.rpc_protocol_minor||0,n.runtime.rpc_protocol_patch].join('.') : '')));
   if(n.models?.length)metrics.append(el('p','muted','Modelos: '+n.models.join(', ')));
   const seen=n.last_seen?Date.parse(n.last_seen):NaN;
   const age=Number.isFinite(seen)?Math.max(0,Math.round((Date.now()-seen)/1000)):null;

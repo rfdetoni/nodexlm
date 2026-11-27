@@ -168,7 +168,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err := os.MkdirAll(modelDir, 0700); err != nil {
 		return nil, err
 	}
-	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, hardware.PhysicalCPUCount())), ContextTokens: 2048, GPULayers: "auto", PlacementStrategy: "speed"}}
+	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, hardware.PhysicalCPUCount())), ContextTokens: 2048, GPULayers: "auto", PlacementStrategy: "speed", Distributed: true}}
 	b, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
 	if err == nil {
 		if err = json.Unmarshal(b, &m.settings); err != nil {
