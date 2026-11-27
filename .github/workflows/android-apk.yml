@@ -52,7 +52,7 @@ jobs:
       changed: ${{ steps.native.outputs.changed }}
       optional: ${{ steps.native.outputs.optional }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false, fetch-depth: 2}
       - id: native
         shell: bash
@@ -98,7 +98,7 @@ jobs:
       ANDROID_BUILD_TOOLS: '35.0.0'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -245,7 +245,7 @@ jobs:
           bash -n ../../scripts/android-rpc-acceptance.sh
       - name: Preserve resolved Rust dependency lock for review
         if: github.event_name == 'pull_request' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nodexlm-rust-rpc-dependency-lock
           path: android/rpc-rust/Cargo.lock
@@ -327,7 +327,7 @@ jobs:
 
       - name: Upload isolated PR test APK (not update-compatible)
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nodexlm-android-pr-test-only
           path: |
@@ -358,7 +358,7 @@ jobs:
           cp "$apk" ../dist/NodexLM-optional-arm64-debug.apk
       - name: Upload experimental ARM64 APK
         if: github.event_name == 'pull_request' && needs.detect.outputs.optional == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nodexlm-optional-arm64-test
           path: dist/NodexLM-optional-arm64-debug.apk
@@ -430,7 +430,7 @@ jobs:
 
       - name: Upload updatable Android APK for public beta
         if: github.ref == 'refs/heads/main' && steps.signing.outputs.configured == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nodexlm-android-updatable
           path: dist/NodexLM-android-universal.apk
@@ -457,7 +457,7 @@ jobs:
 
       - name: Upload signed release APK
         if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.configured == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nodexlm-android-release
           path: |
