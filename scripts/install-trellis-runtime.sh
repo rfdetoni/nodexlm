@@ -9,10 +9,6 @@ case "$mode" in
   rpc-candidate) rpc=ON; tests=ON; suffix="-rpc-candidate" ;;
   *) echo "usage: $0 [cpu|vulkan|cuda|metal] [local|rpc-candidate]" >&2; exit 2 ;;
 esac
-if [[ "$mode" == rpc-candidate && "$backend" != cpu ]]; then
-  echo "RPC candidate is currently admitted for CPU validation only" >&2
-  exit 2
-fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 case "$backend" in
   cpu) flags=(-DGGML_VULKAN=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF) ;;
@@ -32,7 +28,7 @@ git -C "$work/src" fetch --depth=1 origin "$revision"
 git -C "$work/src" checkout -q --detach FETCH_HEAD
 test "$(git -C "$work/src" rev-parse HEAD)" = "$revision"
 if [[ "$mode" == rpc-candidate ]]; then
-  cp "$script_dir/trellis-rpc-tensors.cpp" "$work/src/tools/rpc/nodexlm-trellis-rpc-tensors.cpp"
+  cp "$script_dir/../internal/llamaruntime/testdata/trellis-rpc-tensors.cpp" "$work/src/tools/rpc/nodexlm-trellis-rpc-tensors.cpp"
   cat >> "$work/src/tools/rpc/CMakeLists.txt" <<'CMAKE'
 
 add_executable(nodexlm-trellis-rpc-tensors nodexlm-trellis-rpc-tensors.cpp)
@@ -72,6 +68,11 @@ if [[ "$mode" == rpc-candidate ]]; then
   test -f "$worker"
   "$worker" --help > "$work/rpc-help.txt" 2>&1
   cp "$worker" "$work/install/bin/"
+  selftest="$work/build/bin/nodexlm-trellis-rpc-tensors"
+  if [[ ! -f "$selftest" ]]; then selftest="$work/build/bin/Release/nodexlm-trellis-rpc-tensors.exe"; fi
+  if [[ ! -f "$selftest" ]]; then selftest="$work/build/bin/nodexlm-trellis-rpc-tensors.exe"; fi
+  test -f "$selftest"
+  cp "$selftest" "$work/install/bin/"
 fi
 cp "$work/src/LICENSE" "$work/install/"
 printf '%s\n' "$revision" > "$work/install/source-commit.txt"

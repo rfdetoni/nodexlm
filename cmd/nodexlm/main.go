@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -343,6 +344,9 @@ func serve(args []string) error {
 					continue
 				}
 				if trellis {
+					if os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_GPU") != "1" && slices.Contains(profile.Runtime.RPCDevices, "gpu") {
+						continue
+					}
 					if profile.Runtime.RPCSourceCommit != llamaruntime.TrellisSourceCommit ||
 						profile.Runtime.RPCProtocolMajor != 10 || profile.Runtime.RPCProtocolMinor != 0 ||
 						profile.Runtime.RPCProtocolPatch != 3 || strings.HasPrefix(endpoint, "unix:") {
@@ -1184,11 +1188,8 @@ func rpcNodeOnce(args []string) error {
 		if *bin != "" {
 			return errors.New("Host selected Trellis; custom RPC binaries cannot be switched automatically")
 		}
-		selectedBackend, *device, *addr = "cpu", "CPU", "auto"
-		*rpcCache = false
-		c, stop := context.WithTimeout(context.Background(), 20*time.Minute)
-		_, executable, err = llamaruntime.EnsureTrellisRPC(c, *dir)
-		stop()
+		*addr, *rpcCache = "auto", false
+		selectedBackend, executable, *device, err = provisionTrellisGuest(*dir, profile, policyAllowsTrellisGPU(directive.Runtime))
 		if err != nil {
 			return err
 		}
@@ -1303,7 +1304,8 @@ func rpcNodeOnce(args []string) error {
 		}
 		if err == nil {
 			policyErr := verifyHostRuntimePolicy(agent.Node, directive.Runtime)
-			if policyErr == nil && policyUsesTrellis(directive.Runtime) != trellis {
+			if policyErr == nil && (policyUsesTrellis(directive.Runtime) != trellis ||
+				(trellis && selectedBackend != "cpu" && !policyAllowsTrellisGPU(directive.Runtime))) {
 				policyErr = errRuntimeSwitch
 			}
 			if policyErr != nil {

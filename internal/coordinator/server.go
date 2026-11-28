@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -818,6 +819,10 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	trellis := trellisDesktop(n.device) && s.trellisRPC
+	if trellis && os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_GPU") != "1" && slices.Contains(n.device.Runtime.RPCDevices, "gpu") {
+		fail(w, http.StatusServiceUnavailable, "Trellis GPU policy disabled")
+		return
+	}
 	if trellis && !trellisRuntimeMatches(n.device.Runtime) || !trellis && n.device.Runtime.RPCSourceCommit == llamaruntime.TrellisSourceCommit {
 		fail(w, http.StatusServiceUnavailable, "RPC runtime switch required")
 		return

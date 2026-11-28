@@ -47,7 +47,7 @@ func preflightRPCGuestsRuntime(ctx context.Context, trellis bool, selected []clu
 					}
 					for _, kind := range guest.RPCDeviceKinds {
 						budget := uint64(0)
-						if kind == "gpu" && rpcGPUCount(guest) > 1 {
+						if kind == "gpu" && (trellis || rpcGPUCount(guest) > 1) {
 							budget = rpcDeviceBudget(guest, kind)
 						}
 						expected = append(expected, budget)

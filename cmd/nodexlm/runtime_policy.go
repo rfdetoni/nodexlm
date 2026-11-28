@@ -31,7 +31,7 @@ func verifyHostRuntimePolicy(credential protocol.Credential, signed *protocol.Si
 		return nil
 	}
 	major, minor := llamaruntime.RPCProtocolVersion()
-	if p.HostBuildCommit != buildCommit || p.Engine != "llama.cpp" ||
+	if p.HostBuildCommit != buildCommit || p.Engine != "llama.cpp" || p.ExperimentalGPU ||
 		p.SourceCommit != llamaruntime.SourceCommit || p.Release != llamaruntime.BundledRPCRelease() ||
 		p.RPCMajor != major || p.RPCMinor != minor || p.RPCPatch != llamaruntime.RPCProtocolPatch() ||
 		!maps.Equal(p.ArchiveSHA256, llamaruntime.PublishedRPCDigests()) {
@@ -44,4 +44,8 @@ var errRuntimeSwitch = errors.New("Host selected a different native runtime")
 
 func policyUsesTrellis(signed *protocol.SignedRuntimePolicy) bool {
 	return signed != nil && signed.Policy.Engine == "trellis"
+}
+
+func policyAllowsTrellisGPU(signed *protocol.SignedRuntimePolicy) bool {
+	return policyUsesTrellis(signed) && signed.Policy.ExperimentalGPU
 }

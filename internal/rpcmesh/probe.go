@@ -102,6 +102,18 @@ func ProbeTrellisTensorUpload(ctx context.Context, endpoint string, expectedDevi
 			return fmt.Errorf("Trellis device count %d does not match planned %d", count, len(expectedDevices))
 		}
 		for device := uint32(0); device < count; device++ {
+			if len(expectedDevices) != 0 && expectedDevices[device] != 0 {
+				var req [4]byte
+				binary.LittleEndian.PutUint32(req[:], device)
+				response, err := rpcProbeRoundtrip(conn, 11, req[:], 16)
+				if err != nil {
+					return fmt.Errorf("Trellis device %d GET_DEVICE_MEMORY: %w", device, err)
+				}
+				free, total := binary.LittleEndian.Uint64(response[:8]), binary.LittleEndian.Uint64(response[8:])
+				if free < expectedDevices[device] || free > total {
+					return fmt.Errorf("Trellis device %d free memory below admitted budget", device)
+				}
+			}
 			if err := probeNativeTensor(conn, device); err != nil {
 				return err
 			}

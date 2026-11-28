@@ -237,7 +237,7 @@ func (m *Manager) State() map[string]any {
 	if m.engine != nil && m.engine.TrellisRuntime {
 		state["backend"] = "trellis"
 		if len(m.engine.RPCServers) > 0 {
-			state["runtime_notice"] = "Experimental Trellis CPU RPC"
+			state["runtime_notice"] = "Experimental Trellis RPC"
 		} else {
 			state["runtime_notice"] = "Trellis Host-only"
 		}

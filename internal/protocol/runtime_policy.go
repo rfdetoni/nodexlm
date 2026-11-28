@@ -17,6 +17,7 @@ type RuntimePolicy struct {
 	NodeID          string            `json:"node_id"`
 	HostBuildCommit string            `json:"host_build_commit"`
 	Engine          string            `json:"engine"`
+	ExperimentalGPU bool              `json:"experimental_gpu,omitempty"`
 	SourceCommit    string            `json:"source_commit"`
 	Release         string            `json:"release"`
 	RPCMajor        byte              `json:"rpc_major"`

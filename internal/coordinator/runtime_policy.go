@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"os"
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
@@ -31,6 +32,7 @@ func (s *Server) runtimePolicyLocked(id string) *protocol.SignedRuntimePolicy {
 	}
 	if n := s.nodes[id]; s.trellisRPC && n != nil && trellisDesktop(n.device) {
 		p.Engine = "trellis"
+		p.ExperimentalGPU = os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_GPU") == "1"
 		p.SourceCommit = llamaruntime.TrellisSourceCommit
 		p.Release = llamaruntime.TrellisRPCRelease
 		p.RPCMajor, p.RPCMinor, p.RPCPatch = 10, 0, 3

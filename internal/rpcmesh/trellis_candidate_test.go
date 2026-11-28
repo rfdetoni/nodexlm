@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 )
 
 // This is a real native integration gate, not a simulated HELLO response.
@@ -58,5 +60,8 @@ func TestTrellisNativeCandidate(t *testing.T) {
 	}
 	if _, err := ProbeHello(ctx, endpoint); err == nil {
 		t.Fatal("stock probe accepted Trellis worker")
+	}
+	if err := llamaruntime.VerifyTrellisDevices(ctx, worker, "CPU"); err != nil {
+		t.Fatalf("Guest native graph admission failed: %v", err)
 	}
 }

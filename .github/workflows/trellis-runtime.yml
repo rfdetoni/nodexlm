@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'scripts/install-trellis-runtime.sh'
-      - 'scripts/trellis-rpc-tensors.cpp'
+      - 'internal/llamaruntime/testdata/trellis-rpc-tensors.cpp'
       - 'internal/rpcmesh/probe.go'
       - 'internal/rpcmesh/trellis_candidate_test.go'
       - 'internal/llamaruntime/trellis*.go'

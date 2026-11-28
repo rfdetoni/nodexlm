@@ -11,7 +11,7 @@
 #include <vector>
 
 int main(int argc, char ** argv) {
-    GGML_ASSERT(argc == 3);
+    GGML_ASSERT(argc == 2 || argc == 3);
     static_assert(RPC_PROTO_MAJOR_VERSION == 10 && RPC_PROTO_MINOR_VERSION == 0 &&
                   RPC_PROTO_PATCH_VERSION == 3, "unexpected Trellis RPC ABI");
     ggml_backend_load_all();
@@ -21,7 +21,7 @@ int main(int argc, char ** argv) {
     };
     ggml_backend_t cpu = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
     GGML_ASSERT(cpu != nullptr);
-    for (int endpoint = 1; endpoint <= 2; ++endpoint) {
+    for (int endpoint = 1; endpoint < argc; ++endpoint) {
         ggml_backend_t backend = ggml_backend_rpc_init(argv[endpoint], 0);
         GGML_ASSERT(backend != nullptr);
         ggml_init_params params = {};
@@ -51,7 +51,7 @@ int main(int argc, char ** argv) {
         ggml_backend_buffer_free(buffer);
         ggml_free(ctx);
         // Exercise compute, not merely transport. A tiny GEMV for each
-        // quantization compares the remote CPU to the pinned local CPU.
+        // quantization compares the remote device to the pinned local CPU.
         for (auto type : types) {
             constexpr int64_t cols = 256;
             constexpr int64_t rows = 4;
