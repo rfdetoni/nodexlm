@@ -877,6 +877,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	n.device = profile
 	authInfo := s.authoritySnapshotLocked()
+	runtimePolicy := s.runtimePolicyLocked(id)
 	start, drain := s.rpcMicrobench, s.rpcDrain
 	var measurement rpcmesh.Measurement
 	history := s.measurements[id]
@@ -899,6 +900,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		"required_build_commit": directive.RequiredBuildCommit,
 		"required_version":      directive.RequiredVersion,
 		"update_required":       directive.UpdateRequired,
+		"runtime_policy":        runtimePolicy,
 		"cluster_id":            authInfo.ClusterID,
 		"epoch":                 authInfo.Epoch,
 		"authority_pubkey":      authInfo.AuthorityPubKey,

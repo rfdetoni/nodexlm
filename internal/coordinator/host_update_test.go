@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 )
@@ -42,6 +43,15 @@ func TestHostRequiresExactGuestBuild(t *testing.T) {
 	var directive protocol.UpdateDirective
 	if reply.Code != 200 || json.Unmarshal(reply.Body.Bytes(), &directive) != nil || directive.UpdateRequired {
 		t.Fatalf("updated Guest rejected: %s", reply.Body.String())
+	}
+	if directive.Runtime == nil {
+		t.Fatal("missing signed runtime policy")
+	}
+	if err := protocol.VerifyRuntimePolicy(*directive.Runtime, cred, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if directive.Runtime.Policy.HostBuildCommit != required {
+		t.Fatal("runtime policy not bound to Host build")
 	}
 	if devices := s.DevicesSnapshot(); devices[0].Status != "online" {
 		t.Fatalf("updated Guest unavailable: %+v", devices)

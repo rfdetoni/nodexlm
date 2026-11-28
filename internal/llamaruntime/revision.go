@@ -3,6 +3,7 @@ package llamaruntime
 import (
 	_ "embed"
 	"encoding/json"
+	"maps"
 )
 
 //go:embed revision.json
@@ -48,4 +49,9 @@ func readRevision() runtimeRevision {
 		panic("missing native RPC protocol version in embedded revision")
 	}
 	return r
+}
+
+// PublishedRPCDigests returns a detached snapshot of the reviewed archives.
+func PublishedRPCDigests() map[string]string {
+	return maps.Clone(revision.Published)
 }

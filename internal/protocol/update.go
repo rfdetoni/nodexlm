@@ -3,9 +3,10 @@ package protocol
 // UpdateDirective contains only an expected release identity. It cannot carry
 // executable commands, paths, URLs or credentials.
 type UpdateDirective struct {
-	RequiredBuildCommit string `json:"required_build_commit,omitempty"`
-	RequiredVersion     string `json:"required_version,omitempty"`
-	UpdateRequired      bool   `json:"update_required"`
+	RequiredBuildCommit string               `json:"required_build_commit,omitempty"`
+	RequiredVersion     string               `json:"required_version,omitempty"`
+	UpdateRequired      bool                 `json:"update_required"`
+	Runtime             *SignedRuntimePolicy `json:"runtime_policy,omitempty"`
 }
 
 func ValidBuildCommit(s string) bool {

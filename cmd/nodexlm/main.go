@@ -1151,6 +1151,9 @@ func rpcNode(args []string) error {
 		defer stop()
 		return applyGuestUpdate(c, directive, append([]string{"rpc-node"}, args...))
 	}
+	if err := verifyHostRuntimePolicy(agent.Node, directive.Runtime); err != nil {
+		return err
+	}
 	executable := *bin
 	selectedBackend := *backend
 	if executable == "" {
