@@ -60,7 +60,7 @@ func preflightRPCGuestsRuntime(ctx context.Context, trellis bool, selected []clu
 			}
 			count, err := retryRPCPreflight(checkCtx, func() (uint32, error) {
 				if trellis {
-					return rpcmesh.ProbeTrellisTensorUpload(checkCtx, endpoint)
+					return rpcmesh.ProbeTrellisTensorUpload(checkCtx, endpoint, expected...)
 				}
 				return rpcmesh.ProbeTensorUpload(checkCtx, endpoint, expected...)
 			}, func(attempt int, err error) {

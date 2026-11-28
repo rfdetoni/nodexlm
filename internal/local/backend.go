@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -66,9 +67,15 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 			}
 			if ple != "" {
 				args = append(args, "--ple", ple)
-				// The sidecar is tens of GiB; keep lookup rows on disk.
+				// The fork gathers PLE rows on the Host, then uploads the
+				// required embeddings into the graph. Do not distribute the
+				// complete sidecar to every RPC Guest.
 				if m.LazyMode == "" || m.LazyMode == "auto" {
-					args = append(args, "--lazy-mode", "on")
+					mode := "on"
+					if len(m.RPCServers) > 0 && runtime.GOOS != "windows" {
+						mode = "on-direct"
+					}
+					args = append(args, "--lazy-mode", mode)
 				}
 			}
 		}

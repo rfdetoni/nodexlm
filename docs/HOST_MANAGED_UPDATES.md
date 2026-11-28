@@ -23,3 +23,5 @@ Android 10+ uses the Bouncy Castle lightweight Ed25519 verifier without register
 ### Placement recovery
 
 Automatic primary loads retry at most twice after an identified RPC preflight or relay-loss failure. Failed Guests are excluded only for that attempt series; unrelated native/model errors are not blindly retried. A subsequent inference request checks for a confirmed native process exit or loss of a previously established RPC session before emitting response bytes, and reloads the primary model using fresh placement. In-flight streams are not replayed, and no KV state is claimed to survive the failure.
+
+Desktop updates now keep the previous executable until the replacement has been admitted through an authenticated RPC CONNECT or an accepted whole-model lease. A failed startup/early exit or 75-minute confirmation timeout restores the previous executable without automatically starting the incompatible revision. An explicit cancellation retains the previous binary for inspection. Successful reconnection releases the update lock so later upgrades can proceed independently.

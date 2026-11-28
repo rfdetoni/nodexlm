@@ -46,6 +46,11 @@ func resolveTrellis(home, backend string, rpc bool) (string, error) {
 	} else if path == "" {
 		path = filepath.Join(home, "runtimes", "trellis", TrellisSourceCommit, backend, "bin", exe("llama-server"))
 	}
+	if rpc || os.Getenv("NODEXLM_TRELLIS_BIN") == "" {
+		if err := verifyTrellisInstall(filepath.Dir(filepath.Dir(path))); err != nil {
+			return "", err
+		}
+	}
 	if !filepath.IsAbs(path) {
 		return "", errors.New("NODEXLM_TRELLIS_BIN must be an absolute local path")
 	}
@@ -102,6 +107,25 @@ func ensureTrellis(ctx context.Context, home, backend string, rpc bool) (string,
 	}
 	root := filepath.Join(home, "runtimes", "trellis", TrellisSourceCommit)
 	if err := os.MkdirAll(root, 0700); err != nil {
+		return "", err
+	}
+	cacheName := backend
+	if rpc {
+		cacheName += "-rpc-candidate"
+	}
+	dest := filepath.Join(root, cacheName)
+	if _, err := os.Lstat(dest); err == nil {
+		// A corrupt or legacy unsealed cache must never be executed or
+		// deleted silently. Retain the old files for operator inspection.
+		quarantine, err := os.MkdirTemp(root, ".invalid-"+cacheName+"-")
+		if err != nil {
+			return "", err
+		}
+		if err := os.Rename(dest, filepath.Join(quarantine, "runtime")); err != nil {
+			_ = os.Remove(quarantine)
+			return "", err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 	stage, err := os.MkdirTemp(root, ".build-")
@@ -204,18 +228,16 @@ func ensureTrellis(ctx context.Context, home, backend string, rpc bool) (string,
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if rpc {
-		backend += "-rpc-candidate"
+	if err := sealTrellisInstall(install); err != nil {
+		return "", err
 	}
-	dest := filepath.Join(root, backend)
-	resolveBackend := strings.TrimSuffix(backend, "-rpc-candidate")
 	if err := os.Rename(install, dest); err != nil {
-		if binary, resolved := resolveTrellis(home, resolveBackend, rpc); resolved == nil {
+		if binary, resolved := resolveTrellis(home, backend, rpc); resolved == nil {
 			return binary, nil
 		}
 		return "", err
 	}
-	return resolveTrellis(home, resolveBackend, rpc)
+	return resolveTrellis(home, backend, rpc)
 }
 
 func copyTrellisFile(source, target string) error {

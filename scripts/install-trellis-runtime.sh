@@ -75,6 +75,14 @@ if [[ "$mode" == rpc-candidate ]]; then
 fi
 cp "$work/src/LICENSE" "$work/install/"
 printf '%s\n' "$revision" > "$work/install/source-commit.txt"
+(
+  cd "$work/install"
+  if command -v sha256sum >/dev/null; then
+    sha256sum source-commit.txt LICENSE bin/* > runtime-integrity.sha256
+  else
+    shasum -a 256 source-commit.txt LICENSE bin/* > runtime-integrity.sha256
+  fi
+)
 if [[ -e "$dest" ]]; then
   echo "Runtime already exists at $dest; remove it explicitly before rebuilding." >&2
   exit 1

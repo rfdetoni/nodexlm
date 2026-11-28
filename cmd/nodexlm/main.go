@@ -454,6 +454,7 @@ func makeClient(server, secret, ca, nodeID string) (*netclient.Client, error) {
 			return nil, err
 		}
 	}
+	c.OnReady = markGuestUpdateReady
 	return c, nil
 }
 func join(args []string) error {

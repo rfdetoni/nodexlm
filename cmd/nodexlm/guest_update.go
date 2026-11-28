@@ -311,15 +311,41 @@ func applyGuestUpdate(ctx context.Context, directive protocol.UpdateDirective, a
 	if err := os.Rename(candidate, current); err != nil {
 		return restore(err)
 	}
+	ready := filepath.Join(stage, "ready")
 	child := exec.CommandContext(ctx, current, args...)
+	child.Env = append(os.Environ(), guestUpdateReadyEnv+"="+ready)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := child.Start(); err != nil {
 		removeErr := os.Remove(current)
 		return restore(errors.Join(err, removeErr))
 	}
-	slog.Info("Guest updated; reconnecting with saved pairing", "version", directive.RequiredVersion)
+	slog.Info("Guest update started; awaiting authenticated Host reconnection", "version", directive.RequiredVersion)
+	exited := make(chan error, 1)
+	go func() { exited <- child.Wait() }()
+	confirmed, exitErr, exitedEarly := awaitGuestUpdate(ctx, ready, directive.RequiredBuildCommit, exited)
+	if !confirmed {
+		if !exitedEarly {
+			_ = child.Process.Kill()
+			<-exited
+		}
+		// Do not restart the old revision automatically. The Host must
+		// continue to exclude it until a compatible update is available.
+		if ctx.Err() != nil {
+			preserveStage = true
+			return fmt.Errorf("update interrupted before confirmation; previous binary retained at %s: %w", backup, ctx.Err())
+		}
+		if err := os.Remove(current); err != nil {
+			preserveStage = true
+			return errors.Join(exitErr, fmt.Errorf("cannot remove unconfirmed update; previous binary retained at %s: %w", backup, err))
+		}
+		return restore(errors.Join(errors.New("new Guest did not reconnect; previous executable restored"), exitErr))
+	}
+	slog.Info("Updated Guest reconnected to Host", "version", directive.RequiredVersion)
+	_ = os.Remove(backup)
 	unlock()
 	locked = false
-	// The child can subsequently update the installation independently.
-	return child.Wait()
+	if exitedEarly {
+		return exitErr
+	}
+	return <-exited
 }

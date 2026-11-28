@@ -128,6 +128,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 			return r.OnUpdate(ctx, response.UpdateDirective)
 		}
+		if r.Client.OnReady != nil {
+			r.Client.OnReady()
+		}
 		work := response.Job
 		if status == http.StatusNoContent {
 			continue

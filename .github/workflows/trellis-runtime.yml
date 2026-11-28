@@ -6,6 +6,9 @@ on:
     paths:
       - 'scripts/install-trellis-runtime.sh'
       - 'scripts/trellis-rpc-tensors.cpp'
+      - 'internal/rpcmesh/probe.go'
+      - 'internal/rpcmesh/trellis_candidate_test.go'
+      - 'internal/llamaruntime/trellis*.go'
       - '.github/workflows/trellis-runtime.yml'
   workflow_dispatch:
 
@@ -36,3 +39,10 @@ jobs:
           candidate="$NODEXLM_HOME/runtimes/trellis/dc5521842f7991ceae73139f9d242d8f877e12d4/cpu-rpc-candidate/bin"
           test -x "$candidate/llama-server"
           test -x "$candidate/ggml-rpc-server"
+      - name: Exercise NodexLM wire probes against compiled fork
+        shell: bash
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          export NODEXLM_TRELLIS_TEST_WORKER="$RUNNER_TEMP/trellis/runtimes/trellis/dc5521842f7991ceae73139f9d242d8f877e12d4/cpu-rpc-candidate/bin/ggml-rpc-server"
+          go test ./internal/rpcmesh -run '^TestTrellisNativeCandidate$' -count=1 -v
