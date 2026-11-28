@@ -139,6 +139,22 @@ func (m *Managed) SystemInfo() string {
 }
 
 // Load starts a resident llama-server only when explicitly requested.
+// ProcessExited reports a confirmed native process exit, without polling
+// HTTP or restarting with an obsolete distributed topology.
+func (m *Managed) ProcessExited() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.processExit == nil {
+		return false
+	}
+	select {
+	case <-m.processExit.done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Managed) Load(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -269,12 +285,12 @@ func (m *Managed) ensure(ctx context.Context) error {
 		cmd.Env = append(cmd.Env, smolEnv...)
 		// A candidate patch is not evidence that the pinned release uses it.
 		// Only verified bundles may automatically opt into parallel uploads.
-		if m.parallelRPCUploadEligible() && llamaruntime.BundledParallelRPCUploadsSupported() &&
+		if !m.TrellisRuntime && m.parallelRPCUploadEligible() && llamaruntime.BundledParallelRPCUploadsSupported() &&
 			os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_PARALLEL_RPC_UPLOAD=1")
 		}
 		// Coalesce only response-free small commands without a collection delay.
-		if len(m.RPCServers) > 0 && llamaruntime.BundledParallelRPCUploadsSupported() && os.Getenv("NODEXLM_RPC_BATCH_COMMANDS") == "" {
+		if !m.TrellisRuntime && len(m.RPCServers) > 0 && llamaruntime.BundledParallelRPCUploadsSupported() && os.Getenv("NODEXLM_RPC_BATCH_COMMANDS") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_RPC_BATCH_COMMANDS=1")
 		}
 	} else {

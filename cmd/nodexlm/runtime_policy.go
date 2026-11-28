@@ -22,6 +22,14 @@ func verifyHostRuntimePolicy(credential protocol.Credential, signed *protocol.Si
 		return err
 	}
 	p := signed.Policy
+	if p.Engine == "trellis" {
+		if p.HostBuildCommit != buildCommit || p.SourceCommit != llamaruntime.TrellisSourceCommit ||
+			p.Release != llamaruntime.TrellisRPCRelease || p.RPCMajor != 10 || p.RPCMinor != 0 ||
+			p.RPCPatch != 3 || len(p.ArchiveSHA256) != 0 {
+			return errors.New("unrecognized Trellis RPC runtime policy")
+		}
+		return nil
+	}
 	major, minor := llamaruntime.RPCProtocolVersion()
 	if p.HostBuildCommit != buildCommit || p.Engine != "llama.cpp" ||
 		p.SourceCommit != llamaruntime.SourceCommit || p.Release != llamaruntime.BundledRPCRelease() ||
@@ -30,4 +38,10 @@ func verifyHostRuntimePolicy(credential protocol.Credential, signed *protocol.Si
 		return errors.New("Host runtime policy differs from the reviewed local release catalog")
 	}
 	return nil
+}
+
+var errRuntimeSwitch = errors.New("Host selected a different native runtime")
+
+func policyUsesTrellis(signed *protocol.SignedRuntimePolicy) bool {
+	return signed != nil && signed.Policy.Engine == "trellis"
 }

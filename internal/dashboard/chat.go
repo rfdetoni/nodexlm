@@ -29,6 +29,11 @@ func (m *Manager) inferenceTimeout(model string) time.Duration {
 
 // Admission is cancellable and tied to the loaded engine generation.
 func (m *Manager) withGeneration(ctx context.Context, req protocol.ChatRequest, generate func(context.Context, *local.Managed, protocol.ChatRequest) error, onTraffic ...func(*InferenceRPCTraffic)) error {
+	// Recover before emitting any response bytes. Never replay an interrupted
+	// stream or a tool call after a response may have reached the client.
+	if err := m.recoverPrimary(ctx, req.Model); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	child := m.residents[req.Model]
 	engine, admission := m.engine, m.admission

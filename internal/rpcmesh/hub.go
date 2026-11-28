@@ -68,6 +68,10 @@ func NewHub() *Hub { return &Hub{nodes: make(map[string]*relay)} }
 // ServeTunnel must only be called after checking the Guest's node credential.
 // HTTP/1.1 CONNECT is hijacked so the TLS connection becomes a raw binary path.
 func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string) {
+	h.ServeRuntimeTunnel(w, r, nodeID, false)
+}
+
+func (h *Hub) ServeRuntimeTunnel(w http.ResponseWriter, r *http.Request, nodeID string, tcpOnly bool) {
 	if r.Method != http.MethodConnect {
 		http.Error(w, "CONNECT required", http.StatusMethodNotAllowed)
 		return
@@ -87,7 +91,7 @@ func (h *Hub) ServeTunnel(w http.ResponseWriter, r *http.Request, nodeID string)
 	if item == nil {
 		var ln net.Listener
 		var err error
-		if h.unix {
+		if h.unix && !tcpOnly {
 			var dir string
 			dir, err = os.MkdirTemp("", "nodexlm-relay-")
 			if err == nil {

@@ -325,7 +325,7 @@ func serve(args []string) error {
 		defer manager.Close()
 		manager.SetRPCStatsProvider(s.RPCStats)
 		s.SetRPCMicrobenchCallbacks(manager.AutoMicrobench, manager.CancelRPCMicrobench)
-		manager.SetRPCProvider(func() []dashboard.RPCGuest {
+		rpcGuests := func(trellis bool) []dashboard.RPCGuest {
 			ready := s.RPCIdleNodes()
 			profiles := s.DevicesSnapshot()
 			out := make([]dashboard.RPCGuest, 0, len(ready))
@@ -339,7 +339,16 @@ func serve(args []string) error {
 				}
 				// Release builds require an exact native ABI advertisement.
 				// The actual native HELLO remains mandatory before transfer.
-				if protocol.ComputeAdmissionReason(profile) != "" || !compatibleStockRPC(profile.Runtime, protocol.ValidBuildCommit(buildCommit)) {
+				if protocol.ComputeAdmissionReason(profile) != "" {
+					continue
+				}
+				if trellis {
+					if profile.Runtime.RPCSourceCommit != llamaruntime.TrellisSourceCommit ||
+						profile.Runtime.RPCProtocolMajor != 10 || profile.Runtime.RPCProtocolMinor != 0 ||
+						profile.Runtime.RPCProtocolPatch != 3 || strings.HasPrefix(endpoint, "unix:") {
+						continue
+					}
+				} else if !compatibleStockRPC(profile.Runtime, protocol.ValidBuildCommit(buildCommit)) {
 					continue
 				}
 				memory := clusterplan.RPCMemory(profile)
@@ -351,7 +360,11 @@ func serve(args []string) error {
 				})
 			}
 			return out
-		})
+		}
+		manager.SetRPCProvider(func() []dashboard.RPCGuest { return rpcGuests(false) })
+		if os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_RPC") == "1" && protocol.ValidBuildCommit(buildCommit) {
+			manager.SetTrellisRPCController(s.SetTrellisRPC, func() []dashboard.RPCGuest { return rpcGuests(true) })
+		}
 		webListener, err = net.Listen("tcp", *webAddr)
 		if err != nil {
 			return fmt.Errorf("Web UI listen: %w", err)
@@ -1086,6 +1099,15 @@ func localChat(args []string) error {
 // rpcNode offers native ggml RPC to the enrolled Host through HTTPS tunnels.
 // It never exposes the unprotected rpc-server outside 127.0.0.1.
 func rpcNode(args []string) error {
+	for {
+		err := rpcNodeOnce(args)
+		if !errors.Is(err, errRuntimeSwitch) {
+			return err
+		}
+	}
+}
+
+func rpcNodeOnce(args []string) error {
 	f := fs("rpc-node")
 	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
@@ -1154,8 +1176,22 @@ func rpcNode(args []string) error {
 	if err := verifyHostRuntimePolicy(agent.Node, directive.Runtime); err != nil {
 		return err
 	}
+	trellis := policyUsesTrellis(directive.Runtime)
 	executable := *bin
 	selectedBackend := *backend
+	if trellis {
+		if *bin != "" {
+			return errors.New("Host selected Trellis; custom RPC binaries cannot be switched automatically")
+		}
+		selectedBackend, *device, *addr = "cpu", "CPU", "auto"
+		*rpcCache = false
+		c, stop := context.WithTimeout(context.Background(), 20*time.Minute)
+		_, executable, err = llamaruntime.EnsureTrellisRPC(c, *dir)
+		stop()
+		if err != nil {
+			return err
+		}
+	}
 	if executable == "" {
 		if selectedBackend == "auto" {
 			selectedBackend = autoGuestBackend(profile)
@@ -1224,6 +1260,7 @@ func rpcNode(args []string) error {
 	c, cancel := ctx()
 	defer cancel()
 	updates := make(chan protocol.UpdateDirective, 1)
+	switches := make(chan error, 1)
 	// A lightweight heartbeat informs the Host of real hardware availability.
 	name, _ := os.Hostname()
 	heartbeat := func() {
@@ -1245,6 +1282,11 @@ func rpcNode(args []string) error {
 			profile.Runtime.RPCProtocolMinor = int(minor)
 			profile.Runtime.RPCProtocolPatch = int(llamaruntime.RPCProtocolPatch())
 			profile.Runtime.RPCSourceCommit = llamaruntime.SourceCommit
+			if trellis {
+				profile.Runtime.Version = llamaruntime.TrellisRPCRelease
+				profile.Runtime.RPCProtocolMajor, profile.Runtime.RPCProtocolMinor, profile.Runtime.RPCProtocolPatch = 10, 0, 3
+				profile.Runtime.RPCSourceCommit = llamaruntime.TrellisSourceCommit
+			}
 		}
 		beatCtx, stop := context.WithTimeout(c, 8*time.Second)
 		defer stop()
@@ -1257,6 +1299,20 @@ func rpcNode(args []string) error {
 			}
 			cancel()
 			return
+		}
+		if err == nil {
+			policyErr := verifyHostRuntimePolicy(agent.Node, directive.Runtime)
+			if policyErr == nil && policyUsesTrellis(directive.Runtime) != trellis {
+				policyErr = errRuntimeSwitch
+			}
+			if policyErr != nil {
+				select {
+				case switches <- policyErr:
+				default:
+				}
+				cancel()
+				return
+			}
 		}
 		if err != nil {
 			slog.Warn("Guest RAM/VRAM heartbeat failed", "error", err,
@@ -1289,6 +1345,8 @@ func rpcNode(args []string) error {
 		updateCtx, stop := ctx()
 		defer stop()
 		return applyGuestUpdate(updateCtx, directive, append([]string{"rpc-node"}, args...))
+	case switchErr := <-switches:
+		return switchErr
 	default:
 		return err
 	}

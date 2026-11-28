@@ -56,3 +56,9 @@ On Linux, `bash scripts/install-trellis-runtime.sh cpu rpc-candidate` builds the
 The RPC candidate pipeline now checks Bash syntax before compiling. The runtime also rechecks the PLE dependency at the actual model load boundary, and cancellation during the SHA-256 pass preserves the staged download for retry.
 
 The mesh now has an explicit Trellis HELLO probe for the pinned 10.0.3 ABI. Stock probes retain their exact pinned version and cannot accept a Trellis worker. This probe only validates framing, version and device count; the fork-specific tensor allocation and full inference integration are still separate admission gates.
+
+### Experimental Host-managed CPU cluster
+
+Set `NODEXLM_EXPERIMENTAL_TRELLIS_RPC=1` on a released Host to allow a selected Trellis GGUF to request the pinned CPU candidate from enrolled desktop Guests through their signed runtime policy. Guests stop their former worker, build/cache the reviewed fork and reconnect without changing pairing. The Host accepts only matching ABI 10.0.3 and uses loopback TCP relays for this fork. Stock Android/iOS are not included. The candidate uses a separate source-built cache, disables stock upload patches and verifies native F32 roundtrip before loading. Unloading or a failed load restores the stock runtime policy. This is experimental; native six-format transport tests are not evidence of real-model graph correctness, GPU support or physical-device performance.
+
+The experimental candidate deliberately uses the Host's opt-in environment flag; ordinary releases continue to keep Trellis Host-only. CPU runtime provisioning is source-based and needs a compiler, CMake and Git on each participating desktop. Mobile and GPU-specific Trellis builds remain separate validation targets.

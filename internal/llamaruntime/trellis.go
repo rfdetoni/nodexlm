@@ -18,6 +18,10 @@ const TrellisSourceCommit = "dc5521842f7991ceae73139f9d242d8f877e12d4"
 var trellisInstallGate = make(chan struct{}, 1)
 
 func ResolveTrellis(home, backend string) (string, error) {
+	return resolveTrellis(home, backend, false)
+}
+
+func resolveTrellis(home, backend string, rpc bool) (string, error) {
 	if backend == "" || backend == "auto" {
 		backend = "cpu"
 	}
@@ -27,7 +31,19 @@ func ResolveTrellis(home, backend string) (string, error) {
 		return "", errors.New("unsupported Trellis backend")
 	}
 	path := os.Getenv("NODEXLM_TRELLIS_BIN")
-	if path == "" {
+	if rpc {
+		if backend != "cpu" {
+			return "", errors.New("Trellis RPC candidate currently requires CPU")
+		}
+		path = filepath.Join(home, "runtimes", "trellis", TrellisSourceCommit, backend+"-rpc-candidate", "bin", exe("llama-server"))
+		marker, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(path)), "source-commit.txt"))
+		if err != nil || strings.TrimSpace(string(marker)) != TrellisSourceCommit {
+			return "", errors.New("Trellis RPC candidate missing pinned revision marker")
+		}
+		if executable(filepath.Dir(path), "ggml-rpc-server") == "" {
+			return "", errors.New("Trellis RPC worker missing")
+		}
+	} else if path == "" {
 		path = filepath.Join(home, "runtimes", "trellis", TrellisSourceCommit, backend, "bin", exe("llama-server"))
 	}
 	if !filepath.IsAbs(path) {
@@ -43,10 +59,28 @@ func ResolveTrellis(home, backend string) (string, error) {
 // EnsureTrellis lazily provisions the pinned source on supported Hosts with
 // an installed toolchain. The stock cache is never modified.
 func EnsureTrellis(ctx context.Context, home, backend string) (string, error) {
-	if binary, err := ResolveTrellis(home, backend); err == nil {
+	return ensureTrellis(ctx, home, backend, false)
+}
+
+const TrellisRPCRelease = "trellis-cpu-rpc-candidate"
+
+func EnsureTrellisRPC(ctx context.Context, home string) (string, string, error) {
+	server, err := ensureTrellis(ctx, home, "cpu", true)
+	if err != nil {
+		return "", "", err
+	}
+	worker := executable(filepath.Dir(server), "ggml-rpc-server")
+	if worker == "" || !SupportsRPC(ctx, server) {
+		return "", "", errors.New("Trellis RPC candidate failed runtime capability check")
+	}
+	return server, worker, nil
+}
+
+func ensureTrellis(ctx context.Context, home, backend string, rpc bool) (string, error) {
+	if binary, err := resolveTrellis(home, backend, rpc); err == nil {
 		return binary, nil
 	}
-	if os.Getenv("NODEXLM_TRELLIS_BIN") != "" {
+	if !rpc && os.Getenv("NODEXLM_TRELLIS_BIN") != "" {
 		return ResolveTrellis(home, backend)
 	}
 	if backend == "" || backend == "auto" {
@@ -63,7 +97,7 @@ func EnsureTrellis(ctx context.Context, home, backend string) (string, error) {
 		return "", ctx.Err()
 	}
 	defer func() { <-trellisInstallGate }()
-	if binary, err := ResolveTrellis(home, backend); err == nil {
+	if binary, err := resolveTrellis(home, backend, rpc); err == nil {
 		return binary, nil
 	}
 	root := filepath.Join(home, "runtimes", "trellis", TrellisSourceCommit)
@@ -105,7 +139,11 @@ func EnsureTrellis(ctx context.Context, home, backend string) (string, error) {
 	if err != nil || strings.TrimSpace(string(revision)) != TrellisSourceCommit {
 		return "", errors.New("Trellis source revision mismatch")
 	}
-	flags := []string{"-S", src, "-B", build, "-DCMAKE_BUILD_TYPE=Release", "-DGGML_RPC=OFF", "-DGGML_NATIVE=ON", "-DGGML_OPENMP=OFF", "-DBUILD_SHARED_LIBS=OFF", "-DLLAMA_CURL=OFF", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=OFF", "-DLLAMA_BUILD_TOOLS=ON", "-DLLAMA_BUILD_SERVER=ON", "-DLLAMA_BUILD_UI=OFF", "-DLLAMA_USE_PREBUILT_UI=OFF"}
+	rpcFlag := "OFF"
+	if rpc {
+		rpcFlag = "ON"
+	}
+	flags := []string{"-S", src, "-B", build, "-DCMAKE_BUILD_TYPE=Release", "-DGGML_RPC=" + rpcFlag, "-DGGML_BACKEND_DL=OFF", "-DGGML_NATIVE=ON", "-DGGML_OPENMP=OFF", "-DBUILD_SHARED_LIBS=OFF", "-DLLAMA_CURL=OFF", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=OFF", "-DLLAMA_BUILD_TOOLS=ON", "-DLLAMA_BUILD_SERVER=ON", "-DLLAMA_BUILD_UI=OFF", "-DLLAMA_USE_PREBUILT_UI=OFF"}
 	for _, name := range []string{"vulkan", "cuda", "metal"} {
 		value := "OFF"
 		if backend == name {
@@ -116,7 +154,11 @@ func EnsureTrellis(ctx context.Context, home, backend string) (string, error) {
 	if err := run("cmake", flags...); err != nil {
 		return "", err
 	}
-	if err := run("cmake", "--build", build, "--config", "Release", "--parallel", "2", "--target", "llama-server"); err != nil {
+	targets := []string{"--build", build, "--config", "Release", "--parallel", "2", "--target", "llama-server"}
+	if rpc {
+		targets = append(targets, "ggml-rpc-server")
+	}
+	if err := run("cmake", targets...); err != nil {
 		return "", err
 	}
 	server := executable(filepath.Join(build, "bin"), "llama-server")
@@ -137,13 +179,16 @@ func EnsureTrellis(ctx context.Context, home, backend string) (string, error) {
 	}
 	// Static builds normally contain only the executable. Keep sibling DLLs
 	// and dynamic libraries when the platform/toolchain emits them.
+	if rpc && executable(filepath.Dir(server), "ggml-rpc-server") == "" {
+		return "", errors.New("Trellis build did not produce RPC worker")
+	}
 	entries, err := os.ReadDir(filepath.Dir(server))
 	if err != nil {
 		return "", err
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || (name != filepath.Base(server) && !strings.HasSuffix(name, ".dll") && !strings.HasSuffix(name, ".dylib") && !strings.Contains(name, ".so")) {
+		if entry.IsDir() || (name != filepath.Base(server) && (!rpc || name != exe("ggml-rpc-server")) && !strings.HasSuffix(name, ".dll") && !strings.HasSuffix(name, ".dylib") && !strings.Contains(name, ".so")) {
 			continue
 		}
 		if err := copyTrellisFile(filepath.Join(filepath.Dir(server), name), filepath.Join(install, "bin", name)); err != nil {
@@ -159,14 +204,18 @@ func EnsureTrellis(ctx context.Context, home, backend string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if rpc {
+		backend += "-rpc-candidate"
+	}
 	dest := filepath.Join(root, backend)
+	resolveBackend := strings.TrimSuffix(backend, "-rpc-candidate")
 	if err := os.Rename(install, dest); err != nil {
-		if binary, resolved := ResolveTrellis(home, backend); resolved == nil {
+		if binary, resolved := resolveTrellis(home, resolveBackend, rpc); resolved == nil {
 			return binary, nil
 		}
 		return "", err
 	}
-	return ResolveTrellis(home, backend)
+	return resolveTrellis(home, resolveBackend, rpc)
 }
 
 func copyTrellisFile(source, target string) error {

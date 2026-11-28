@@ -51,8 +51,8 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 		}
 		args := m.args(port, nctx, threads, gpu, meta.BlockCount)
 		if m.TrellisRuntime {
-			if len(m.RPCServers) > 0 {
-				return backendLaunchSpec{}, errors.New("Trellis RPC is not validated; use Host-only")
+			if len(m.RPCServers) > 0 && os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_RPC") != "1" {
+				return backendLaunchSpec{}, errors.New("Trellis RPC requires the experimental Host flag")
 			}
 			if m.SpeculativeMode != "" && m.SpeculativeMode != "off" {
 				return backendLaunchSpec{}, errors.New("Trellis adapter requires speculation off until validated")

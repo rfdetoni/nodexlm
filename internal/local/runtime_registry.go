@@ -26,7 +26,7 @@ type RuntimeDescriptor struct {
 func RuntimeRegistry() []RuntimeDescriptor {
 	return []RuntimeDescriptor{
 		{"llama.cpp", "llama.cpp", "managed / tensor-rpc", "gguf"},
-		{"trellis", "Strix / Agention Trellis", "managed host-only", "gguf"},
+		{"trellis", "Strix / Agention Trellis", "managed Host / experimental desktop CPU tensor-rpc", "gguf"},
 		{"mistralrs", "mistral.rs", "managed host / whole-model worker", "openai"},
 		{"ollama", "Ollama", "whole-model worker", "openai"},
 		{"vllm", "vLLM", "whole-model worker", "openai"},

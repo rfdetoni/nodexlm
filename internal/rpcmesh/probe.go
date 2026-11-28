@@ -93,6 +93,19 @@ func ProbeTrellisHello(ctx context.Context, endpoint string) (uint32, error) {
 	})
 }
 
+// ProbeTrellisTensorUpload verifies the shared F32 descriptor layout only
+// after the exact fork HELLO. Specialized quant types are validated in native CI.
+func ProbeTrellisTensorUpload(ctx context.Context, endpoint string) (uint32, error) {
+	return withRPCProbeVersion(ctx, endpoint, 20*time.Second, [3]byte{10, 0, 3}, func(conn net.Conn, count uint32) error {
+		for device := uint32(0); device < count; device++ {
+			if err := probeNativeTensor(conn, device); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
+	})
+}
+
 func withRPCProbeVersion(ctx context.Context, endpoint string, timeout time.Duration, version [3]byte, run func(net.Conn, uint32) error) (uint32, error) {
 	if err := ValidateRPCAddress(endpoint); err != nil {
 		return 0, fmt.Errorf("invalid private RPC relay: %w", err)

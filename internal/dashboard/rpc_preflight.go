@@ -21,6 +21,10 @@ import (
 // GET_TENSOR roundtrip must also work before attempting a multi-GB upload.
 // Probes are concurrent across nodes and serial per native device.
 func preflightRPCGuests(ctx context.Context, selected []clusterplan.Candidate, endpoints []string, available ...RPCGuest) error {
+	return preflightRPCGuestsRuntime(ctx, false, selected, endpoints, available...)
+}
+
+func preflightRPCGuestsRuntime(ctx context.Context, trellis bool, selected []clusterplan.Candidate, endpoints []string, available ...RPCGuest) error {
 	if len(selected) != len(endpoints) {
 		return fmt.Errorf("RPC preflight requires one authenticated relay per selected Guest")
 	}
@@ -55,6 +59,9 @@ func preflightRPCGuests(ctx context.Context, selected []clusterplan.Candidate, e
 				label = fmt.Sprintf("Guest %.12s", selected[i].ID)
 			}
 			count, err := retryRPCPreflight(checkCtx, func() (uint32, error) {
+				if trellis {
+					return rpcmesh.ProbeTrellisTensorUpload(checkCtx, endpoint)
+				}
 				return rpcmesh.ProbeTensorUpload(checkCtx, endpoint, expected...)
 			}, func(attempt int, err error) {
 				slog.Warn("Guest native RPC preflight interrupted; retrying fresh tunnel", "guest_id", selected[i].ID, "guest_name", name, "attempt", attempt, "error", err)
@@ -73,10 +80,16 @@ func preflightRPCGuests(ctx context.Context, selected []clusterplan.Candidate, e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for _, err := range errs {
+	var failed []string
+	var causes []error
+	for i, err := range errs {
 		if err != nil {
-			return err
+			failed = append(failed, selected[i].ID)
+			causes = append(causes, err)
 		}
+	}
+	if len(failed) > 0 {
+		return &rpcPlacementFailure{guests: failed, cause: errors.Join(causes...)}
 	}
 	return nil
 }

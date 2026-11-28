@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/requestlog"
@@ -48,6 +49,7 @@ type Server struct {
 	mu                 sync.Mutex
 	buildCommit        string
 	buildVersion       string
+	trellisRPC         bool
 	admin              [32]byte
 	enrollment         [32]byte
 	clusterID          string
@@ -815,9 +817,14 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, "RPC Guest draining")
 		return
 	}
+	trellis := trellisDesktop(n.device) && s.trellisRPC
+	if trellis && !trellisRuntimeMatches(n.device.Runtime) || !trellis && n.device.Runtime.RPCSourceCommit == llamaruntime.TrellisSourceCommit {
+		fail(w, http.StatusServiceUnavailable, "RPC runtime switch required")
+		return
+	}
 	n.device.LastSeen = time.Now()
 	n.device.Status = "online"
-	s.rpcHub.ServeTunnel(w, r, id)
+	s.rpcHub.ServeRuntimeTunnel(w, r, id, trellis)
 	if s.rpcMicrobench != nil {
 		go s.rpcMicrobench(id)
 	}
@@ -874,6 +881,10 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if profile.PeerPubKey == "" {
 		profile.PeerPubKey = n.device.PeerPubKey
+	}
+	if n.device.Runtime.RPCSourceCommit != "" && n.device.Runtime.RPCSourceCommit != profile.Runtime.RPCSourceCommit {
+		// Never reuse an idle tunnel from an earlier native ABI.
+		s.rpcHub.Remove(id)
 	}
 	n.device = profile
 	authInfo := s.authoritySnapshotLocked()
