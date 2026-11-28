@@ -42,6 +42,14 @@ func automaticModelSettings(previous Settings, model string) Settings {
 }
 
 func (m *Manager) ApplyAutomaticModel(model string) error {
+	return m.applyAutomaticModel(model, false)
+}
+
+// Validate the new model before unloading the old one. Only an explicit
+// replace request is allowed to interrupt the resident primary model.
+func (m *Manager) applyAutomaticModel(model string, replace bool) error {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
 	if model == "" {
 		return errors.New("select a model")
 	}
@@ -56,6 +64,30 @@ func (m *Manager) ApplyAutomaticModel(model string) error {
 	}
 	if _, err := m.inspectInferenceGGUF(path, s); err != nil {
 		return err
+	}
+	if err := m.validate(s); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if m.closed || m.loading || m.unloading {
+		m.mu.Unlock()
+		return errors.New("runtime busy or closed")
+	}
+	if m.engine != nil && m.current == model {
+		m.mu.Unlock()
+		return nil
+	}
+	if m.residents[model] != nil || len(m.residents) >= 4 {
+		m.mu.Unlock()
+		return errors.New("model already resident or resident capacity reached")
+	}
+	loaded := m.engine != nil
+	m.mu.Unlock()
+	if loaded {
+		if !replace {
+			return errors.New("replacing a loaded model requires confirmation")
+		}
+		m.Unload()
 	}
 	if err := m.Update(s); err != nil {
 		return err

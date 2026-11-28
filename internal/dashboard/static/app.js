@@ -344,8 +344,7 @@ async function applyModel(name) {
   if(status.runtime.loaded && s.model===name){notice('Este modelo já está carregado.');return;}
   if(status.runtime.loaded && !await confirmAction('Descarregar o modelo atual para aplicar '+name+'?','Descarregar'))return;
   notice('Aplicando '+name+'...');
-  if(status.runtime.loaded)await api('/api/unload','POST',{});
-  await api('/api/models/apply','POST',{model:name});
+  await api('/api/models/apply','POST',{model:name,replace:!!status.runtime.loaded});
   $('modelSelect').value=name;
   settingsInitialized=false;
   notice('Carregamento iniciado: '+name);
@@ -545,6 +544,8 @@ function renderNodeResources(devices,registered=[]){
   }
   metrics.replaceChildren();
   if(id!=='host')metrics.append(el('p','muted',n.status==='updating'?'Atualização obrigatória · aguardando versão compatível':live?(n.runtime?.rpc_ready?'RPC conectado':n.models?.length?'Executor de modelo inteiro':'Sem executor disponível'):'Dispositivo offline'));
+  if(n.unavailable_reason==='thermal_limit')metrics.append(el('p','muted','Pausado para novas inferências: temperatura elevada'));
+  if(n.unavailable_reason==='battery_limit')metrics.append(el('p','muted','Pausado para novas inferências: bateria baixa'));
   if(n.runtime?.engine)metrics.append(el('p','muted','Runtime: '+n.runtime.engine+(n.runtime.version?' · '+n.runtime.version:'')+(n.runtime.rpc_protocol_patch!=null?' · RPC '+[n.runtime.rpc_protocol_major,n.runtime.rpc_protocol_minor||0,n.runtime.rpc_protocol_patch].join('.') : '')));
   if(n.models?.length)metrics.append(el('p','muted','Modelos: '+n.models.join(', ')));
   const seen=n.last_seen?Date.parse(n.last_seen):NaN;

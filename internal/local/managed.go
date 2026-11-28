@@ -206,6 +206,13 @@ func (m *Managed) ensure(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("invalid GGUF model: %w", err)
 	}
+	if m.TrellisRuntime {
+		// Revalidate at the actual load boundary even when callers bypass
+		// the dashboard or CLI preparation path.
+		if _, err := EnsureTrellisPLE(ctx, m.ModelPath, meta, nil); err != nil {
+			return err
+		}
+	}
 	if EffectiveBackend(m.Backend) == BackendLlama {
 		if err := m.validateMoE(meta); err != nil {
 			return err

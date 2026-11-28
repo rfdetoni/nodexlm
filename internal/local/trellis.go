@@ -81,8 +81,12 @@ func EnsureTrellisPLE(ctx context.Context, model string, meta GGUFInfo, progress
 		return "", err
 	}
 	if err := verifyCachedTrellisPLE(ctx, stage); err != nil {
-		_ = os.Remove(stage)
-		_ = os.Remove(stage + ".json")
+		// A cancelled hash does not invalidate the completed 54 GB download.
+		// Keep the resumable staging file for the next attempt.
+		if ctx.Err() == nil {
+			_ = os.Remove(stage)
+			_ = os.Remove(stage + ".json")
+		}
 		return "", err
 	}
 	if _, err := InspectGGUF(stage); err != nil {

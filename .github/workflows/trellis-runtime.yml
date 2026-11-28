@@ -25,6 +25,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Validate installer syntax before native compilation
+        run: bash -n scripts/install-trellis-runtime.sh
       - name: Compile and validate isolated Trellis CPU RPC candidate
         shell: bash
         run: |

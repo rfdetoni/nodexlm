@@ -55,7 +55,8 @@ fi
 cmake --build "$work/build" --config Release --parallel "${NODEXLM_BUILD_JOBS:-2}" --target "${targets[@]}"
 if [[ "$mode" == rpc-candidate ]]; then
   ctest --test-dir "$work/build" -C Release --output-on-failure --no-tests=error \
-    -R '^test-rpc-(multi-server|unreachable|trellis-tensors)
+    -R '^test-rpc-(multi-server|unreachable|trellis-tensors)$'
+fi
 mkdir -p "$work/install/bin"
 binary="$work/build/bin/llama-server"
 if [[ ! -f "$binary" ]]; then binary="$work/build/bin/Release/llama-server.exe"; fi
@@ -72,24 +73,6 @@ if [[ "$mode" == rpc-candidate ]]; then
   "$worker" --help > "$work/rpc-help.txt" 2>&1
   cp "$worker" "$work/install/bin/"
 fi
-cp "$work/src/LICENSE" "$work/install/"
-printf '%s\n' "$revision" > "$work/install/source-commit.txt"
-if [[ -e "$dest" ]]; then
-  echo "Runtime already exists at $dest; remove it explicitly before rebuilding." >&2
-  exit 1
-fi
-mv "$work/install" "$dest"
-echo "Installed separate Trellis candidate: $dest/bin"
-
-fi
-mkdir -p "$work/install/bin"
-binary="$work/build/bin/llama-server"
-if [[ ! -f "$binary" ]]; then binary="$work/build/bin/Release/llama-server.exe"; fi
-if [[ ! -f "$binary" ]]; then binary="$work/build/bin/llama-server.exe"; fi
-test -f "$binary"
-"$binary" --help > "$work/help.txt" 2>&1
-grep -F -- '--ple' "$work/help.txt" >/dev/null
-cp "$binary" "$work/install/bin/"
 cp "$work/src/LICENSE" "$work/install/"
 printf '%s\n' "$revision" > "$work/install/source-commit.txt"
 if [[ -e "$dest" ]]; then

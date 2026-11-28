@@ -339,7 +339,7 @@ func serve(args []string) error {
 				}
 				// Release builds require an exact native ABI advertisement.
 				// The actual native HELLO remains mandatory before transfer.
-				if !compatibleStockRPC(profile.Runtime, protocol.ValidBuildCommit(buildCommit)) {
+				if protocol.ComputeAdmissionReason(profile) != "" || !compatibleStockRPC(profile.Runtime, protocol.ValidBuildCommit(buildCommit)) {
 					continue
 				}
 				memory := clusterplan.RPCMemory(profile)

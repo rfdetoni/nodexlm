@@ -493,7 +493,7 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.Runtime.RPCDevices = append([]string(nil), req.Runtime.RPCDevices...)
 			// RPC readiness is set exclusively by the authenticated tunnel.
 		}
-		if n.active == "" && !s.draining && !s.fenced {
+		if n.active == "" && !s.draining && !s.fenced && protocol.ComputeAdmissionReason(n.device) == "" {
 			for i, jid := range s.queue {
 				j := s.jobs[jid]
 				if j == nil || j.Status != "queued" {
@@ -624,6 +624,12 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 			d.UnavailableReason = "build_mismatch"
 		}
 		_, d.Runtime.RPCReady = ready[d.ID]
+		if d.Status == "online" {
+			if reason := protocol.ComputeAdmissionReason(d); reason != "" {
+				d.UnavailableReason = reason
+				d.Runtime.RPCReady = false
+			}
+		}
 		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"
 		out = append(out, d)
 	}
@@ -921,6 +927,12 @@ func (s *Server) DevicesSnapshot() []protocol.Device {
 			d.UnavailableReason = "build_mismatch"
 		}
 		_, d.Runtime.RPCReady = ready[d.ID]
+		if d.Status == "online" {
+			if reason := protocol.ComputeAdmissionReason(d); reason != "" {
+				d.UnavailableReason = reason
+				d.Runtime.RPCReady = false
+			}
+		}
 		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"
 		out = append(out, d)
 	}

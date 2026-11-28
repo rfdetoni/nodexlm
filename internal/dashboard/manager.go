@@ -116,6 +116,7 @@ type Manager struct {
 	poolCancel            context.CancelFunc
 	mu                    sync.Mutex
 	poolMu                sync.Mutex
+	applyMu               sync.Mutex
 	residents             map[string]*Manager
 	closed                bool
 	samples               map[string]InferenceSample

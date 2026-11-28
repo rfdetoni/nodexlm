@@ -57,6 +57,7 @@ const fetch=async (url,options)=>{
   }
   if(url==='/api/models/apply' && method==='POST') {
     assert.ok(locals.some(m=>m.name===body.model),'automatic apply requires a local model');
+    assert.equal(body.replace,loaded,'replacing an active model requires explicit confirmation');
     Object.assign(settings,{model:body.model,distributed:true,gpu_layers:'auto',placement_strategy:'speed'});
     loaded=true;return response({loaded});
   }
@@ -378,6 +379,12 @@ async function main(){
   assert.equal(settings.model,'Fast-Q4_K_M.gguf');
   await vm.runInContext('refresh()',sandbox);
   assert.equal(calls.filter(c=>c.url==='/api/models/apply' && c.body.model==='Fast-Q4_K_M.gguf').length,1,'apply must run exactly once');
+  // The Host validates the new model before replacing the old one.
+  vm.runInContext("confirmAction=async()=>true",sandbox);
+  await vm.runInContext("applyModel('Qwen3-Q4_K_M.gguf')",sandbox);
+  assert.equal(settings.model,'Qwen3-Q4_K_M.gguf');
+  assert.ok(calls.some(c=>c.url==='/api/models/apply' && c.body.replace===true));
+  assert.ok(!calls.some(c=>c.url==='/api/unload' && c.method==='POST'),'automatic switching must not unload before server-side validation');
   console.log('Console navigation and model catalog: keyboard, workspaces, download, progress, auto-apply, filters PASS');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
