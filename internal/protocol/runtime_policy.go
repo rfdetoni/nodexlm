@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,7 @@ type RuntimePolicy struct {
 
 type SignedRuntimePolicy struct {
 	Policy    RuntimePolicy `json:"policy"`
+	Payload   []byte        `json:"payload"`
 	Signature string        `json:"signature"`
 }
 
@@ -47,7 +49,7 @@ func SignRuntimePolicy(key ed25519.PrivateKey, policy RuntimePolicy) (SignedRunt
 	if err != nil {
 		return SignedRuntimePolicy{}, err
 	}
-	return SignedRuntimePolicy{Policy: policy, Signature: hex.EncodeToString(ed25519.Sign(key, msg))}, nil
+	return SignedRuntimePolicy{Policy: policy, Payload: msg, Signature: hex.EncodeToString(ed25519.Sign(key, msg))}, nil
 }
 
 // VerifyRuntimePolicy binds the signature to the existing pairing, not to
@@ -71,7 +73,7 @@ func VerifyRuntimePolicy(s SignedRuntimePolicy, credential Credential, now time.
 		return errors.New("invalid runtime policy signature")
 	}
 	msg, err := runtimePolicyMessage(p)
-	if err != nil || !ed25519.Verify(ed25519.PublicKey(key), msg, signature) {
+	if err != nil || !bytes.Equal(s.Payload, msg) || !ed25519.Verify(ed25519.PublicKey(key), msg, signature) {
 		return errors.New("runtime policy signature verification failed")
 	}
 	return nil

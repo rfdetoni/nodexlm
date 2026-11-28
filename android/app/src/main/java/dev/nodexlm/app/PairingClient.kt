@@ -139,6 +139,9 @@ internal class PairingClient(private val context: Context) {
             .putString("coordinator", endpoint).putString("node_id", nodeID)
             .putString("node_token_encrypted", NodeSecrets.encrypt(token)).remove("node_token")
             .putString("name", name).remove("join")
+            .putString("runtime_authority_key", response.optString("authority_pubkey"))
+            .putString("runtime_cluster_id", response.optString("cluster_id"))
+            .putLong("runtime_cluster_epoch", response.optLong("epoch"))
             .commit()
         if (!saved) error("Could not persist pairing credentials")
         return endpoint

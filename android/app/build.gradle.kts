@@ -31,6 +31,7 @@ android {
         buildConfigField("boolean", "HOST_ENABLED", hostEnabled.toString())
         buildConfigField("String", "LLAMA_VERSION", "\"${llamaRevision["version"]}\"")
         buildConfigField("String", "LLAMA_SOURCE_COMMIT", "\"${llamaRevision["commit"]}\"")
+        buildConfigField("String", "LLAMA_RPC_RELEASE", "\"${llamaRevision["rpc_release"]}\"")
         val buildCommit = System.getenv("GITHUB_SHA")?.takeIf { Regex("[0-9a-f]{40}").matches(it) } ?: ""
         buildConfigField("String", "NODEX_BUILD_COMMIT", "\"$buildCommit\"")
         manifestPlaceholders["nodexBuildCommit"] = buildCommit.ifBlank { "development" }
@@ -78,6 +79,9 @@ android {
 dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("com.google.zxing:core:3.5.4")
+    // Lightweight Ed25519 API works on Android 10+ without relying on the
+    // platform JCA provider (Ed25519 is not available on every supported API).
+    implementation("org.bouncycastle:bcprov-jdk15to18:1.87")
     if (liteRTEnabled) implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
     // ONNX inference executes inside ComputeService; no external Ollaya server.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")

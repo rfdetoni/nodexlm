@@ -48,6 +48,9 @@ func startProbeServer(t *testing.T, behavior string) (string, <-chan error) {
 		if behavior == "patch" {
 			response[10]++
 		}
+		if behavior == "trellis" {
+			response[8], response[9], response[10] = 10, 0, 3
+		}
 		if behavior == "version" {
 			response[8]--
 		}
@@ -117,6 +120,23 @@ func TestProbeHelloRejectsIncompatiblePatch(t *testing.T) {
 	_, err := ProbeHello(context.Background(), endpoint)
 	if err == nil || !strings.Contains(err.Error(), "incompatible") {
 		t.Fatalf("expected incompatible native operation enum: %v", err)
+	}
+	<-done
+}
+
+func TestTrellisHelloRequiresExactForkProtocol(t *testing.T) {
+	endpoint, done := startProbeServer(t, "trellis")
+	count, err := ProbeTrellisHello(context.Background(), endpoint)
+	if err != nil || count != 2 {
+		t.Fatalf("Trellis count=%d err=%v", count, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	// An ordinary stock HELLO must still reject the Trellis patch.
+	endpoint, done = startProbeServer(t, "patch")
+	if _, err := ProbeHello(context.Background(), endpoint); err == nil {
+		t.Fatal("stock probe accepted fork ABI")
 	}
 	<-done
 }

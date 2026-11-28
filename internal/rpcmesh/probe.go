@@ -80,6 +80,20 @@ func probeNativeRPC(ctx context.Context, endpoint string, verifyTensor bool) (ui
 }
 
 func withRPCProbe(ctx context.Context, endpoint string, timeout time.Duration, run func(net.Conn, uint32) error) (uint32, error) {
+	major, minor := llamaruntime.RPCProtocolVersion()
+	return withRPCProbeVersion(ctx, endpoint, timeout, [3]byte{major, minor, llamaruntime.RPCProtocolPatch()}, run)
+}
+
+// ProbeTrellisHello is deliberately separate from stock tensor probes. The
+// pinned fork has a distinct operation enum (10.0.3), so a stock probe must
+// never accept it or send stock tensor descriptors to it.
+func ProbeTrellisHello(ctx context.Context, endpoint string) (uint32, error) {
+	return withRPCProbeVersion(ctx, endpoint, 6*time.Second, [3]byte{10, 0, 3}, func(_ net.Conn, _ uint32) error {
+		return ctx.Err()
+	})
+}
+
+func withRPCProbeVersion(ctx context.Context, endpoint string, timeout time.Duration, version [3]byte, run func(net.Conn, uint32) error) (uint32, error) {
 	if err := ValidateRPCAddress(endpoint); err != nil {
 		return 0, fmt.Errorf("invalid private RPC relay: %w", err)
 	}
@@ -119,9 +133,8 @@ func withRPCProbe(ctx context.Context, endpoint string, timeout time.Duration, r
 	if _, err := io.ReadFull(conn, response[:]); err != nil {
 		return 0, fmt.Errorf("incomplete RPC HELLO response: %w", err)
 	}
-	major, minor := llamaruntime.RPCProtocolVersion()
-	if response[0] != major || response[1] != minor || response[2] != llamaruntime.RPCProtocolPatch() {
-		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires %d.%d.%d); update Host and Guest together", response[0], response[1], response[2], major, minor, llamaruntime.RPCProtocolPatch())
+	if response[0] != version[0] || response[1] != version[1] || response[2] != version[2] {
+		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires %d.%d.%d); update Host and Guest together", response[0], response[1], response[2], version[0], version[1], version[2])
 	}
 	var countCommand [9]byte
 	countCommand[0] = 15
