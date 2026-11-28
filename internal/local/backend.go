@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,34 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 			return backendLaunchSpec{}, fmt.Errorf("generate inference credential: %w", err)
 		}
 		args := m.args(port, nctx, threads, gpu, meta.BlockCount)
+		if m.TrellisRuntime {
+			if len(m.RPCServers) > 0 && os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_RPC") != "1" {
+				return backendLaunchSpec{}, errors.New("Trellis RPC requires the experimental Host flag")
+			}
+			if m.SpeculativeMode != "" && m.SpeculativeMode != "off" {
+				return backendLaunchSpec{}, errors.New("Trellis adapter requires speculation off until validated")
+			}
+			if m.ParallelSlots > 1 || m.MoECacheMiB != 0 || m.MoECacheCPUShare != 0 {
+				return backendLaunchSpec{}, errors.New("Trellis adapter requires one slot and no NodexLM-specific MoE cache")
+			}
+			ple, err := TrellisPLE(m.ModelPath, meta)
+			if err != nil {
+				return backendLaunchSpec{}, err
+			}
+			if ple != "" {
+				args = append(args, "--ple", ple)
+				// The fork gathers PLE rows on the Host, then uploads the
+				// required embeddings into the graph. Do not distribute the
+				// complete sidecar to every RPC Guest.
+				if m.LazyMode == "" || m.LazyMode == "auto" {
+					mode := "on"
+					if len(m.RPCServers) > 0 && runtime.GOOS != "windows" {
+						mode = "on-direct"
+					}
+					args = append(args, "--lazy-mode", mode)
+				}
+			}
+		}
 		mode := os.Getenv("NODEXLM_SMOLMAX_MODE")
 		if mode == "moe" || mode == "stream" {
 			if m.VisionProjectorPath != "" {
@@ -80,7 +109,7 @@ func (m *Managed) backendLaunch(port, nctx, threads int, gpu string, meta GGUFIn
 			args = append(args, "--embedding")
 		}
 		timeout := 90 * time.Second
-		if len(m.RPCServers) > 0 {
+		if len(m.RPCServers) > 0 || m.TrellisRuntime {
 			timeout = 75 * time.Minute
 		}
 		return backendLaunchSpec{Binary: m.Binary, Args: args, Env: []string{"LLAMA_API_KEY=" + key},

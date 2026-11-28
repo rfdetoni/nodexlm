@@ -105,6 +105,7 @@ class RpcGuestService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) {
+            HostManagedUpdate.cancelResume(this)
             shutdown("stopped", "manual")
             return START_NOT_STICKY
         }
@@ -151,10 +152,6 @@ class RpcGuestService : Service() {
                 runtimeLease = MobileRuntimeLease.acquire(this)
                 check(runtimeLease != null && running.get()) { "Another mobile runtime owns this device" }
                 logPreviousLowMemoryExit()
-                val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
-                val requestedThreads = energy.getInt("rpc_threads", 0)
-                val threads = if (requestedThreads == 0) NativeRpc.recommendedThreads(cores)
-                              else requestedThreads.coerceIn(1, minOf(8, cores))
                 check(checkThermalsAndBattery() == null) {
                     "RPC Guest cannot start outside its thermal/energy/memory policy"
                 }
@@ -162,6 +159,23 @@ class RpcGuestService : Service() {
                 check(!socketFile.exists()||socketFile.delete()) { "Cannot remove stale RPC socket" }
                 rpcSocket=socketFile.absolutePath
                 val cert = PinnedHostTls.certificate(this)
+                val sslContext = PinnedHostTls.context(cert)
+                // Authenticate and negotiate the Host's release before loading
+                // native backends, allocating RPC memory or opening tunnels.
+                while (running.get()) {
+                    val directive = HostRuntimePolicy.preflight(this, endpoint, node, token, name, cert)
+                    if (!directive.optBoolean("update_required", false)) break
+                    HostManagedUpdate.tick(this, directive, true)
+                    sleepWhileRunning(15_000L)
+                }
+                check(running.get()) { "Guest stopped" }
+                check(checkThermalsAndBattery() == null) {
+                    "RPC Guest cannot start outside its thermal/energy/memory policy"
+                }
+                val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+                val requestedThreads = energy.getInt("rpc_threads", 0)
+                val threads = if (requestedThreads == 0) NativeRpc.recommendedThreads(cores)
+                              else requestedThreads.coerceIn(1, minOf(8, cores))
                 val cachePath = runCatching {
                     RpcWeightCache.prepare(cacheDir, cert, node, token, NativeRpc.VERSION,
                         intent.getBooleanExtra(EXTRA_WEIGHT_CACHE, false))?.absolutePath.orEmpty()
@@ -177,7 +191,8 @@ class RpcGuestService : Service() {
                 awaitNativeRPC()
                 recordGuestEvent("ready")
                 Log.i(LOG, "Native GGML RPC socket ready; requested=$mode, selected=${NativeRpc.selectedBackends()}, threads=$threads")
-                val sslContext = PinnedHostTls.context(cert)
+                // Publish the actual initialized topology before opening tunnels.
+                sendHeartbeat(endpoint, node, token, name, mode, sslContext, cert)
                 // Share measured Vulkan heap counters; on mobile GPUs memory can
                 // be shared with RAM and must never be counted twice by the Host.
                 thread(name = "nodexlm-rpc-heartbeat", isDaemon = true) {
@@ -190,6 +205,10 @@ class RpcGuestService : Service() {
                                 lastHeartbeatLog.set(now)
                                 RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.INFO, RuntimeEvent.HOST_HEARTBEAT_OK)
                             }
+                        } catch (e: SecurityException) {
+                            Log.e(LOG, "Host runtime policy rejected", e)
+                            shutdown("stopped", "runtime_policy_rejected")
+                            break
                         } catch (e: Exception) {
                             if (heartbeatFailed.compareAndSet(false, true)) {
                                 RuntimeLogs.append(this, RuntimeRole.HOST, RuntimeLevel.WARN, RuntimeEvent.HOST_HEARTBEAT_FAILED)
@@ -477,6 +496,8 @@ class RpcGuestService : Service() {
             else -> JSONArray()
         }
         val device = JSONObject()
+            .put("build_commit", BuildConfig.NODEX_BUILD_COMMIT)
+            .put("app_version", BuildConfig.VERSION_NAME)
             .put("status", if (draining.get()) "draining" else "online")
             .put("unavailable_reason", if (draining.get()) drainReason else "")
             .put("name", name.take(80))
@@ -520,6 +541,10 @@ class RpcGuestService : Service() {
                 .put("engine", "ggml-rpc-" + selected)
                 .put("rpc_devices", rpcDevices)
                 .put("version", NativeRpc.VERSION)
+                .put("rpc_source_commit", BuildConfig.LLAMA_SOURCE_COMMIT)
+                .put("rpc_protocol_major", BuildConfig.LLAMA_RPC_MAJOR)
+                .put("rpc_protocol_minor", BuildConfig.LLAMA_RPC_MINOR)
+                .put("rpc_protocol_patch", BuildConfig.LLAMA_RPC_PATCH)
                 .put("installed", true)
                 .put("benchmark", true)
                 .put("reconnect_failures", if (rustStarted) NativeRustRpc.failures() else reconnectFailures.get())
@@ -549,6 +574,7 @@ class RpcGuestService : Service() {
             PinnedHostTls.verify(session, cert)
         }
         connection.requestMethod = "POST"
+        connection.instanceFollowRedirects = false
         connection.connectTimeout = 7000
         connection.readTimeout = 7000
         connection.doOutput = true
@@ -564,7 +590,12 @@ class RpcGuestService : Service() {
                 wifiPolicy.observe(elapsed,connection.getHeaderField("X-Nodex-RPC-RTT")?.toDoubleOrNull(),
                     connection.getHeaderField("X-Nodex-RPC-Jitter")?.toDoubleOrNull(),(elapsed-start).toDouble())
             }
-            connection.inputStream.close()
+            val response = connection.inputStream.use { HostRuntimePolicy.readBounded(it) }
+            val directive = JSONObject(response)
+            HostRuntimePolicy.verifyResponse(this, node, directive)
+            if (directive.optBoolean("update_required", false)) {
+                HostManagedUpdate.tick(this, directive, activeClaims() == 0L)
+            }
         } finally { connection.disconnect() }
     }
 

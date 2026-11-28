@@ -149,6 +149,7 @@ class MainActivity : Activity() {
         RuntimeLogs.append(this, RuntimeRole.APP, RuntimeLevel.INFO, RuntimeEvent.APP_OPEN)
         updateManager.onStateChanged = { if (tab == 4) refreshUpdatesStatus() }
         try { updateManager.start() } catch(e:Exception) {Log.w("NodexLMStartup","Updater not available",e)}
+        HostManagedUpdate.resume(this)
     }
 
     override fun onNewIntent(intent: Intent) {

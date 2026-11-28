@@ -14,5 +14,6 @@
   "unix_rpc": true,
   "parallel_rpc_uploads": true,
   "rpc_protocol_major": 10,
-  "rpc_protocol_minor": 0
+  "rpc_protocol_minor": 0,
+  "rpc_protocol_patch": 2
 }

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/rfdetoni/nodexlm/internal/coordinator"
+	"github.com/rfdetoni/nodexlm/internal/local"
 	compat "github.com/rfdetoni/nodexlm/internal/openai"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/requestlog"
@@ -225,6 +226,9 @@ func (d *Dashboard) Handler() http.Handler {
 		}
 		reply(w, 200, plan)
 	}))
+	mux.HandleFunc("GET /api/runtimes", d.api(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, local.RuntimeRegistry())
+	}))
 	mux.HandleFunc("GET /api/status", d.api(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"runtime": d.Manager.State(), "settings": d.Manager.Settings(), "download": d.Manager.DownloadState()})
 	}))
@@ -313,6 +317,20 @@ func (d *Dashboard) Handler() http.Handler {
 			return
 		}
 		reply(w, 200, s)
+	}))
+	mux.HandleFunc("POST /api/models/apply", d.api(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Model   string `json:"model"`
+			Replace bool   `json:"replace,omitempty"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if err := d.Manager.applyAutomaticModel(input.Model, input.Replace); err != nil {
+			failure(w, 409, err)
+			return
+		}
+		reply(w, 202, d.Manager.State())
 	}))
 	mux.HandleFunc("POST /api/load", d.api(func(w http.ResponseWriter, r *http.Request) {
 		if err := d.Manager.StartLoad(); err != nil {

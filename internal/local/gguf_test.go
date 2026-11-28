@@ -149,3 +149,57 @@ func TestInspectGGUFTensorBytes(t *testing.T) {
 		t.Fatalf("unexpected tensor sizes: %+v %v", meta, err)
 	}
 }
+
+func TestBundledGGUFRejectsCustomTensorTypeAfterStandardType(t *testing.T) {
+	raw := ggufTestFile("llama", 0, 0)
+	binary.LittleEndian.PutUint64(raw[8:16], 2)
+	var b bytes.Buffer
+	b.Write(raw)
+	write := func(v any) { _ = binary.Write(&b, binary.LittleEndian, v) }
+	for i, kind := range []uint32{35, 144} {
+		name := fmt.Sprintf("blk.%d.weight", i)
+		write(uint64(len(name)))
+		b.WriteString(name)
+		write(uint32(1))
+		write(uint64(256))
+		write(kind)
+		write(uint64(0))
+	}
+	path := filepath.Join(t.TempDir(), "gyro.gguf")
+	if err := os.WriteFile(path, b.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InspectGGUF(path); err != nil {
+		t.Fatalf("generic metadata inspection must remain available: %v", err)
+	}
+	if _, err := InspectBundledGGUF(path); err == nil || !strings.Contains(err.Error(), "TQ2_T") {
+		t.Fatalf("expected clear custom-format error, got %v", err)
+	}
+	if meta, err := InspectTrellisGGUF(path); err != nil || !meta.Trellis {
+		t.Fatalf("expected separate trellis format admission: %+v %v", meta, err)
+	}
+}
+
+func TestTrellisTypeSizes(t *testing.T) {
+	for i, size := range []uint64{34, 26, 30, 42, 50, 58} {
+		if block, got := tensorTypeSize(uint32(144 + i)); block != 128 || got != size {
+			t.Fatalf("unexpected trellis block layout for type %d: %d/%d", 144+i, block, got)
+		}
+	}
+}
+
+func TestTrellisPLERequiresDocumentedSidecar(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Qwen3.8-Flash-Next-Gyro-M-TQ2_0-noPLE.gguf")
+	meta := GGUFInfo{Architecture: "qwen4exp"}
+	if _, err := TrellisPLE(path, meta); err == nil {
+		t.Fatal("accepted missing PLE")
+	}
+	sidecar := filepath.Join(dir, flashNextPLE)
+	if err := os.WriteFile(sidecar, ggufTestFile("qwen4exp", 0, 0), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := TrellisPLE(path, meta); err != nil || got != sidecar {
+		t.Fatalf("PLE path %q: %v", got, err)
+	}
+}

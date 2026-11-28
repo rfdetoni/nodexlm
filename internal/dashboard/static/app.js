@@ -344,14 +344,9 @@ async function applyModel(name) {
   if(status.runtime.loaded && s.model===name){notice('Este modelo já está carregado.');return;}
   if(status.runtime.loaded && !await confirmAction('Descarregar o modelo atual para aplicar '+name+'?','Descarregar'))return;
   notice('Aplicando '+name+'...');
-  if(status.runtime.loaded)await api('/api/unload','POST',{});
-  const config=settingsInitialized?settingsFromForm(name):{...s,model:name};
-  await api('/api/settings','PUT',config);
+  await api('/api/models/apply','POST',{model:name,replace:!!status.runtime.loaded});
   $('modelSelect').value=name;
   settingsInitialized=false;
-  await refresh();
-  notice('Carregando '+name+'...');
-  await api('/api/load','POST',{});
   notice('Carregamento iniciado: '+name);
   await refresh();
  } finally {actionBusy=false; if(latestStatus){renderLocalModels(localModels,latestStatus);renderCatalog();}}
@@ -375,6 +370,7 @@ async function downloadCandidate(candidate, applyAfter) {
   notice(applyAfter?'Download iniciado; modelo será aplicado após concluir.':'Download iniciado: '+name);
   await refresh();
  } finally {actionBusy=false; if(latestStatus){renderLocalModels(localModels,latestStatus);renderCatalog();}}
+ maybeApplyDownloadedModel(latestStatus?.download);
 }
 async function loadModelFolder() {
  try {
@@ -386,10 +382,11 @@ async function loadModelFolder() {
 function renderLoadStatus(status){
  const box=$('loadingStatus'),runtime=status.runtime||{};
  $('loadedTopology').hidden=!!runtime.loading;$('inferenceActivity').hidden=!!runtime.loading;
- if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled';if(!box.hidden)box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));return;}
+ if(!runtime.loading){box.replaceChildren();loadingPlan=null;loadingPlanModel='';box.hidden=runtime.phase!=='cancelled'&&!runtime.runtime_notice;if(runtime.phase==='cancelled')box.append(el('p','','Carregamento cancelado. Nenhum modelo parcial foi mantido.'));else if(runtime.runtime_notice)box.append(el('p','muted',runtime.runtime_notice));return;}
  box.hidden=false;box.replaceChildren(el('strong','','Carregando '+(status.settings?.model||'GGUF')+' · '+String(runtime.phase||'preparando').replace(/_/g,' ')));
  box.append(action(runtime.phase==='cancelling'?'Cancelando…':'Cancelar carregamento','secondary',async()=>{const state=await api('/api/inference/cancel-load','POST',{});notice(state.phase==='ready'?'O modelo já terminou de carregar.':'Cancelamento solicitado; aguardando encerramento do runtime.');await refresh()},runtime.phase==='cancelling'));
  box.append(el('p','muted','Tempo decorrido: '+Math.floor((runtime.elapsed_seconds||0)/60)+'min '+(runtime.elapsed_seconds||0)%60+'s'));
+ if(runtime.phase==='resolving_model_dependencies')box.append(el('p','muted','Provisionando dependência PLE verificada. O download pode ocupar cerca de 54 GB de disco; cancelamento e retomada disponíveis.'));
  const transfer=runtime.rpc_transfer||{},channels=Object.entries(transfer);
  const seconds=Math.max(1,Number(runtime.phase_elapsed_seconds)||1);
  if(channels.length){
@@ -436,7 +433,7 @@ function renderLocalModels(models,status) {
   const loaded=residentModelNames.includes(m.name) || (status.runtime.loaded && status.runtime.model===m.name);
   const blocked=loaded || status.runtime.loading || actionBusy;
   if(loaded)controls.append(el('span','model-tag active','Em uso'));
-  else controls.append(action('Aplicar','',()=>applyModel(m.name),blocked));
+  else controls.append(action('Aplicar automaticamente','',()=>applyModel(m.name),blocked));
   controls.append(action('Excluir','secondary danger',async()=>{
    if(!await confirmAction('Excluir definitivamente '+m.name+' e todas as suas partes GGUF?','Excluir'))return;
    await api('/api/models/'+encodeURIComponent(m.name),'DELETE');
@@ -546,7 +543,10 @@ function renderNodeResources(devices,registered=[]){
    add('Revogar acesso','secondary danger',async()=>{if(!await confirmAction('Revogar acesso de '+name+'?','Revogar'))return;await api('/v1/nodes/'+encodeURIComponent(id),'DELETE');notice('Nó revogado');await refresh()});
   }
   metrics.replaceChildren();
-  if(id!=='host')metrics.append(el('p','muted',live?(n.runtime?.rpc_ready?'RPC conectado':'RPC desconectado'):'Dispositivo offline'));
+  if(id!=='host')metrics.append(el('p','muted',n.status==='updating'?'Atualização obrigatória · aguardando versão compatível':live?(n.runtime?.rpc_ready?'RPC conectado':n.models?.length?'Executor de modelo inteiro':'Sem executor disponível'):'Dispositivo offline'));
+  if(n.unavailable_reason==='thermal_limit')metrics.append(el('p','muted','Pausado para novas inferências: temperatura elevada'));
+  if(n.unavailable_reason==='battery_limit')metrics.append(el('p','muted','Pausado para novas inferências: bateria baixa'));
+  if(n.runtime?.engine)metrics.append(el('p','muted','Runtime: '+n.runtime.engine+(n.runtime.version?' · '+n.runtime.version:'')+(n.runtime.rpc_protocol_patch!=null?' · RPC '+[n.runtime.rpc_protocol_major,n.runtime.rpc_protocol_minor||0,n.runtime.rpc_protocol_patch].join('.') : '')));
   if(n.models?.length)metrics.append(el('p','muted','Modelos: '+n.models.join(', ')));
   const seen=n.last_seen?Date.parse(n.last_seen):NaN;
   const age=Number.isFinite(seen)?Math.max(0,Math.round((Date.now()-seen)/1000)):null;
@@ -617,6 +617,13 @@ async function refreshSnapshot(){
  renderLocalModels(models,status);renderCatalog();
  const primary=$('primaryNode'),selectedPrimary=primary.dataset.initialized==='yes'?primary.value:(s.primary_node==='auto'?'':s.primary_node||'');
  const guests=nodes.filter(n=>n.status==='online'&&n.runtime?.rpc_ready&&cluster.rpc_guests?.[n.id]);
+ const previousTarget=$('chatTarget').value;
+ const wholeWorkers=nodes.filter(n=>n.status==='online'&&n.models?.length&&!n.runtime?.rpc_ready);
+ chatWorkerModels=new Map(wholeWorkers.map(n=>[n.id,n.models]));
+ const targets=[['','Host · modelos residentes'],...wholeWorkers.map(n=>[n.id,displayNodeName(n.id,n.name)+' · '+(n.runtime?.engine||'modelo inteiro')])];
+ if(previousTarget&&!chatWorkerModels.has(previousTarget))targets.push([previousTarget,'Guest indisponível — selecione outro executor']);
+ setOptions('chatTarget',targets,previousTarget);
+ updateChatModelOptions();
  const primaryOptions=[['','Automático'],['host','Host'],...guests.map(n=>[n.id,n.name||n.id])];
  if(selectedPrimary&&!primaryOptions.some(([id])=>id===selectedPrimary))primaryOptions.push([selectedPrimary,'Guest indisponível: '+selectedPrimary]);
  setOptions('primaryNode',primaryOptions,selectedPrimary);primary.dataset.initialized='yes';
@@ -636,11 +643,16 @@ async function refreshSnapshot(){
   $('handoffMeta').textContent='Época do cluster: '+ep+' · Fase: '+(ho.phase||'idle')+(ho.impact_summary?' · '+ho.impact_summary:'');
  }
  const d=status.download;renderDownload(d);
- if(pendingApply && d && d.name===pendingApply && d.status!=='downloading') {
-  const name=pendingApply;pendingApply=null;
-  if(d.status==='completed')guard(()=>applyModel(name));
-  else notice('Falha ao baixar '+name+': '+(d.error||'erro desconhecido'));
- }
+ maybeApplyDownloadedModel(d);
+}
+function maybeApplyDownloadedModel(d){
+ if(!pendingApply || !d || d.name!==pendingApply || d.status==='downloading')return;
+ // A very fast download may finish while downloadCandidate still holds actionBusy.
+ // Keep the intent until the action can actually be started.
+ if(d.status==='completed' && actionBusy)return;
+ const name=pendingApply;pendingApply=null;
+ if(d.status==='completed')guard(()=>applyModel(name));
+ else notice('Falha ao baixar '+name+': '+(d.error||'erro desconhecido'));
 }
 async function guard(action){try{await action();}catch(e){notice(e.message)}}
 
@@ -760,7 +772,10 @@ async function sendChat(){
  const prompt=$('prompt').value.trim();if(!prompt)return;
  const documentFile=$('chatDocument').files?.[0];const imageFile=$('chatImage').files?.[0];const chatSession=sessionEpoch;
  const allowFallback=$('allowExternalFallback').checked;$('allowExternalFallback').checked=false;
- const model=$('chatModel').value||latestStatus?.runtime?.model||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
+ const targetNode=$('chatTarget').value;
+ if(targetNode&&!chatWorkerModels.has(targetNode))throw Error('Guest indisponível. Selecione explicitamente outro executor.');
+ if(targetNode&&(imageFile||allowFallback))throw Error('Guest de modelo inteiro: somente texto, sem fallback externo.');
+ const model=$('chatModel').value||(!targetNode?latestStatus?.runtime?.model:'')||(allowFallback?'local-unavailable':'');if(!model)throw Error('Carregue um modelo antes de conversar.');
  const controller=new AbortController();chatController=controller;$('sendChat').disabled=true;$('stopChat').disabled=false;
  const start=performance.now();let first=null,lastText=null,firstGenerated=null,firstReasoning=null,lastReasoning=null,interleaved=false,timings=null;let answer='',reasoning='',usage=null,rpcTraffic=null,done=false,reader;
  renderChat();const output=$('chatOutput');
@@ -785,7 +800,7 @@ async function sendChat(){
   if(controller.signal.aborted)throw Error('Geração interrompida.');
   if(new TextEncoder().encode(prompt+documentText).length>65536)throw Error('Mensagem com documento excede 64 KiB.');
   const content=imageURL?[{type:'text',text:prompt+documentText},{type:'image_url',image_url:{url:imageURL}}]:prompt+documentText;
-  const payload={model,messages:[...chatHistory.slice(-62),{role:'user',content}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
+  const payload={model,...(targetNode?{target_node:targetNode}:{}),messages:[...chatHistory.slice(-62),{role:'user',content}],temperature:+$('chatTemperature').value,max_tokens:maxTokens,cache_prompt:true,stream_options:{include_usage:true},stream:true};
   if(effort!=='auto')payload.reasoning_effort=effort;
   if(thinkingBudget>0)payload.reasoning_budget_tokens=thinkingBudget;
   const response=await fetch(imageURL?'/v1/chat/completions':'/api/chat',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify(payload)});
@@ -869,7 +884,7 @@ function endSession(){
  sessionStorage.removeItem('nodexlm-admin');token='';sessionEpoch++;refreshEpoch++;stopActivity();
  catalogRequest?.abort();catalogRequest=null;catalogSearching=false;catalogFailure=false;catalogStructure='';catalogModels=[];catalogSearched=false;
  $('catalogSearch').disabled=false;$('catalogSearch').setAttribute('aria-busy','false');renderCatalog();
- resetBenchmarkSession();clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
+ resetBenchmarkSession();clearPairingSession();chatController?.abort();chatHistory=[];pendingApply=null;latestStatus=null;localModels=[];residentModelNames=[];chatWorkerModels.clear();setOptions('chatTarget',[['','Host · modelos residentes']],'');updateChatModelOptions();settingsInitialized=false;loadingPlan=null;loadingPlanModel='';modelFolderPath='';
  $('secret').type='password';$('toggleSecret').textContent='Mostrar';$('toggleSecret').setAttribute('aria-pressed','false');$('toggleSecret').setAttribute('aria-label','Mostrar credencial');
  $('prompt').value='';$('overviewPrompt').value='';$('chatDocument').value='';$('chatImage').value='';$('allowExternalFallback').checked=false;
  $('imageOutput').hidden=true;$('imageOutput').src='';$('chatOutput').replaceChildren();$('chatMetrics').textContent='';
@@ -1113,11 +1128,18 @@ $('catalogForm').addEventListener('submit',event=>{
  });
 });
 
+let chatWorkerModels=new Map();
+function updateChatModelOptions(){
+ const prior=$('chatModel').value,target=$('chatTarget').value;
+ const models=target?chatWorkerModels.get(target)||[]:residentModelNames;
+ setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
+}
+$('chatTarget').addEventListener('change',()=>{updateChatModelOptions();chatHistory=[];renderChat();});
 function renderResidentModels(models){
- const list=$('residentModels'),prior=$('chatModel').value;
+ const list=$('residentModels');
  const changed=JSON.stringify(residentModelNames)!==JSON.stringify(models)||!list.children.length;
  residentModelNames=models;
- setOptions('chatModel',models.map(model=>[model,model]),prior,models[0]||'');
+ updateChatModelOptions();
  if(!changed)return;
  list.replaceChildren();
  if(!models.length){list.append(emptyState('Nenhum modelo residente. Carregue um GGUF para começar.'));return;}
@@ -1145,6 +1167,7 @@ bindAction('autotuneBench',async()=>{
   const area=$('autotuneResults');area.replaceChildren();
   if(report.placement_fixed)area.append(el('p','muted','Placement fixado do baseline; candidatos com memória insuficiente são rejeitados.'));
   for(const row of report.candidates)area.append(el('p','muted',row.name+' · '+row.settings.threads+' threads · '+(row.sample?row.sample.tokens_per_second.toFixed(1)+' t/s · '+(row.sample.elapsed_ms/1000).toFixed(2)+' s totais':row.error||'indisponível')));
+  if(!report.candidates?.[0]?.sample){area.append(el('p','muted','Autotuning interrompido: o baseline falhou antes da medição. Corrija o erro acima antes de comparar configurações.'));return;}
   if(report.recommended){const s=report.recommended;area.append(el('p','','Recomendado: '+s.threads+' threads, prefill '+(s.threads_batch||0)+', microbatch '+(s.ubatch_size||0)+', especulação '+(s.speculative_mode||'off')+' · '+(s.speculative_tokens||0)+' tokens (0 = nativo)'));
    const apply=el('button','secondary','Usar sugestão no formulário');apply.type='button';apply.addEventListener('click',()=>{ $('rpcNativeScheduler').checked=!!s.rpc_native_scheduler;$('flashAttention').value=s.flash_attention||'auto';$('threads').value=s.threads;$('threadsBatch').value=s.threads_batch||0;$('batchSize').value=s.batch_size||0;$('ubatchSize').value=s.ubatch_size||0;$('speculativeMode').value=s.speculative_mode||'off';$('speculativeTokens').value=s.speculative_tokens||0;$('draftModelSelect').value=s.draft_model||'';notice('Sugestão aplicada ao formulário. Salve para efetivar.'); });area.append(apply);
   }else area.append(el('p','muted','Nenhum ganho de latência total de pelo menos 5% sem regressão relevante de prefill/decode.'));

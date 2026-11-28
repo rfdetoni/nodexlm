@@ -8,8 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/rfdetoni/nodexlm/internal/catalog"
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 )
 
 // GGUFInfo describes model architecture without mapping or reading its weights.
@@ -26,6 +30,8 @@ type GGUFInfo struct {
 	IsMoE           bool     `json:"moe"`
 	BlockBytes      []uint64 `json:"-"`
 	NonBlockBytes   uint64   `json:"-"`
+
+	Trellis bool `json:"-"`
 }
 
 const (
@@ -165,6 +171,50 @@ func (g *ggufReader) value(kind uint32, capture bool) (uint32, string, error) {
 }
 
 func InspectGGUF(path string) (GGUFInfo, error) {
+	return inspectGGUF(path, nil)
+}
+
+// InspectBundledGGUF validates every shard's tensor descriptors against the
+// pinned runtime before any native startup, RPC handshake or weight transfer.
+// Generic metadata inspection remains available for explicitly custom engines.
+func InspectBundledGGUF(path string) (GGUFInfo, error) {
+	return inspectRuntimeGGUF(path, false)
+}
+
+// InspectTrellisGGUF uses the separately pinned Strix enum, never stock RPC.
+func InspectTrellisGGUF(path string) (GGUFInfo, error) {
+	return inspectRuntimeGGUF(path, true)
+}
+
+func inspectRuntimeGGUF(path string, trellis bool) (GGUFInfo, error) {
+	names, err := catalog.ShardNames(filepath.Base(path))
+	if err != nil {
+		return GGUFInfo{}, err
+	}
+	validate := llamaruntime.ValidateTensorType
+	if trellis {
+		validate = llamaruntime.ValidateTrellisTensorType
+	}
+	var info GGUFInfo
+	for i, name := range names {
+		part, err := inspectGGUF(filepath.Join(filepath.Dir(path), name), validate)
+		if err != nil {
+			return GGUFInfo{}, fmt.Errorf("GGUF %s: %w", name, err)
+		}
+		if i == 0 {
+			info = part
+		}
+	}
+	if !trellis {
+		if err := llamaruntime.ValidateArchitecture(info.Architecture); err != nil {
+			return GGUFInfo{}, err
+		}
+	}
+	info.Trellis = trellis
+	return info, nil
+}
+
+func inspectGGUF(path string, validate func(uint32, string) error) (GGUFInfo, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return GGUFInfo{}, err
@@ -246,12 +296,56 @@ func InspectGGUF(path string) (GGUFInfo, error) {
 	result.EmbeddingLength = values[result.Architecture+".embedding_length"]
 	result.HeadCount = values[result.Architecture+".attention.head_count"]
 	result.KVHeadCount = values[result.Architecture+".attention.head_count_kv"]
+	if validate != nil {
+		pos, err := g.r.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return GGUFInfo{}, err
+		}
+		if err := g.validateTensorTypes(tensorCount, validate); err != nil {
+			return GGUFInfo{}, err
+		}
+		if _, err := g.r.Seek(pos, io.SeekStart); err != nil {
+			return GGUFInfo{}, err
+		}
+	}
 	// Sharded/unknown tensor layouts retain the uniform estimate rather
 	// than treating a partial tensor table as the entire model.
 	if result.BlockCount > 0 && result.BlockCount <= 4096 && tensorCount > 0 && tensorCount <= 1_000_000 && !strings.Contains(path, "-of-") {
 		result.BlockBytes, result.NonBlockBytes = g.tensorBytes(tensorCount, result.BlockCount)
 	}
 	return result, nil
+}
+
+// The enum is taken from ggml/include/ggml.h in the pinned source revision.
+// The supported ID range is not the same as the weight-estimation table.
+func (g *ggufReader) validateTensorTypes(count uint64, validate func(uint32, string) error) error {
+	if count > 1_000_000 {
+		return errors.New("too many GGUF tensors")
+	}
+	for i := uint64(0); i < count; i++ {
+		name, err := g.str(4096)
+		if err != nil {
+			return fmt.Errorf("GGUF tensor descriptor: %w", err)
+		}
+		dims, err := g.uint32()
+		if err != nil || dims < 1 || dims > 4 {
+			return fmt.Errorf("invalid GGUF tensor dimensions for %q", name)
+		}
+		if err := g.skip(uint64(dims) * 8); err != nil {
+			return err
+		}
+		kind, err := g.uint32()
+		if err != nil {
+			return err
+		}
+		if err := validate(kind, name); err != nil {
+			return err
+		}
+		if err := g.skip(8); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Known GGML types from the pinned runtime. Unknown types deliberately
@@ -310,6 +404,18 @@ func tensorTypeSize(kind uint32) (uint64, uint64) {
 		return 1, 8 // I64, F64
 	case 29:
 		return 256, 56 // IQ1_M
+	case 144:
+		return 128, 34 // TQ2_T
+	case 145:
+		return 128, 26 // TQK6
+	case 146:
+		return 128, 30 // TQK7
+	case 147:
+		return 128, 42 // TQP5
+	case 148:
+		return 128, 50 // TQP6
+	case 149:
+		return 128, 58 // TQP7
 	default:
 		return 0, 0
 	}

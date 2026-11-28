@@ -16,11 +16,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rfdetoni/nodexlm/internal/llamaruntime"
 	"github.com/rfdetoni/nodexlm/internal/pairing"
 	"github.com/rfdetoni/nodexlm/internal/protocol"
 	"github.com/rfdetoni/nodexlm/internal/requestlog"
@@ -46,6 +48,9 @@ type nodeState struct {
 
 type Server struct {
 	mu                 sync.Mutex
+	buildCommit        string
+	buildVersion       string
+	trellisRPC         bool
 	admin              [32]byte
 	enrollment         [32]byte
 	clusterID          string
@@ -100,6 +105,20 @@ func New(adminToken, enrollmentToken string) (*Server, error) {
 		rpcHub:             rpcmesh.NewHub(),
 		modelCacheSlots:    make(chan struct{}, 4),
 	}, nil
+}
+
+// RequireBuild binds released workers to the exact Host source revision.
+// Local developer/test builds without a release identity remain testable.
+func (s *Server) RequireBuild(commit, version string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if protocol.ValidBuildCommit(commit) {
+		s.buildCommit, s.buildVersion = commit, version
+	}
+}
+
+func (s *Server) updateDirective(commit string) protocol.UpdateDirective {
+	return protocol.UpdateDirective{RequiredBuildCommit: s.buildCommit, RequiredVersion: s.buildVersion, UpdateRequired: s.buildCommit != "" && commit != s.buildCommit}
 }
 
 // Handler includes administrative endpoints and must only be exposed on localhost.
@@ -226,14 +245,17 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 // Validates every externally supplied resource field before it is persisted
 // or included in memory planning. Server-owned identity/status are overwritten.
 func validDevice(d protocol.Device) bool {
-	if len(d.Name) == 0 || len(d.Name) > 100 ||
+	if len(d.Name) == 0 || len(d.Name) > 100 || len(d.AppVersion) > 80 || (d.BuildCommit != "" && !protocol.ValidBuildCommit(d.BuildCommit)) ||
 		len(d.Platform) == 0 || len(d.Platform) > 30 ||
 		len(d.Architecture) > 100 || len(d.Models) > 128 || len(d.DecisionModels) > 32 ||
 		len(d.GPUs) > 16 || d.CPUCount < 1 || d.CPUCount > 4096 ||
 		d.RAMBytes > 1<<50 || d.AvailableRAMBytes > d.RAMBytes ||
 		d.MaxContributionBytes > 1<<50 || d.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(d) || !validUsage(d.CPUUsagePercent) || (d.RAMUsedBytes != nil && *d.RAMUsedBytes > d.RAMBytes) ||
-		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 ||
+		len(d.Runtime.Engine) > 80 || len(d.Runtime.Version) > 80 || len(d.Runtime.RPCSourceCommit) > 64 ||
+		d.Runtime.RPCProtocolMajor < 0 || d.Runtime.RPCProtocolMajor > 255 ||
+		d.Runtime.RPCProtocolMinor < 0 || d.Runtime.RPCProtocolMinor > 255 ||
+		d.Runtime.RPCProtocolPatch < 0 || d.Runtime.RPCProtocolPatch > 255 ||
 		!validRPCDeviceTopology(d.Runtime.RPCDevices) ||
 		(d.PeerPubKey != "" && !protocol.ValidPeerPubKey(d.PeerPubKey)) ||
 		len(d.UnavailableReason) > 128 {
@@ -357,11 +379,14 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	if !parse(w, r, &req) {
 		return
 	}
-	if len(req.Models) > 128 || len(req.DecisionModels) > 32 || len(req.GPUs) > 16 ||
+	if len(req.AppVersion) > 80 || (req.BuildCommit != "" && !protocol.ValidBuildCommit(req.BuildCommit)) || len(req.Models) > 128 || len(req.DecisionModels) > 32 || len(req.GPUs) > 16 ||
 		req.RAMBytes > 1<<50 || req.AvailableRAMBytes > req.RAMBytes ||
 		req.MaxContributionBytes > 1<<50 || req.MemoryReserveBytes > 1<<50 ||
 		!validMobileTelemetry(req) || !validUsage(req.CPUUsagePercent) || (req.RAMUsedBytes != nil && *req.RAMUsedBytes > req.RAMBytes) ||
-		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 ||
+		len(req.Runtime.Engine) > 80 || len(req.Runtime.Version) > 80 || len(req.Runtime.RPCSourceCommit) > 64 ||
+		req.Runtime.RPCProtocolMajor < 0 || req.Runtime.RPCProtocolMajor > 255 ||
+		req.Runtime.RPCProtocolMinor < 0 || req.Runtime.RPCProtocolMinor > 255 ||
+		req.Runtime.RPCProtocolPatch < 0 || req.Runtime.RPCProtocolPatch > 255 ||
 		!validRPCDeviceTopology(req.Runtime.RPCDevices) {
 		fail(w, 400, "invalid node resources")
 		return
@@ -402,7 +427,17 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		n.device.LastSeen = time.Now()
+		n.device.BuildCommit, n.device.AppVersion = req.BuildCommit, req.AppVersion
+		directive := s.updateDirective(req.BuildCommit)
+		if directive.UpdateRequired {
+			n.device.Status = "updating"
+			n.device.UnavailableReason = "build_mismatch"
+			s.mu.Unlock()
+			respond(w, 200, directive)
+			return
+		}
 		n.device.Status = "online"
+		n.device.UnavailableReason = ""
 		n.device.Models = append([]string(nil), req.Models...)
 		n.device.DecisionModels = append([]string(nil), req.DecisionModels...)
 		if len(req.DecisionModels) > 0 {
@@ -453,11 +488,15 @@ func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 			n.device.Runtime.Installed = req.Runtime.Installed
 			n.device.Runtime.Engine = req.Runtime.Engine
 			n.device.Runtime.Version = req.Runtime.Version
+			n.device.Runtime.RPCSourceCommit = req.Runtime.RPCSourceCommit
+			n.device.Runtime.RPCProtocolMajor = req.Runtime.RPCProtocolMajor
+			n.device.Runtime.RPCProtocolMinor = req.Runtime.RPCProtocolMinor
+			n.device.Runtime.RPCProtocolPatch = req.Runtime.RPCProtocolPatch
 			n.device.Runtime.Benchmark = req.Runtime.Benchmark
 			n.device.Runtime.RPCDevices = append([]string(nil), req.Runtime.RPCDevices...)
 			// RPC readiness is set exclusively by the authenticated tunnel.
 		}
-		if n.active == "" && !s.draining && !s.fenced {
+		if n.active == "" && !s.draining && !s.fenced && protocol.ComputeAdmissionReason(n.device) == "" {
 			for i, jid := range s.queue {
 				j := s.jobs[jid]
 				if j == nil || j.Status != "queued" {
@@ -583,7 +622,17 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
 		}
+		if d.Status != "offline" && s.updateDirective(d.BuildCommit).UpdateRequired {
+			d.Status = "updating"
+			d.UnavailableReason = "build_mismatch"
+		}
 		_, d.Runtime.RPCReady = ready[d.ID]
+		if d.Status == "online" {
+			if reason := protocol.ComputeAdmissionReason(d); reason != "" {
+				d.UnavailableReason = reason
+				d.Runtime.RPCReady = false
+			}
+		}
 		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"
 		out = append(out, d)
 	}
@@ -761,13 +810,26 @@ func (s *Server) rpcTunnel(w http.ResponseWriter, r *http.Request) {
 	// An already-draining Guest cannot re-advertise itself as healthy just
 	// because an in-flight tunnel reconnects after its withdrawal heartbeat.
 	// Existing claimed tunnels are unaffected until the Guest closes them.
+	if s.updateDirective(n.device.BuildCommit).UpdateRequired {
+		fail(w, http.StatusServiceUnavailable, "Guest update required")
+		return
+	}
 	if n.device.Status == "draining" {
 		fail(w, http.StatusServiceUnavailable, "RPC Guest draining")
 		return
 	}
+	trellis := trellisDesktop(n.device) && s.trellisRPC
+	if trellis && os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_GPU") != "1" && slices.Contains(n.device.Runtime.RPCDevices, "gpu") {
+		fail(w, http.StatusServiceUnavailable, "Trellis GPU policy disabled")
+		return
+	}
+	if trellis && !trellisRuntimeMatches(n.device.Runtime) || !trellis && n.device.Runtime.RPCSourceCommit == llamaruntime.TrellisSourceCommit {
+		fail(w, http.StatusServiceUnavailable, "RPC runtime switch required")
+		return
+	}
 	n.device.LastSeen = time.Now()
 	n.device.Status = "online"
-	s.rpcHub.ServeTunnel(w, r, id)
+	s.rpcHub.ServeRuntimeTunnel(w, r, id, trellis)
 	if s.rpcMicrobench != nil {
 		go s.rpcMicrobench(id)
 	}
@@ -804,6 +866,11 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		profile.Status = "online"
 		profile.UnavailableReason = ""
 	}
+	directive := s.updateDirective(profile.BuildCommit)
+	if directive.UpdateRequired {
+		profile.Status = "updating"
+		profile.UnavailableReason = "build_mismatch"
+	}
 	profile.Busy = n.device.Busy
 	// An RPC-only heartbeat must not erase a concurrently running decision
 	// worker; its capability still expires when its own lease stops.
@@ -820,8 +887,13 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	if profile.PeerPubKey == "" {
 		profile.PeerPubKey = n.device.PeerPubKey
 	}
+	if n.device.Runtime.RPCSourceCommit != "" && n.device.Runtime.RPCSourceCommit != profile.Runtime.RPCSourceCommit {
+		// Never reuse an idle tunnel from an earlier native ABI.
+		s.rpcHub.Remove(id)
+	}
 	n.device = profile
 	authInfo := s.authoritySnapshotLocked()
+	runtimePolicy := s.runtimePolicyLocked(id)
 	start, drain := s.rpcMicrobench, s.rpcDrain
 	var measurement rpcmesh.Measurement
 	history := s.measurements[id]
@@ -834,17 +906,21 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Nodex-RPC-Jitter", fmt.Sprintf("%.2f", measurement.RTTSpreadMS))
 		w.Header().Set("X-Nodex-RPC-Measured", measurement.MeasuredAt.UTC().Format(time.RFC3339Nano))
 	}
-	if profile.Status == "draining" && drain != nil {
+	if (profile.Status == "draining" || directive.UpdateRequired) && drain != nil {
 		drain(id)
-	} else if start != nil {
+	} else if start != nil && !directive.UpdateRequired {
 		go start(id)
 	}
 	respond(w, 200, map[string]any{
-		"status":           "online",
-		"cluster_id":       authInfo.ClusterID,
-		"epoch":            authInfo.Epoch,
-		"authority_pubkey": authInfo.AuthorityPubKey,
-		"revoked_nodes":    authInfo.RevokedNodes,
+		"status":                profile.Status,
+		"required_build_commit": directive.RequiredBuildCommit,
+		"required_version":      directive.RequiredVersion,
+		"update_required":       directive.UpdateRequired,
+		"runtime_policy":        runtimePolicy,
+		"cluster_id":            authInfo.ClusterID,
+		"epoch":                 authInfo.Epoch,
+		"authority_pubkey":      authInfo.AuthorityPubKey,
+		"revoked_nodes":         authInfo.RevokedNodes,
 	})
 }
 
@@ -864,7 +940,17 @@ func (s *Server) DevicesSnapshot() []protocol.Device {
 		if now.Sub(d.LastSeen) > heartbeatGrace {
 			d.Status = "offline"
 		}
+		if d.Status != "offline" && s.updateDirective(d.BuildCommit).UpdateRequired {
+			d.Status = "updating"
+			d.UnavailableReason = "build_mismatch"
+		}
 		_, d.Runtime.RPCReady = ready[d.ID]
+		if d.Status == "online" {
+			if reason := protocol.ComputeAdmissionReason(d); reason != "" {
+				d.UnavailableReason = reason
+				d.Runtime.RPCReady = false
+			}
+		}
 		d.Runtime.RPCReady = d.Runtime.RPCReady && d.Status == "online"
 		out = append(out, d)
 	}

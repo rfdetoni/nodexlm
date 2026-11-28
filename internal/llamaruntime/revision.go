@@ -3,6 +3,7 @@ package llamaruntime
 import (
 	_ "embed"
 	"encoding/json"
+	"maps"
 )
 
 //go:embed revision.json
@@ -20,12 +21,16 @@ type runtimeRevision struct {
 	Published          map[string]string `json:"published"`
 	RPCProtocolMajor   byte              `json:"rpc_protocol_major"`
 	RPCProtocolMinor   byte              `json:"rpc_protocol_minor"`
+
+	RPCProtocolPatch byte `json:"rpc_protocol_patch"`
 }
 
 // RPCProtocolVersion is the exact native wire version of the reviewed source.
 func RPCProtocolVersion() (byte, byte) {
 	return revision.RPCProtocolMajor, revision.RPCProtocolMinor
 }
+
+func RPCProtocolPatch() byte { return revision.RPCProtocolPatch }
 
 func BundledParallelRPCUploadsSupported() bool {
 	return revision.ParallelRPCUploads
@@ -44,4 +49,9 @@ func readRevision() runtimeRevision {
 		panic("missing native RPC protocol version in embedded revision")
 	}
 	return r
+}
+
+// PublishedRPCDigests returns a detached snapshot of the reviewed archives.
+func PublishedRPCDigests() map[string]string {
+	return maps.Clone(revision.Published)
 }

@@ -57,6 +57,7 @@ func serveSizedProbeRPC(conn net.Conn, corrupt, large bool) error {
 			}
 			resp := make([]byte, 28)
 			resp[0], resp[1] = llamaruntime.RPCProtocolVersion()
+			resp[2] = llamaruntime.RPCProtocolPatch()
 			if err := response(resp); err != nil {
 				return err
 			}

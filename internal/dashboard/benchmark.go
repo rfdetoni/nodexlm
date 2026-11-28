@@ -156,9 +156,15 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	if err != nil {
 		return InferenceSample{}, err
 	}
-	meta, err := local.InspectGGUF(path)
+	meta, err := m.inspectInferenceGGUF(path, settings)
 	if err != nil {
 		return InferenceSample{}, err
+	}
+	if meta.Trellis {
+		if nodeID != "" {
+			return InferenceSample{}, errors.New("Trellis/Gyro runtime is Host-only; select Host local for the benchmark")
+		}
+		settings = trellisHostSettings(settings)
 	}
 	benchmarkPhase(ctx, "memory", fmt.Sprintf("%d blocks; %.2f GiB", meta.BlockCount, float64(size)/(1<<30)))
 	hostBudget, err := m.hostBudget(settings, hardware.Collect("Host", nil))
@@ -169,13 +175,22 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 		return InferenceSample{}, errors.New("RPC benchmark requires a single inference slot")
 	}
 	if nodeID == "" {
+		if modelExceedsBudget(uint64(size), hostBudget) {
+			return InferenceSample{}, errors.New("model weights exceed Host memory budget")
+		}
 		if err = validatePlacementMemory(meta, settings, uint64(size), hostBudget, nil); err != nil {
 			return InferenceSample{}, err
 		}
 	}
 	benchmarkPhase(ctx, "runtime", "")
 	binary := m.binary
-	if local.EffectiveBackend(settings.Backend) == local.BackendMistralRS {
+	if meta.Trellis {
+		binary, err = llamaruntime.EnsureTrellis(ctx, m.dir, settings.HostGPU)
+		if err == nil {
+			benchmarkPhase(ctx, "runtime", "resolving PLE dependencies")
+			_, err = local.EnsureTrellisPLE(ctx, path, meta, nil)
+		}
+	} else if local.EffectiveBackend(settings.Backend) == local.BackendMistralRS {
 		if nodeID != "" {
 			return InferenceSample{}, errors.New("mistral.rs benchmark cannot target NodexLM RPC Guests")
 		}
@@ -205,6 +220,7 @@ func (m *Manager) measureInferenceDuration(ctx context.Context, settings Setting
 	}
 	engine := managedFromSettings(settings, binary, path, model, draftPath)
 	engine.UnboundedStartup = true
+	engine.TrellisRuntime = meta.Trellis
 	var topology string
 	var loadGuests []RPCGuest
 	benchmarkPhase(ctx, "placement", "")

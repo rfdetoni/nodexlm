@@ -19,9 +19,16 @@ class UpdateInstallReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            HostManagedUpdate.resume(context)
+            return
+        }
         if (intent.action != ACTION) return
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS,
             PackageInstaller.STATUS_FAILURE)
+        if (status != PackageInstaller.STATUS_PENDING_USER_ACTION && status != PackageInstaller.STATUS_SUCCESS) {
+            context.getSharedPreferences("nodexlm_host_update", Context.MODE_PRIVATE).edit().remove("submitted").remove("resume_role").apply()
+        }
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 RuntimeLogs.append(context, RuntimeRole.UPDATES, RuntimeLevel.INFO, RuntimeEvent.UPDATE_INSTALL)
@@ -37,6 +44,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                 }
                 try {
                     confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    HostManagedUpdate.notify(context, "Confirme a atualização assinada do NodexLM", confirmation)
                     context.startActivity(confirmation)
                 } catch (e: Exception) {
                     Log.e("NodexLMUpdate", "Cannot start Android installer confirmation", e)

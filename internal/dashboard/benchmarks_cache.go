@@ -37,6 +37,18 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 		}
 		parts = append(parts, [2]int64{part.Size(), part.ModTime().UnixNano()})
 	}
+	// Include the independently installed runtime and external table revision
+	// in comparison fingerprints without rescanning the entire tensor table.
+	if binary, err := llamaruntime.ResolveTrellis(m.dir, s.HostGPU); err == nil {
+		if file, err := os.Stat(binary); err == nil {
+			parts = append(parts, [2]int64{file.Size(), file.ModTime().UnixNano()})
+		}
+	}
+	if strings.Contains(strings.ToLower(model), "-nople") {
+		if ple, err := os.Stat(filepath.Join(m.modelDir, "Qwen3.8-Flash-Next-PLE-Q8_0.gguf")); err == nil {
+			parts = append(parts, [2]int64{ple.Size(), ple.ModTime().UnixNano()})
+		}
+	}
 	s.Model, s.Distributed, s.PlacementStrategy = "", false, ""
 	if s.PrimaryNode == "auto" {
 		s.PrimaryNode = ""
@@ -49,8 +61,9 @@ func (m *Manager) benchmarkSignature(s Settings, model string) string {
 		Bundle   string   `json:"bundle"`
 		Schema   int      `json:"schema"`
 
-		Parts [][2]int64 `json:"parts"`
-	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version, llamaruntime.BundledRPCRelease(), 4, parts})
+		Parts   [][2]int64 `json:"parts"`
+		Trellis string     `json:"trellis"`
+	}{s, info.Size(), info.ModTime().UnixNano(), llamaruntime.Version, llamaruntime.BundledRPCRelease(), 5, parts, llamaruntime.TrellisSourceCommit})
 	if err != nil {
 		return ""
 	}

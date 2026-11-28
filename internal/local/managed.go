@@ -59,6 +59,7 @@ type Managed struct {
 	UnboundedStartup bool
 
 	RPCNativeScheduler bool
+	TrellisRuntime     bool
 
 	// Native RPC devices are selected by the Host before model loading.
 	// RPCDeviceNames contains registered llama.cpp names such as RPC0/RPC1;
@@ -138,6 +139,22 @@ func (m *Managed) SystemInfo() string {
 }
 
 // Load starts a resident llama-server only when explicitly requested.
+// ProcessExited reports a confirmed native process exit, without polling
+// HTTP or restarting with an obsolete distributed topology.
+func (m *Managed) ProcessExited() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.processExit == nil {
+		return false
+	}
+	select {
+	case <-m.processExit.done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Managed) Load(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -199,8 +216,18 @@ func (m *Managed) ensure(ctx context.Context) error {
 		}
 	}
 	meta, err := InspectGGUF(m.ModelPath)
+	if m.TrellisRuntime {
+		meta, err = InspectTrellisGGUF(m.ModelPath)
+	}
 	if err != nil {
 		return fmt.Errorf("invalid GGUF model: %w", err)
+	}
+	if m.TrellisRuntime {
+		// Revalidate at the actual load boundary even when callers bypass
+		// the dashboard or CLI preparation path.
+		if _, err := EnsureTrellisPLE(ctx, m.ModelPath, meta, nil); err != nil {
+			return err
+		}
 	}
 	if EffectiveBackend(m.Backend) == BackendLlama {
 		if err := m.validateMoE(meta); err != nil {
@@ -246,7 +273,11 @@ func (m *Managed) ensure(ctx context.Context) error {
 	// Bundled llama.cpp binaries load libggml.so from their own directory.
 	// Without this, startup may fail even when the --help RPC probe passed.
 	if EffectiveBackend(m.Backend) == BackendLlama {
-		smolEnv, err := smolmax.NativeEnvironment(launch.Binary, os.Getenv("NODEXLM_SMOLMAX_MODE"), meta.IsMoE, meta.ExpertCount, gpu, len(m.RPCServers))
+		mode := os.Getenv("NODEXLM_SMOLMAX_MODE")
+		if m.TrellisRuntime && mode != "" && mode != "off" {
+			return errors.New("Smolmax is not validated on the separate Trellis runtime")
+		}
+		smolEnv, err := smolmax.NativeEnvironment(launch.Binary, mode, meta.IsMoE, meta.ExpertCount, gpu, len(m.RPCServers))
 		if err != nil {
 			return fmt.Errorf("smolmax native settings: %w", err)
 		}
@@ -254,12 +285,12 @@ func (m *Managed) ensure(ctx context.Context) error {
 		cmd.Env = append(cmd.Env, smolEnv...)
 		// A candidate patch is not evidence that the pinned release uses it.
 		// Only verified bundles may automatically opt into parallel uploads.
-		if m.parallelRPCUploadEligible() && llamaruntime.BundledParallelRPCUploadsSupported() &&
+		if !m.TrellisRuntime && m.parallelRPCUploadEligible() && llamaruntime.BundledParallelRPCUploadsSupported() &&
 			os.Getenv("NODEXLM_PARALLEL_RPC_UPLOAD") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_PARALLEL_RPC_UPLOAD=1")
 		}
 		// Coalesce only response-free small commands without a collection delay.
-		if len(m.RPCServers) > 0 && llamaruntime.BundledParallelRPCUploadsSupported() && os.Getenv("NODEXLM_RPC_BATCH_COMMANDS") == "" {
+		if !m.TrellisRuntime && len(m.RPCServers) > 0 && llamaruntime.BundledParallelRPCUploadsSupported() && os.Getenv("NODEXLM_RPC_BATCH_COMMANDS") == "" {
 			cmd.Env = append(cmd.Env, "NODEXLM_RPC_BATCH_COMMANDS=1")
 		}
 	} else {

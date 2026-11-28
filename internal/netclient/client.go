@@ -25,6 +25,7 @@ import (
 
 type Client struct {
 	ReconnectFailures atomic.Uint64
+	OnReady           func()
 	Base              string
 	Token             string
 	NodeID            string

@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,6 +45,7 @@ import (
 )
 
 var version = "0.1.0-alpha"
+var buildCommit string
 
 func main() {
 	if os.Getenv("NODEXLM_LOG_FORMAT") == "json" {
@@ -63,8 +65,13 @@ func run(args []string) error {
 	case "version":
 		fmt.Println("nodexlm", version)
 		return nil
+	case "build-commit":
+		fmt.Println(buildCommit)
+		return nil
 	case "doctor":
 		return doctor(args[1:])
+	case "runtimes":
+		return json.NewEncoder(os.Stdout).Encode(local.RuntimeRegistry())
 	case "benchmark":
 		return benchmarkCommand(args[1:])
 	case "bench":
@@ -238,6 +245,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	s.RequireBuild(buildCommit, version)
 	defer s.CloseRPC()
 	if *rpcTransport != "auto" && *rpcTransport != "unix" && *rpcTransport != "tcp" {
 		return errors.New("invalid rpc-transport")
@@ -318,7 +326,7 @@ func serve(args []string) error {
 		defer manager.Close()
 		manager.SetRPCStatsProvider(s.RPCStats)
 		s.SetRPCMicrobenchCallbacks(manager.AutoMicrobench, manager.CancelRPCMicrobench)
-		manager.SetRPCProvider(func() []dashboard.RPCGuest {
+		rpcGuests := func(trellis bool) []dashboard.RPCGuest {
 			ready := s.RPCIdleNodes()
 			profiles := s.DevicesSnapshot()
 			out := make([]dashboard.RPCGuest, 0, len(ready))
@@ -330,6 +338,23 @@ func serve(args []string) error {
 				if !ok || profile.Status != "online" || time.Since(profile.LastSeen) > 65*time.Second {
 					continue
 				}
+				// Release builds require an exact native ABI advertisement.
+				// The actual native HELLO remains mandatory before transfer.
+				if protocol.ComputeAdmissionReason(profile) != "" {
+					continue
+				}
+				if trellis {
+					if os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_GPU") != "1" && slices.Contains(profile.Runtime.RPCDevices, "gpu") {
+						continue
+					}
+					if profile.Runtime.RPCSourceCommit != llamaruntime.TrellisSourceCommit ||
+						profile.Runtime.RPCProtocolMajor != 10 || profile.Runtime.RPCProtocolMinor != 0 ||
+						profile.Runtime.RPCProtocolPatch != 3 || strings.HasPrefix(endpoint, "unix:") {
+						continue
+					}
+				} else if !compatibleStockRPC(profile.Runtime, protocol.ValidBuildCommit(buildCommit)) {
+					continue
+				}
 				memory := clusterplan.RPCMemory(profile)
 				out = append(out, dashboard.RPCGuest{
 					ID: profile.ID, Name: profile.Name, Endpoint: endpoint,
@@ -339,7 +364,11 @@ func serve(args []string) error {
 				})
 			}
 			return out
-		})
+		}
+		manager.SetRPCProvider(func() []dashboard.RPCGuest { return rpcGuests(false) })
+		if os.Getenv("NODEXLM_EXPERIMENTAL_TRELLIS_RPC") == "1" && protocol.ValidBuildCommit(buildCommit) {
+			manager.SetTrellisRPCController(s.SetTrellisRPC, func() []dashboard.RPCGuest { return rpcGuests(true) })
+		}
 		webListener, err = net.Listen("tcp", *webAddr)
 		if err != nil {
 			return fmt.Errorf("Web UI listen: %w", err)
@@ -429,6 +458,7 @@ func makeClient(server, secret, ca, nodeID string) (*netclient.Client, error) {
 			return nil, err
 		}
 	}
+	c.OnReady = markGuestUpdateReady
 	return c, nil
 }
 func join(args []string) error {
@@ -587,6 +617,9 @@ func traceRoutes(next http.Handler, component string) http.Handler {
 // distributed RPC Guest. The code proves TLS identity; no admin token is used.
 func guest(args []string) error {
 	f := fs("guest")
+	engineName := f.String("engine", "rpc", "rpc or named local inference runtime (see nodexlm runtimes)")
+	inferenceEndpoint := f.String("inference-endpoint", "", "existing local HTTP inference origin for whole-model worker")
+	inferenceModel := f.String("model", "", "model ID advertised by the selected inference runtime")
 	fingerprint := f.String("fingerprint", "", "optional full Host certificate SHA-256 obtained out of band")
 	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	server := f.String("server", "", "optional Host HTTPS URL; discovery is automatic")
@@ -611,6 +644,13 @@ func guest(args []string) error {
 	}
 	if *threads < 0 || *threads > 256 {
 		return errors.New("--threads must be 0..256")
+	}
+	if *engineName != "rpc" {
+		if !local.IsRegisteredRuntime(*engineName) || *inferenceEndpoint == "" || *inferenceModel == "" || *bin != "" || *rpcCache || *device != "auto" || *threads != 0 || *backend != "auto" {
+			return errors.New("whole-model Guest requires a registered --engine, --inference-endpoint and --model, without RPC overrides")
+		}
+	} else if *inferenceEndpoint != "" || *inferenceModel != "" {
+		return errors.New("choose --engine for a whole-model Guest")
 	}
 	if _, err := smolmax.GuestThreads(*threads, hardware.PhysicalCPUCount(), *threadPolicy); err != nil {
 		return err
@@ -664,6 +704,9 @@ func guest(args []string) error {
 		}
 	} else {
 		fmt.Println("Guest já pareado. Reutilizando credenciais existentes.")
+	}
+	if *engineName != "rpc" {
+		return node([]string{"--dir", *dir, "--engine", *engineName, "--backend", *inferenceEndpoint, "--model", *inferenceModel})
 	}
 	fmt.Println("Iniciando Guest RPC; Ctrl+C para encerrar.")
 	options := []string{"--rpc-device", *device, "--dir", *dir, "--backend", *backend, "--rpc-addr", *address, "--tunnels", fmt.Sprint(*tunnels), "--threads", fmt.Sprint(*threads), "--thread-policy", *threadPolicy}
@@ -723,6 +766,7 @@ func newPairing(args []string) error {
 
 func node(args []string) error {
 	f := fs("node")
+	engineName := f.String("engine", "", "named local inference runtime (see nodexlm runtimes)")
 	backend := f.String("backend", "", "existing localhost inference server (optional)")
 	liteRT := f.Bool("litert", false, "verify a local LiteRT-LM registry model before joining as a standalone worker")
 	path := f.String("model-path", "", "GGUF file for lazy auto-managed llama-server")
@@ -771,17 +815,22 @@ func node(args []string) error {
 			return err
 		}
 	}
-	if *liteRT && (*backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 ||
-		*moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
-		return errors.New("--litert requires --backend and --model; configure runtime options in LiteRT-LM")
+	if *liteRT {
+		if *engineName != "" && *engineName != "litertlm" {
+			return errors.New("conflicting --engine and --litert")
+		}
+		*engineName = "litertlm"
+	}
+	if *engineName != "" && !(*engineName == "trellis" && *backend == "" && *path != "") && (!local.IsRegisteredRuntime(*engineName) || *backend == "" || *model == "" || *path != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 || *threads != 0 || *gpu != "auto" || *contextTokens != 2048) {
+		return errors.New("registered runtime requires --backend and --model; configure native options in that runtime")
 	}
 	var engine worker.Generator
 	var managed *local.Managed
 	if *model != "" {
 		if *backend != "" {
-			if *liteRT {
+			if *engineName != "" {
 				checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				liteEngine, checkErr := local.NewLiteRT(checkCtx, *backend, *model)
+				liteEngine, checkErr := local.NewRegisteredRuntime(checkCtx, *engineName, *backend, *model)
 				cancel()
 				if checkErr != nil {
 					return checkErr
@@ -802,11 +851,14 @@ func node(args []string) error {
 			if cpu <= 0 {
 				cpu = hardware.PhysicalCPUCount()
 			}
-			resolved, resolveErr := llamaruntime.AutoExecutable(context.Background(), *dir, *bin)
+			resolved, trellis, resolveErr := resolveCLIModelRuntime(context.Background(), *dir, *bin, *path, *engineName == "trellis")
 			if resolveErr != nil {
 				return resolveErr
 			}
-			managed = &local.Managed{Binary: resolved, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+			if trellis {
+				*engineName = "trellis"
+			}
+			managed = &local.Managed{Binary: resolved, TrellisRuntime: trellis, ModelPath: *path, Alias: *model, Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: *idle, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 			engine = managed
 		}
 	}
@@ -815,7 +867,9 @@ func node(args []string) error {
 	}
 	c, cancel := ctx()
 	defer cancel()
-	return (&worker.Runner{Client: cli, Engine: engine, Model: *model, DecisionModel: *decisionModel, Decider: decider}).Run(c)
+	return (&worker.Runner{Client: cli, Engine: engine, Model: *model, DecisionModel: *decisionModel, Decider: decider, Runtime: *engineName, BuildCommit: buildCommit, AppVersion: version, OnUpdate: func(ctx context.Context, directive protocol.UpdateDirective) error {
+		return applyGuestUpdate(ctx, directive, append([]string{"node"}, args...))
+	}}).Run(c)
 }
 func nodes(args []string) error {
 	f := fs("nodes")
@@ -951,7 +1005,8 @@ func localChat(args []string) error {
 	imagePath := f.String("image", "", "local JPEG/PNG image for vision inference")
 	projector := f.String("mmproj", "", "local GGUF vision projector matching the model")
 	bin := f.String("llama-bin", "llama-server", "llama-server binary")
-	engineName := f.String("engine", "llama.cpp", "inference engine: llama.cpp, experimental mistralrs or litertlm")
+	engineName := f.String("engine", "llama.cpp", "inference engine (see nodexlm runtimes)")
+	inferenceEndpoint := f.String("inference-endpoint", "", "existing local HTTP inference origin")
 	liteEndpoint := f.String("litert-endpoint", "http://127.0.0.1:9379", "already-running local LiteRT-LM server")
 	mistralBin := f.String("mistralrs-bin", "", "mistral.rs executable; requires NODEXLM_EXPERIMENTAL_MISTRALRS=1")
 	threads := f.Int("threads", 0, "CPU threads")
@@ -966,14 +1021,17 @@ func localChat(args []string) error {
 	if *path == "" || *prompt == "" {
 		return errors.New("--model and --prompt required")
 	}
-	if *engineName == "litertlm" {
+	if *engineName == "litertlm" && *inferenceEndpoint == "" {
+		*inferenceEndpoint = *liteEndpoint
+	}
+	if *inferenceEndpoint != "" {
 		if *imagePath != "" || *projector != "" || *moeCPU || *moeCPULayers != 0 || *moeCacheMiB != 0 ||
 			*threads != 0 || *gpu != "auto" || *contextTokens != 2048 {
-			return errors.New("LiteRT-LM uses its own registry/backend configuration; llama.cpp options are unsupported")
+			return errors.New("registered runtime uses its own configuration; llama.cpp options are unsupported")
 		}
 		c, cancel := ctx()
 		defer cancel()
-		engine, err := local.NewLiteRT(c, *liteEndpoint, *path)
+		engine, err := local.NewRegisteredRuntime(c, *engineName, *inferenceEndpoint, *path)
 		if err != nil {
 			return err
 		}
@@ -1007,10 +1065,11 @@ func localChat(args []string) error {
 		}
 	}
 	resolved := ""
+	trellis := false
 	switch local.EffectiveBackend(*engineName) {
-	case local.BackendLlama:
+	case local.BackendLlama, "trellis":
 		var resolveErr error
-		resolved, resolveErr = llamaruntime.AutoExecutable(context.Background(), config.DefaultDir(), *bin)
+		resolved, trellis, resolveErr = resolveCLIModelRuntime(context.Background(), config.DefaultDir(), *bin, *path, *engineName == "trellis")
 		if resolveErr != nil {
 			return resolveErr
 		}
@@ -1019,7 +1078,10 @@ func localChat(args []string) error {
 	default:
 		return fmt.Errorf("unknown inference engine: %s", *engineName)
 	}
-	engine := &local.Managed{Backend: *engineName, Binary: resolved, ModelPath: *path, VisionProjectorPath: *projector, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
+	if trellis {
+		*engineName = local.BackendLlama
+	}
+	engine := &local.Managed{Backend: *engineName, Binary: resolved, TrellisRuntime: trellis, ModelPath: *path, VisionProjectorPath: *projector, Alias: filepath.Base(*path), Threads: cpu, ContextTokens: *contextTokens, GPULayers: *gpu, Idle: 0, MoECPU: *moeCPU, MoECPULayers: *moeCPULayers, MoECacheMiB: *moeCacheMiB}
 	defer engine.Close()
 	c, cancel := ctx()
 	defer cancel()
@@ -1042,6 +1104,15 @@ func localChat(args []string) error {
 // rpcNode offers native ggml RPC to the enrolled Host through HTTPS tunnels.
 // It never exposes the unprotected rpc-server outside 127.0.0.1.
 func rpcNode(args []string) error {
+	for {
+		err := rpcNodeOnce(args)
+		if !errors.Is(err, errRuntimeSwitch) {
+			return err
+		}
+	}
+}
+
+func rpcNodeOnce(args []string) error {
 	f := fs("rpc-node")
 	device := f.String("rpc-device", "auto", "auto discovers GPU+CPU; specify CPU, Vulkan0 or Vulkan0,CPU to override")
 	dir := f.String("dir", config.DefaultDir(), "enrolled node configuration directory")
@@ -1092,7 +1163,9 @@ func rpcNode(args []string) error {
 	// runtime. A 401 needs a new authenticated pairing, not a CPU/GPU change.
 	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	profile := hardware.Collect(agent.Node.NodeID, nil)
-	status, preflightErr := cli.Request(preflightCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+	profile.BuildCommit, profile.AppVersion = buildCommit, version
+	var directive protocol.UpdateDirective
+	status, preflightErr := cli.Request(preflightCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, &directive)
 	preflightCancel()
 	if preflightErr != nil {
 		if status == http.StatusUnauthorized {
@@ -1100,8 +1173,27 @@ func rpcNode(args []string) error {
 		}
 		return fmt.Errorf("cannot authenticate Guest with Host; check HTTPS connectivity before starting RPC: %w", preflightErr)
 	}
+	if directive.UpdateRequired {
+		c, stop := ctx()
+		defer stop()
+		return applyGuestUpdate(c, directive, append([]string{"rpc-node"}, args...))
+	}
+	if err := verifyHostRuntimePolicy(agent.Node, directive.Runtime); err != nil {
+		return err
+	}
+	trellis := policyUsesTrellis(directive.Runtime)
 	executable := *bin
 	selectedBackend := *backend
+	if trellis {
+		if *bin != "" {
+			return errors.New("Host selected Trellis; custom RPC binaries cannot be switched automatically")
+		}
+		*addr, *rpcCache = "auto", false
+		selectedBackend, executable, *device, err = provisionTrellisGuest(*dir, profile, policyAllowsTrellisGPU(directive.Runtime))
+		if err != nil {
+			return err
+		}
+	}
 	if executable == "" {
 		if selectedBackend == "auto" {
 			selectedBackend = autoGuestBackend(profile)
@@ -1169,10 +1261,13 @@ func rpcNode(args []string) error {
 		"dedicated_gpu", guestDedicatedGPU(profile))
 	c, cancel := ctx()
 	defer cancel()
+	updates := make(chan protocol.UpdateDirective, 1)
+	switches := make(chan error, 1)
 	// A lightweight heartbeat informs the Host of real hardware availability.
 	name, _ := os.Hostname()
 	heartbeat := func() {
 		profile := hardware.Collect(name, nil)
+		profile.BuildCommit, profile.AppVersion = buildCommit, version
 		if *device == "CPU" {
 			profile.GPUs = nil
 		}
@@ -1183,9 +1278,45 @@ func rpcNode(args []string) error {
 		profile.Runtime.Benchmark = true
 		profile.Runtime.ReconnectFailures = cli.ReconnectFailures.Load()
 		profile.Runtime.Version = llamaruntime.Version
+		if *bin == "" {
+			major, minor := llamaruntime.RPCProtocolVersion()
+			profile.Runtime.RPCProtocolMajor = int(major)
+			profile.Runtime.RPCProtocolMinor = int(minor)
+			profile.Runtime.RPCProtocolPatch = int(llamaruntime.RPCProtocolPatch())
+			profile.Runtime.RPCSourceCommit = llamaruntime.SourceCommit
+			if trellis {
+				profile.Runtime.Version = llamaruntime.TrellisRPCRelease
+				profile.Runtime.RPCProtocolMajor, profile.Runtime.RPCProtocolMinor, profile.Runtime.RPCProtocolPatch = 10, 0, 3
+				profile.Runtime.RPCSourceCommit = llamaruntime.TrellisSourceCommit
+			}
+		}
 		beatCtx, stop := context.WithTimeout(c, 8*time.Second)
 		defer stop()
-		_, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, nil)
+		var directive protocol.UpdateDirective
+		_, err := cli.Request(beatCtx, http.MethodPost, "/v1/nodes/heartbeat", profile, &directive)
+		if err == nil && directive.UpdateRequired {
+			select {
+			case updates <- directive:
+			default:
+			}
+			cancel()
+			return
+		}
+		if err == nil {
+			policyErr := verifyHostRuntimePolicy(agent.Node, directive.Runtime)
+			if policyErr == nil && (policyUsesTrellis(directive.Runtime) != trellis ||
+				(trellis && selectedBackend != "cpu" && !policyAllowsTrellisGPU(directive.Runtime))) {
+				policyErr = errRuntimeSwitch
+			}
+			if policyErr != nil {
+				select {
+				case switches <- policyErr:
+				default:
+				}
+				cancel()
+				return
+			}
+		}
 		if err != nil {
 			slog.Warn("Guest RAM/VRAM heartbeat failed", "error", err,
 				"ram_bytes", profile.RAMBytes, "available_ram_bytes", profile.AvailableRAMBytes,
@@ -1211,5 +1342,15 @@ func rpcNode(args []string) error {
 			}
 		}
 	}()
-	return rpcmesh.RunNativeGuestWithThreads(c, cli, executable, *addr, *slots, *rpcCache, *threads, *device)
+	err = rpcmesh.RunNativeGuestWithThreads(c, cli, executable, *addr, *slots, *rpcCache, *threads, *device)
+	select {
+	case directive := <-updates:
+		updateCtx, stop := ctx()
+		defer stop()
+		return applyGuestUpdate(updateCtx, directive, append([]string{"rpc-node"}, args...))
+	case switchErr := <-switches:
+		return switchErr
+	default:
+		return err
+	}
 }

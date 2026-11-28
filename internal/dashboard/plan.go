@@ -63,9 +63,12 @@ func (m *Manager) Plan() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	meta, err := local.InspectGGUF(path)
+	meta, err := m.inspectInferenceGGUF(path, settings)
 	if err != nil {
 		return nil, err
+	}
+	if meta.Trellis {
+		settings = trellisHostSettings(settings)
 	}
 	size, err := local.ModelSize(path)
 	if err != nil {
@@ -85,6 +88,9 @@ func (m *Manager) Plan() (map[string]any, error) {
 	excluded := []string{}
 	var suggestions []planSuggestion
 	selectionReason := "Local-only inference"
+	if meta.Trellis {
+		selectionReason = "Trellis: runtime especializado e PLE provisionados sob demanda; execução local até existirem Guests RPC compatíveis."
+	}
 	if settings.Distributed {
 		var guests []RPCGuest
 		if provider != nil {

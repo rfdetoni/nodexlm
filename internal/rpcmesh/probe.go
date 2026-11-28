@@ -80,6 +80,63 @@ func probeNativeRPC(ctx context.Context, endpoint string, verifyTensor bool) (ui
 }
 
 func withRPCProbe(ctx context.Context, endpoint string, timeout time.Duration, run func(net.Conn, uint32) error) (uint32, error) {
+	major, minor := llamaruntime.RPCProtocolVersion()
+	return withRPCProbeVersion(ctx, endpoint, timeout, [3]byte{major, minor, llamaruntime.RPCProtocolPatch()}, run)
+}
+
+// ProbeTrellisHello is deliberately separate from stock tensor probes. The
+// pinned fork has a distinct operation enum (10.0.3), so a stock probe must
+// never accept it or send stock tensor descriptors to it.
+func ProbeTrellisHello(ctx context.Context, endpoint string) (uint32, error) {
+	return withRPCProbeVersion(ctx, endpoint, 6*time.Second, [3]byte{10, 0, 3}, func(_ net.Conn, _ uint32) error {
+		return ctx.Err()
+	})
+}
+
+// ProbeTrellisTensorUpload exercises the six pinned quantization layouts
+// through the authenticated native worker, not just the F32 wire format.
+// This is a transport test, not proof of graph/kernel correctness.
+func ProbeTrellisTensorUpload(ctx context.Context, endpoint string, expectedDevices ...uint64) (uint32, error) {
+	return withRPCProbeVersion(ctx, endpoint, 20*time.Second, [3]byte{10, 0, 3}, func(conn net.Conn, count uint32) error {
+		if len(expectedDevices) != 0 && len(expectedDevices) != int(count) {
+			return fmt.Errorf("Trellis device count %d does not match planned %d", count, len(expectedDevices))
+		}
+		for device := uint32(0); device < count; device++ {
+			if len(expectedDevices) != 0 && expectedDevices[device] != 0 {
+				var req [4]byte
+				binary.LittleEndian.PutUint32(req[:], device)
+				response, err := rpcProbeRoundtrip(conn, 11, req[:], 16)
+				if err != nil {
+					return fmt.Errorf("Trellis device %d GET_DEVICE_MEMORY: %w", device, err)
+				}
+				free, total := binary.LittleEndian.Uint64(response[:8]), binary.LittleEndian.Uint64(response[8:])
+				if free < expectedDevices[device] || free > total {
+					return fmt.Errorf("Trellis device %d free memory below admitted budget", device)
+				}
+			}
+			if err := probeNativeTensor(conn, device); err != nil {
+				return err
+			}
+			for _, spec := range trellisProbeTypes {
+				if _, err := measureNativeTensorLayout(conn, device, spec.blockBytes*16, 128*16, spec.id, spec.blockBytes); err != nil {
+					return fmt.Errorf("Trellis device %d tensor type %d: %w", device, spec.id, err)
+				}
+			}
+		}
+		return ctx.Err()
+	})
+}
+
+// Pinned strix-llama.cpp ggml.h and ggml-common.h: each block stores
+// 128 elements and a two-byte scale, followed by packed trellis states.
+var trellisProbeTypes = [...]struct {
+	id         uint32
+	blockBytes uint32
+}{
+	{144, 34}, {145, 26}, {146, 30}, {147, 42}, {148, 50}, {149, 58},
+}
+
+func withRPCProbeVersion(ctx context.Context, endpoint string, timeout time.Duration, version [3]byte, run func(net.Conn, uint32) error) (uint32, error) {
 	if err := ValidateRPCAddress(endpoint); err != nil {
 		return 0, fmt.Errorf("invalid private RPC relay: %w", err)
 	}
@@ -119,9 +176,8 @@ func withRPCProbe(ctx context.Context, endpoint string, timeout time.Duration, r
 	if _, err := io.ReadFull(conn, response[:]); err != nil {
 		return 0, fmt.Errorf("incomplete RPC HELLO response: %w", err)
 	}
-	major, minor := llamaruntime.RPCProtocolVersion()
-	if response[0] != major || response[1] != minor {
-		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires %d.%d); update Host and Guest together", response[0], response[1], response[2], major, minor)
+	if response[0] != version[0] || response[1] != version[1] || response[2] != version[2] {
+		return 0, fmt.Errorf("incompatible GGML RPC protocol %d.%d.%d (Host requires %d.%d.%d); update Host and Guest together", response[0], response[1], response[2], version[0], version[1], version[2])
 	}
 	var countCommand [9]byte
 	countCommand[0] = 15
@@ -179,7 +235,10 @@ func probeNativeTensor(conn net.Conn, device uint32) error {
 }
 
 func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasurement, error) {
-	tensorElements := tensorBytes / 4 // GGML_TYPE_F32
+	return measureNativeTensorLayout(conn, device, tensorBytes, tensorBytes/4, 0, 4)
+}
+
+func measureNativeTensorLayout(conn net.Conn, device, tensorBytes, tensorElements, tensorType, blockBytes uint32) (TensorMeasurement, error) {
 	// ALLOC_BUFFER (0) carries {uint32 device, uint64 size} packed.
 	var alloc [12]byte
 	binary.LittleEndian.PutUint32(alloc[:4], device)
@@ -213,12 +272,12 @@ func measureNativeTensor(conn net.Conn, device, tensorBytes uint32) (TensorMeasu
 	// op_params@56; flags@120; src@124; view_src@204;
 	// view_offs@212; data@220; name@228; use_count@292.
 	tensor := make([]byte, rpcProbeTensorWireSize)
-	binary.LittleEndian.PutUint32(tensor[8:], 0) // GGML_TYPE_F32
+	binary.LittleEndian.PutUint32(tensor[8:], tensorType)
 	binary.LittleEndian.PutUint64(tensor[12:], buffer)
 	for i, n := range []uint32{tensorElements, 1, 1, 1} {
 		binary.LittleEndian.PutUint32(tensor[20+i*4:], n)
 	}
-	for i, n := range []uint32{4, tensorBytes, tensorBytes, tensorBytes} {
+	for i, n := range []uint32{blockBytes, tensorBytes, tensorBytes, tensorBytes} {
 		binary.LittleEndian.PutUint32(tensor[36+i*4:], n)
 	}
 	binary.LittleEndian.PutUint64(tensor[220:], base)

@@ -117,6 +117,9 @@ func Connect(ctx context.Context, client *netclient.Client, rpcAddress string) e
 			return fmt.Errorf("RPC tunnel refused: HTTP %d", response.StatusCode)
 		}
 	}
+	if client.OnReady != nil {
+		client.OnReady()
+	}
 	// The relay intentionally remains idle until model loading requests a slot.
 	if err = secured.SetDeadline(time.Time{}); err != nil {
 		return err

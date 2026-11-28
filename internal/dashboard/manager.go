@@ -63,6 +63,22 @@ type Settings struct {
 	RPCNativeScheduler bool `json:"rpc_native_scheduler,omitempty"`
 }
 
+// Use the same preflight for the plan, benchmark and actual load.
+func (m *Manager) inspectInferenceGGUF(path string, s Settings) (local.GGUFInfo, error) {
+	if local.EffectiveBackend(s.Backend) == local.BackendLlama && (m.binary == "" || m.binary == "llama-server") {
+		meta, err := local.InspectBundledGGUF(path)
+		if !errors.Is(err, llamaruntime.ErrTrellisFormat) {
+			return meta, err
+		}
+		meta, err = local.InspectTrellisGGUF(path)
+		if err != nil {
+			return meta, err
+		}
+		return meta, nil
+	}
+	return local.InspectGGUF(path)
+}
+
 // managedFromSettings keeps native options identical for loads and benchmarks.
 // RPC placement remains a caller-specific override.
 func managedFromSettings(s Settings, binary, modelPath, alias, draftPath string) *local.Managed {
@@ -100,6 +116,7 @@ type Manager struct {
 	poolCancel            context.CancelFunc
 	mu                    sync.Mutex
 	poolMu                sync.Mutex
+	applyMu               sync.Mutex
 	residents             map[string]*Manager
 	closed                bool
 	samples               map[string]InferenceSample
@@ -131,6 +148,7 @@ type Manager struct {
 	loadRPCNodes          []string
 	loadUploadPlan        *inferenceTopology
 	loadRPCBaseline       map[string]rpcmesh.TunnelStats
+	loadedRPCSessions     map[string]rpcmesh.TunnelStats
 	rpcStatsProvider      func() map[string]rpcmesh.TunnelStats
 	loadCancel            context.CancelFunc
 	loadCancelRequested   bool
@@ -143,6 +161,8 @@ type Manager struct {
 	downloadDone          chan struct{}
 	httpClient            *http.Client
 	rpcEndpoints          func() []RPCGuest
+	trellisRPCProvider    func() []RPCGuest
+	trellisRPCMode        func(bool) int
 }
 
 func NewManager(dir, modelDir, binary string) (*Manager, error) {
@@ -152,7 +172,7 @@ func NewManager(dir, modelDir, binary string) (*Manager, error) {
 	if err := os.MkdirAll(modelDir, 0700); err != nil {
 		return nil, err
 	}
-	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, hardware.PhysicalCPUCount())), ContextTokens: 2048, GPULayers: "auto", PlacementStrategy: "speed"}}
+	m := &Manager{residents: map[string]*Manager{}, samples: map[string]InferenceSample{}, admission: make(chan struct{}, 1), dir: dir, modelDir: modelDir, binary: binary, settings: Settings{Threads: min(256, max(1, hardware.PhysicalCPUCount())), ContextTokens: 2048, GPULayers: "auto", PlacementStrategy: "speed", Distributed: true}}
 	b, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
 	if err == nil {
 		if err = json.Unmarshal(b, &m.settings); err != nil {
@@ -192,6 +212,12 @@ func (m *Manager) SetRPCProvider(provider func() []RPCGuest) {
 	m.rpcEndpoints = provider
 }
 
+func (m *Manager) SetTrellisRPCController(mode func(bool) int, provider func() []RPCGuest) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.trellisRPCMode, m.trellisRPCProvider = mode, provider
+}
+
 // SetRPCStatsProvider exposes only local relay counters, never RPC payloads.
 func (m *Manager) SetRPCStatsProvider(provider func() map[string]rpcmesh.TunnelStats) {
 	m.mu.Lock()
@@ -208,6 +234,14 @@ func (m *Manager) State() map[string]any {
 		phase = "idle"
 	}
 	state := map[string]any{"backend": local.EffectiveBackend(m.settings.Backend), "model": m.current, "loaded": m.engine != nil, "loading": m.loading, "phase": phase, "error": m.loadError, "in_flight": len(m.generations)}
+	if m.engine != nil && m.engine.TrellisRuntime {
+		state["backend"] = "trellis"
+		if len(m.engine.RPCServers) > 0 {
+			state["runtime_notice"] = "Experimental Trellis RPC"
+		} else {
+			state["runtime_notice"] = "Trellis Host-only"
+		}
+	}
 	if m.nativeSystemInfo != "" {
 		state["native_system_info"] = m.nativeSystemInfo
 	}
@@ -421,16 +455,12 @@ func (m *Manager) StartLoad() error {
 	m.mu.Lock()
 	distributed := m.settings.Distributed
 	m.mu.Unlock()
-	limit := 30 * time.Minute
-	if distributed {
-		limit = 90 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	ctx, cancel := context.WithCancel(context.Background())
 	if err := m.beginLoad(cancel); err != nil {
 		cancel()
 		return err
 	}
-	slog.Info("Model load accepted", "distributed", distributed, "timeout_minutes", int(limit.Minutes()))
+	slog.Info("Model load accepted", "distributed", distributed)
 	go func() {
 		defer cancel()
 		m.runLoad(ctx)
@@ -505,7 +535,10 @@ func (m *Manager) runLoad(ctx context.Context) error {
 	defer m.poolMu.Unlock()
 	err := ctx.Err()
 	if err == nil {
-		err = m.load(ctx)
+		err = m.loadWithReplanning(ctx)
+	}
+	if err != nil {
+		m.resetTrellisRPC()
 	}
 	m.mu.Lock()
 	duration := time.Since(m.loadStartedAt)
@@ -550,7 +583,7 @@ func (m *Manager) setPhase(phase string) {
 	slog.Info("Model load phase", "phase", phase)
 }
 
-func (m *Manager) load(ctx context.Context) error {
+func (m *Manager) load(ctx context.Context, excluded map[string]bool) error {
 	m.mu.Lock()
 	// Recheck after admission: an additional load may have completed while
 	// this primary load was waiting for poolMu.
@@ -560,6 +593,7 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	s := m.settings
 	provider := m.rpcEndpoints
+	trellisMode, trellisProvider := m.trellisRPCMode, m.trellisRPCProvider
 	m.mu.Unlock()
 	path, err := modelPath(m.modelDir, s.Model)
 	if err != nil {
@@ -568,13 +602,33 @@ func (m *Manager) load(ctx context.Context) error {
 	if _, err = os.Stat(path); err != nil {
 		return err
 	}
-	meta, err := local.InspectGGUF(path)
+	meta, err := m.inspectInferenceGGUF(path, s)
 	if err != nil {
 		return err
 	}
-	if local.EffectiveBackend(s.Backend) != local.BackendMistralRS && (m.binary == "" || m.binary == "llama-server") {
-		if err := llamaruntime.ValidateArchitecture(meta.Architecture); err != nil {
-			return err
+	if meta.Trellis {
+		distributed := s.Distributed
+		s = trellisHostSettings(s)
+		if distributed && trellisMode != nil && trellisProvider != nil && trellisMode(true) > 0 {
+			s.Distributed = true
+			s.HostGPU = "cpu"
+			s.GPULayers = "auto"
+			provider = trellisProvider
+			m.setPhase("provisioning_trellis_guests")
+			// Provisioning is cancellable, and stock workers cannot enter
+			// this provider even while their native processes are switching.
+			if err := waitTrellisGuests(ctx, provider); err != nil {
+				return err
+			}
+		} else if trellisMode != nil {
+			trellisMode(false)
+		}
+	} else if trellisMode != nil {
+		if switching := trellisMode(false); s.Distributed && switching > 0 && provider != nil && len(provider()) == 0 {
+			m.setPhase("restoring_stock_guests")
+			if err := waitRuntimeGuests(ctx, provider, 60*time.Second); err != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
 		}
 	}
 	rpcEndpoints := []string(nil)
@@ -591,7 +645,7 @@ func (m *Manager) load(ctx context.Context) error {
 		// independently of a previously saved capacity strategy.
 		var guests []RPCGuest
 		if provider != nil {
-			guests = provider()
+			guests = filterRPCGuests(provider(), excluded)
 		}
 		model := meta
 		if model.BlockCount == 0 {
@@ -638,7 +692,7 @@ func (m *Manager) load(ctx context.Context) error {
 		m.mu.Unlock()
 		if len(rpcEndpoints) > 0 {
 			m.setPhase("verifying_rpc_guests")
-			if err := preflightRPCGuests(ctx, selection.Guests, rpcEndpoints, guests...); err != nil {
+			if err := preflightRPCGuestsRuntime(ctx, meta.Trellis, selection.Guests, rpcEndpoints, guests...); err != nil {
 				return err
 			}
 			// HELLO and DEVICE_COUNT are not model tensor uploads. Reset the
@@ -663,7 +717,13 @@ func (m *Manager) load(ctx context.Context) error {
 			return budgetErr
 		}
 		loadedMeta, loadedSize, loadedBudget = meta, uint64(size), hostCapacity
+		if modelExceedsBudget(uint64(size), hostCapacity) {
+			return errors.New("model weights exceed Host memory budget; compatible distributed workers are required")
+		}
 		if inspectErr := validatePlacementMemory(meta, s, uint64(size), hostCapacity, nil); inspectErr != nil {
+			if meta.Trellis {
+				return fmt.Errorf("Trellis requires matching RPC Guests, unavailable in this release; Host-only memory admission: %w", inspectErr)
+			}
 			return inspectErr
 		}
 	}
@@ -672,7 +732,18 @@ func (m *Manager) load(ctx context.Context) error {
 	// Speed preference may legitimately choose Host-only while the user
 	// keeps distributed capability enabled in settings.
 	usingRPC := s.Distributed && len(rpcEndpoints) > 0
-	if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {
+	if meta.Trellis {
+		if usingRPC {
+			resolved, _, err = llamaruntime.EnsureTrellisRPC(ctx, m.dir)
+		} else {
+			m.resetTrellisRPC()
+			resolved, err = llamaruntime.EnsureTrellis(ctx, m.dir, s.HostGPU)
+		}
+		if err == nil {
+			m.setPhase("resolving_model_dependencies")
+			_, err = local.EnsureTrellisPLE(ctx, path, meta, nil)
+		}
+	} else if local.EffectiveBackend(s.Backend) == local.BackendMistralRS {
 		// This opt-in backend is separately resolved by local.Managed.
 		resolved = ""
 	} else if usingRPC && (m.binary == "" || m.binary == "llama-server") {
@@ -703,6 +774,10 @@ func (m *Manager) load(ctx context.Context) error {
 	}
 	m.setPhase("loading_model")
 	engine := managedFromSettings(s, resolved, path, s.Model, draftPath)
+	engine.TrellisRuntime = meta.Trellis
+	if meta.Trellis {
+		engine.UnboundedStartup = true
+	}
 	if usingRPC {
 		engine.RPCServers = rpcEndpoints
 		engine.RPCLocalLayers = localLayers
@@ -718,6 +793,16 @@ func (m *Manager) load(ctx context.Context) error {
 	loadFingerprint := m.benchmarkSignature(s, s.Model)
 	if err = engine.Load(ctx); err != nil {
 		engine.Close()
+		m.mu.Lock()
+		stats := m.rpcStatsProvider
+		baseline := m.loadRPCBaseline
+		nodes := append([]string(nil), m.loadRPCNodes...)
+		m.mu.Unlock()
+		if stats != nil && ctx.Err() == nil {
+			if failed := lostRPCGuests(nodes, baseline, stats(), false); len(failed) > 0 {
+				return &rpcPlacementFailure{guests: failed, cause: err}
+			}
+		}
 		return err
 	}
 	systemInfo := engine.SystemInfo()
@@ -731,6 +816,10 @@ func (m *Manager) load(ctx context.Context) error {
 		return errors.New("model load cancelled")
 	}
 	m.engine = engine
+	m.loadedRPCSessions = nil
+	if usingRPC && m.rpcStatsProvider != nil {
+		m.loadedRPCSessions = m.rpcStatsProvider()
+	}
 	m.loadedTopology = buildInferenceTopology(s, loadedMeta, loadedSize, loadedBudget, loadedSelection, loadedGuests, devicePlacement, engine)
 	m.loadUploadPlan = nil
 	m.activityWindow = nil
@@ -760,17 +849,21 @@ func (m *Manager) Unload() {
 	m.mu.Lock()
 	engine := m.engine
 	m.engine = nil
+	m.loadedRPCSessions = nil
 	m.loadedTopology = nil
 	m.activityWindow = nil
 	m.nativeSystemInfo = ""
 	m.current = ""
 	m.loadPhase = "idle"
 	m.loadError = ""
-	m.unloading = false
 	m.mu.Unlock()
 	if engine != nil {
 		engine.Close()
 	}
+	m.resetTrellisRPC()
+	m.mu.Lock()
+	m.unloading = false
+	m.mu.Unlock()
 }
 func (m *Manager) Generate(ctx context.Context, req protocol.ChatRequest) (string, error) {
 

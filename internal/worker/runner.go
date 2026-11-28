@@ -31,6 +31,10 @@ type Runner struct {
 	DecisionModel string
 	Decider       DecisionEngine
 	Logger        *slog.Logger
+	Runtime       string
+	BuildCommit   string
+	AppVersion    string
+	OnUpdate      func(context.Context, protocol.UpdateDirective) error
 }
 
 func Enroll(ctx context.Context, coordinator, joinToken, name, model string) (config.Agent, error) {
@@ -68,9 +72,24 @@ func (r *Runner) Run(ctx context.Context) error {
 			models := []string(nil)
 			if r.Model != "" && r.Engine != nil {
 				models = []string{r.Model}
+				if r.Runtime != "" {
+					probeCtx, done := context.WithTimeout(ctx, 4*time.Second)
+					check, ok := r.Engine.(interface {
+						CheckModel(context.Context, string) error
+					})
+					if ok && check.CheckModel(probeCtx, r.Model) != nil {
+						models = nil
+					}
+					done()
+				}
 			}
 			profile = hardware.Collect(deviceName, models)
+			profile.BuildCommit, profile.AppVersion = r.BuildCommit, r.AppVersion
 			profile.Runtime.Installed = true
+			if r.Runtime != "" {
+				profile.Runtime.Engine = r.Runtime
+				profile.Runtime.Installed = len(models) > 0
+			}
 			if r.Decider != nil && r.DecisionModel != "" {
 				probeCtx, done := context.WithTimeout(ctx, 4*time.Second)
 				check, ok := r.Decider.(interface {
@@ -83,9 +102,12 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 			sampledAt = time.Now()
 		}
-		var work protocol.Job
+		var response struct {
+			protocol.Job
+			protocol.UpdateDirective
+		}
 		queryCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
-		status, err := r.Client.Request(queryCtx, http.MethodPost, "/v1/nodes/lease", profile, &work)
+		status, err := r.Client.Request(queryCtx, http.MethodPost, "/v1/nodes/lease", profile, &response)
 		cancel()
 		if err != nil {
 			r.Logger.Warn("coordinator temporarily unavailable", "error", err)
@@ -100,6 +122,16 @@ func (r *Runner) Run(ctx context.Context) error {
 			continue
 		}
 		delay = time.Second
+		if response.UpdateRequired {
+			if r.OnUpdate == nil {
+				return errors.New("Host requires a newer compatible worker")
+			}
+			return r.OnUpdate(ctx, response.UpdateDirective)
+		}
+		if r.Client.OnReady != nil {
+			r.Client.OnReady()
+		}
+		work := response.Job
 		if status == http.StatusNoContent {
 			continue
 		}
@@ -143,6 +175,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		} else if work.Kind != "" && work.Kind != "chat" {
 			generateErr = errors.New("unsupported worker job kind")
+		} else if r.Engine == nil || (r.Model != "*" && work.Request.Model != r.Model) {
+			generateErr = errors.New("worker cannot run requested model")
 		} else if work.Request.Stream {
 			if engine, ok := r.Engine.(interface {
 				GenerateStream(context.Context, protocol.ChatRequest, func([]byte) error) error
