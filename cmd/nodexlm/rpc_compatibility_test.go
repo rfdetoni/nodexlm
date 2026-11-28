@@ -11,8 +11,9 @@ import (
 func TestCompatibleStockRPC(t *testing.T) {
 	major, minor := llamaruntime.RPCProtocolVersion()
 	pinned := protocol.RuntimeCapability{
-		RPCSourceCommit: llamaruntime.SourceCommit,
-		RPCProtocolMajor: int(major), RPCProtocolMinor: int(minor),
+		RPCSourceCommit:  llamaruntime.SourceCommit,
+		RPCProtocolMajor: int(major),
+		RPCProtocolMinor: int(minor),
 		RPCProtocolPatch: int(llamaruntime.RPCProtocolPatch()),
 	}
 	if !compatibleStockRPC(pinned, true) || !compatibleStockRPC(pinned, false) {

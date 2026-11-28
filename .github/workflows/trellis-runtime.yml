@@ -5,6 +5,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'scripts/install-trellis-runtime.sh'
+      - 'scripts/trellis-rpc-tensors.cpp'
       - '.github/workflows/trellis-runtime.yml'
   workflow_dispatch:
 
@@ -24,10 +25,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Compile pinned isolated CPU runtime
+      - name: Compile and validate isolated Trellis CPU RPC candidate
         shell: bash
         run: |
           export NODEXLM_HOME="$RUNNER_TEMP/trellis"
           export NODEXLM_TRELLIS_NATIVE=OFF
-          bash scripts/install-trellis-runtime.sh cpu
-          test -x "$NODEXLM_HOME/runtimes/trellis/dc5521842f7991ceae73139f9d242d8f877e12d4/cpu/bin/llama-server"
+          bash scripts/install-trellis-runtime.sh cpu rpc-candidate
+          candidate="$NODEXLM_HOME/runtimes/trellis/dc5521842f7991ceae73139f9d242d8f877e12d4/cpu-rpc-candidate/bin"
+          test -x "$candidate/llama-server"
+          test -x "$candidate/ggml-rpc-server"
